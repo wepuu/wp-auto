@@ -1,0 +1,7 @@
+{
+  "name": "wepuu/oauth-conformance-php-fixture",
+  "private": true,
+  "require": {
+    "lcobucci/jwt": "^4.3"
+  }
+}

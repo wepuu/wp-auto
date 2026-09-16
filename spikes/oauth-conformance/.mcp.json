@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "add": {
+      "args": [
+        "https://site-a.example.test/wp-json/wp-auto/mcp"
+      ],
+      "print": true,
+      "url": "wepuu-conformance",
+      "type": "http"
+    }
+  },
+  "disabledMcpServers": []
+}

@@ -1,0 +1,13 @@
+{
+	auto_https disable_redirects
+}
+
+https://auth.example.test {
+	tls internal
+	reverse_proxy fixture:19001
+}
+
+https://site-a.example.test {
+	tls internal
+	reverse_proxy fixture:19002
+}

@@ -1,0 +1,31 @@
+{
+  "name": "@wepuu/oauth-conformance-spike",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "test": "node --test",
+    "test:persistent": "node scripts/assert-env.mjs CONFORMANCE_DATABASE_URL && node --test",
+    "check": "node scripts/check-contract.mjs",
+    "interop:php": "node scripts/run-php-interop.mjs",
+    "check:evidence": "node scripts/check-evidence.mjs ../../docs/PHASE_2_0_1_EVIDENCE.json",
+    "conformance:auth0": "node scripts/run-auth0-conformance.mjs",
+    "cleanup:auth0": "node scripts/cleanup-auth0-clients.mjs",
+    "conformance:codex": "node scripts/run-codex-probe.mjs",
+    "conformance:workbuddy": "node scripts/run-workbuddy-probe.mjs status",
+    "fixture:https:install": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/https-fixture.ps1 Install",
+    "fixture:https:status": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/https-fixture.ps1 Status",
+    "fixture:https:remove": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/https-fixture.ps1 Remove",
+    "fixture:workbuddy:prepare": "node scripts/run-workbuddy-probe.mjs prepare",
+    "fixture:workbuddy:verify": "node scripts/run-workbuddy-probe.mjs verify",
+    "fixture:workbuddy:cleanup": "node scripts/run-workbuddy-probe.mjs cleanup"
+  },
+  "devDependencies": {
+    "jose": "6.2.12",
+    "oidc-provider": "9.12.2",
+    "pg": "8.16.3"
+  }
+}
