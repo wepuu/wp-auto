@@ -16,7 +16,11 @@ KMS, and hosted CI validation. It provides:
 strict TypeScript packages, an authorization service, a control API,
 PostgreSQL RLS, content-free audit records, and an AWS KMS asymmetric signing
 adapter. It is not deployed and does not modify the WordPress connector.
-Phase 2.0.3 has not started.
+Phase 2.0.3 is in progress. Platform tranche 2.0.3A implements tenant-scoped
+site/pairing/grant persistence, SSRF-safe verification, Ed25519 site proofs,
+hashed server-side sessions, and fail-closed authorization resolvers. The real
+WordPress connector tranche 2.0.3B still requires separate approval, so the
+phase is not closed.
 
 ## Architecture
 
@@ -73,6 +77,10 @@ there is no file-key fallback.
 - [ADR-003 provider gate](docs/ADR-003-OAUTH-ENGINE-SELECTION.md)
 - [ADR-004 token profile](docs/ADR-004-TOKEN-AND-SIGNING-PROFILE.md)
 - [ADR-005 platform foundation](docs/ADR-005-PLATFORM-FOUNDATION.md)
+- [ADR-006 site pairing proof](docs/ADR-006-SITE-PAIRING-PROOF.md)
+- [Phase 2.0.3 test plan](docs/PHASE_2_0_3_TEST_PLAN.md)
+- [Phase 2.0.3 validation](docs/PHASE_2_0_3_VALIDATION.md)
+- [Phase 2.0.3 versions](docs/PHASE_2_0_3_VERSION_MATRIX.md)
 - [Phase 2.0.2 validation](docs/PHASE_2_0_2_VALIDATION.md)
 - [Phase 2.0.2 versions](docs/PHASE_2_0_2_VERSION_MATRIX.md)
 - [AWS KMS test setup](docs/AWS_KMS_TEST_SETUP.md)

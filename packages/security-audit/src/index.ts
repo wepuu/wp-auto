@@ -9,7 +9,13 @@ export const SecurityEventNameSchema = z.enum([
   'oauth.refresh_replay_detected',
   'oauth.token_issued',
   'key.signing_failed',
-  'key.rotation_observed'
+  'key.rotation_observed',
+  'pairing.started',
+  'pairing.verified',
+  'pairing.denied',
+  'grant.created',
+  'grant.revoked',
+  'site.disconnected'
 ]);
 
 export const SecurityOutcomeSchema = z.enum(['success', 'denied', 'error']);
@@ -22,7 +28,13 @@ export const SecurityReasonSchema = z.enum([
   'replay',
   'kms_unavailable',
   'invalid_input',
-  'unsafe_event_rejected'
+  'unsafe_event_rejected',
+  'ssrf_blocked',
+  'proof_invalid',
+  'expired',
+  'idempotency_conflict',
+  'site_suspended',
+  'consent_denied'
 ]);
 
 export const SecurityAuditEventSchema = z.object({

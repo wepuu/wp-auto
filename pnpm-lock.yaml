@@ -77,6 +77,9 @@ importers:
       '@wepuu/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@wepuu/pairing':
+        specifier: workspace:*
+        version: link:../pairing
       '@wepuu/security-audit':
         specifier: workspace:*
         version: link:../security-audit
@@ -104,6 +107,21 @@ importers:
       oidc-provider:
         specifier: 9.12.2
         version: 9.12.2(supports-color@7.2.0)
+      zod:
+        specifier: 4.6.5
+        version: 4.6.5
+
+  packages/pairing:
+    dependencies:
+      '@wepuu/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      ipaddr.js:
+        specifier: 2.2.0
+        version: 2.2.0
+      jose:
+        specifier: 6.1.0
+        version: 6.1.0
       zod:
         specifier: 4.6.5
         version: 4.6.5
@@ -881,6 +899,10 @@ packages:
   inherits@2.0.4:
     resolution: {integrity: sha512-k/vGaX4/Yla3WzyMCvTQOXYeIHvqOKtnqBduzTHpzpQZzAskKMhZ2K+EnBiSM9zGSoIFeMpXKxa4dYeZIQqewQ==}
 
+  ipaddr.js@2.2.0:
+    resolution: {integrity: sha512-Ag3wB2o37wslZS19hZqorUnrnzSkpOVy+IiiDEiTqNubEYpYuHWIf6K4psgN2ZWKExS4xhVCrRVfb/wfW8fWJA==}
+    engines: {node: '>= 10'}
+
   ipaddr.js@2.5.0:
     resolution: {integrity: sha512-aq+t5NAc+cS6rZQQVWC2x98CPqGtKKTMDd4Gaodv0wShnItdKg/51djkGJ1hqH+Oy0ivDftCbSLCQob8zso01w==}
     engines: {node: '>= 10'}
@@ -895,6 +917,9 @@ packages:
 
   isexe@2.0.0:
     resolution: {integrity: sha512-RHxMLp9lnKHGHRng9QFhRCMbYAcVpn69smSGcq3f36xjgVVWThj4qqLbTLlq7Ssj8B+fIQ1EuCEGI2lKsyQeIw==}
+
+  jose@6.1.0:
+    resolution: {integrity: sha512-TTQJyoEoKcC1lscpVDCSsVgYzUDg/0Bt3WE//WiTPK6uOCQC2KZS4MpugbMWt/zyjkopgZoXhZuCi00gLudfUA==}
 
   jose@6.2.12:
     resolution: {integrity: sha512-9NiFmJEex0sy2Dk58j2UGBSHgUs2ypF9eZSu4L6vjOX3Dp96Sw1F3uL+H+D1sx02jZZdzUT0HgvCy59CuvXcWw==}
@@ -2136,6 +2161,8 @@ snapshots:
 
   inherits@2.0.4: {}
 
+  ipaddr.js@2.2.0: {}
+
   ipaddr.js@2.5.0: {}
 
   is-extglob@2.1.1: {}
@@ -2145,6 +2172,8 @@ snapshots:
       is-extglob: 2.1.1
 
   isexe@2.0.0: {}
+
+  jose@6.1.0: {}
 
   jose@6.2.12: {}
 

@@ -59,6 +59,10 @@ Do not crawl or import site title/content automatically. A resource URI is opera
 
 Attempts are short-lived and aggressively purged.
 
+Phase 2.0.3 stores a SHA-256 verifier digest, never the verifier, and binds the
+attempt to one initiator and correlation ID. Completed attempts reference a
+site through a composite tenant/site foreign key.
+
 ### oauth_clients
 
 - client identifier and registration mode: pre-registered, CIMD, or DCR
@@ -74,6 +78,11 @@ Attempts are short-lived and aggressively purged.
 - revocation reason code and timestamp
 
 The platform record does not contain `wp_user_id`, WordPress email, username, role, or capability snapshot.
+
+Pending grants store only a consent challenge digest and short expiry. Paired
+sites store an Ed25519 public JWK and thumbprint; the site private key remains
+WordPress-local. Platform account sessions store only a SHA-256 session-token
+digest and are read through a dedicated non-login database role.
 
 ### authorization_transactions and authorization_codes
 

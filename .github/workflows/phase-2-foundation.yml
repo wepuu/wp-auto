@@ -1,4 +1,4 @@
-name: Phase 2 Platform Foundation
+name: Phase 2 Platform
 
 on:
   workflow_dispatch:
@@ -10,7 +10,7 @@ on:
         default: false
   pull_request:
   push:
-    branches: [main, codex/phase-2-0-2]
+    branches: [main, codex/phase-2-0-2, codex/phase-2-0-3]
 
 permissions:
   contents: read
@@ -50,6 +50,13 @@ jobs:
         run: pnpm check
       - name: PostgreSQL migration and isolation tests
         run: pnpm test:database
+      - name: PHP 8.1 site-proof interoperability
+        run: >-
+          pnpm build &&
+          docker run --rm --mount type=bind,source=${{ github.workspace }}/packages/pairing/test,target=/work,readonly
+          wordpress@sha256:f73396626d2f1b89d4c556917c15f55cfcc6b5f80595205516e490f0f04015e4
+          php /work/php-site-proof.php |
+          node scripts/verify-site-proof-stdin.mjs
       - name: Dependency audit
         run: pnpm audit --audit-level high
       - name: Install retained conformance dependencies

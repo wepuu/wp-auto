@@ -14,7 +14,10 @@ const base = {
 
 test('security events accept only the content-free allow-list', () => {
   assert.deepEqual(validateSecurityEvent(base), base);
-  for (const forbidden of ['authorization', 'cookie', 'body', 'token', 'wordpressUserId', 'toolArguments']) {
+  for (const forbidden of [
+    'authorization', 'cookie', 'body', 'token', 'wordpressUserId', 'toolArguments',
+    'pairingVerifier', 'siteProof', 'consentProof'
+  ]) {
     assert.throws(() => validateSecurityEvent({ ...base, [forbidden]: 'canary-secret-content' }));
   }
 });

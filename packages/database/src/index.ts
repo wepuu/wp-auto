@@ -3,7 +3,20 @@ import { readdir, readFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Pool, type PoolClient, type PoolConfig } from 'pg';
-import { TenantContextSchema, type TenantContext, type TenantView } from '@wepuu/contracts';
+import {
+  TenantContextSchema,
+  type GrantView,
+  type SiteView,
+  type TenantContext,
+  type TenantView
+} from '@wepuu/contracts';
+import type {
+  GrantRepository,
+  PairingAttemptRecord,
+  PairingRepository,
+  PendingGrantRecord,
+  VerifiedSiteProof
+} from '@wepuu/pairing';
 import {
   validateSecurityEvent,
   type SecurityAuditEvent,
@@ -129,6 +142,22 @@ export class Database {
     }
   }
 
+  async withSessionReader<T>(operation: (client: PoolClient) => Promise<T>): Promise<T> {
+    const client = await this.#pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SET LOCAL ROLE wepuu_session_reader');
+      const result = await operation(client);
+      await client.query('COMMIT');
+      return result;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async close(): Promise<void> {
     await this.#pool.end();
   }
@@ -151,6 +180,32 @@ export class TenantRepository {
     const row = result.rows[0];
     if (row === undefined) return undefined;
     return { id: row.id, status: row.status, createdAt: row.created_at.toISOString() };
+  }
+}
+
+export class PostgresAccountSessionStore {
+  readonly #database: Database;
+
+  constructor(database: Database) {
+    this.#database = database;
+  }
+
+  async resolve(sessionHash: Uint8Array): Promise<{ accountId: string; authenticationTime: number } | undefined> {
+    return this.#database.withSessionReader(async (client) => {
+      const result = await client.query<{ account_id: string; authenticated_at: Date }>(
+        `SELECT session_record.account_id, session_record.authenticated_at
+         FROM platform.account_sessions session_record
+         JOIN platform.accounts account_record ON account_record.id = session_record.account_id
+         WHERE session_record.session_hash = $1 AND session_record.expires_at > now()
+           AND session_record.revoked_at IS NULL AND account_record.status = 'active'`,
+        [Buffer.from(sessionHash)]
+      );
+      const row = result.rows[0];
+      return row === undefined ? undefined : {
+        accountId: row.account_id,
+        authenticationTime: Math.floor(row.authenticated_at.getTime() / 1_000)
+      };
+    });
   }
 }
 
@@ -189,6 +244,92 @@ export class SecurityEventRepository {
       correlationId: row.correlation_id,
       service: row.service
     }));
+  }
+}
+
+export class SiteRepository {
+  async list(client: PoolClient): Promise<readonly SiteView[]> {
+    const result = await client.query<{
+      tenant_id: string;
+      id: string;
+      resource_uri: string;
+      display_hostname: string;
+      status: SiteView['status'];
+      protocol_version: '1';
+      created_at: Date;
+    }>(
+      `SELECT tenant_id, id, resource_uri, display_hostname, status, protocol_version, created_at
+       FROM platform.sites WHERE status <> 'deleted' ORDER BY created_at, id`
+    );
+    return result.rows.map((row) => ({
+      tenantId: row.tenant_id,
+      id: row.id,
+      resource: row.resource_uri,
+      displayHostname: row.display_hostname,
+      status: row.status,
+      protocolVersion: row.protocol_version,
+      createdAt: row.created_at.toISOString()
+    }));
+  }
+
+  async disconnect(client: PoolClient, tenantId: string, siteId: string): Promise<boolean> {
+    const result = await client.query(
+      `UPDATE platform.sites
+       SET status = 'revoked', revoked_at = COALESCE(revoked_at, now()), updated_at = now()
+       WHERE tenant_id = $1 AND id = $2 AND status IN ('active', 'pending', 'suspended')`,
+      [tenantId, siteId]
+    );
+    if (result.rowCount === 1) {
+      await client.query(
+        `UPDATE platform.grants
+         SET status = 'revoked', revoked_at = COALESCE(revoked_at, now()),
+             revocation_reason = 'site_disconnected', updated_at = now()
+         WHERE tenant_id = $1 AND site_id = $2 AND status IN ('pending', 'active', 'suspended')`,
+        [tenantId, siteId]
+      );
+    }
+    return result.rowCount === 1;
+  }
+}
+
+export class GrantViewRepository {
+  async list(client: PoolClient): Promise<readonly GrantView[]> {
+    const result = await client.query<{
+      tenant_id: string;
+      id: string;
+      site_id: string;
+      subject_id: string;
+      client_id: string;
+      scopes: string[];
+      status: GrantView['status'];
+      consent_version: string;
+      created_at: Date;
+    }>(
+      `SELECT tenant_id, id, site_id, subject_id, client_id, scopes, status, consent_version, created_at
+       FROM platform.grants ORDER BY created_at, id`
+    );
+    return result.rows.map((row) => ({
+      tenantId: row.tenant_id,
+      id: row.id,
+      siteId: row.site_id,
+      subjectId: row.subject_id,
+      clientId: row.client_id,
+      scopes: row.scopes,
+      status: row.status,
+      consentVersion: row.consent_version,
+      createdAt: row.created_at.toISOString()
+    }));
+  }
+
+  async revoke(client: PoolClient, tenantId: string, grantId: string): Promise<boolean> {
+    const result = await client.query(
+      `UPDATE platform.grants
+       SET status = 'revoked', revoked_at = COALESCE(revoked_at, now()),
+           revocation_reason = 'platform_user_revoked', updated_at = now()
+       WHERE tenant_id = $1 AND id = $2 AND status IN ('pending', 'active', 'suspended')`,
+      [tenantId, grantId]
+    );
+    return result.rowCount === 1;
   }
 }
 
@@ -326,4 +467,283 @@ export function createOidcAdapterFactory(database: Database): new (model: string
       super(model, database);
     }
   };
+}
+
+export class PostgresPairingRepository implements PairingRepository {
+  readonly #database: Database;
+  readonly #context: TenantContext;
+
+  constructor(database: Database, context: TenantContext) {
+    this.#database = database;
+    this.#context = TenantContextSchema.parse(context);
+  }
+
+  async createAttempt(record: PairingAttemptRecord & {
+    readonly initiatorAccountId: string;
+    readonly correlationId: string;
+  }): Promise<void> {
+    await this.#database.withTenant(this.#context, (client) => client.query(
+      `INSERT INTO platform.pairing_attempts
+        (tenant_id, id, initiator_account_id, proposed_resource, verifier_hash, status, expires_at, correlation_id)
+       VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7)`,
+      [record.tenantId, record.id, record.initiatorAccountId, record.resource,
+        Buffer.from(record.verifierHash), record.expiresAt, record.correlationId]
+    ).then(() => undefined));
+  }
+
+  async findAttemptForUpdate(tenantId: string, attemptId: string): Promise<PairingAttemptRecord | undefined> {
+    return this.#database.withTenant(this.#context, async (client) => {
+      const result = await client.query<{
+        tenant_id: string;
+        id: string;
+        proposed_resource: string;
+        verifier_hash: Buffer;
+        status: PairingAttemptRecord['status'];
+        expires_at: Date;
+      }>(
+        `SELECT tenant_id, id, proposed_resource, verifier_hash, status, expires_at
+         FROM platform.pairing_attempts
+         WHERE tenant_id = $1 AND id = $2 AND status IN ('pending', 'verifying')`,
+        [tenantId, attemptId]
+      );
+      const row = result.rows[0];
+      return row === undefined ? undefined : {
+        tenantId: row.tenant_id,
+        id: row.id,
+        resource: row.proposed_resource,
+        verifierHash: row.verifier_hash,
+        status: row.status,
+        expiresAt: row.expires_at
+      };
+    });
+  }
+
+  async markVerifying(tenantId: string, attemptId: string): Promise<boolean> {
+    return this.#database.withTenant(this.#context, async (client) => {
+      const result = await client.query(
+        `UPDATE platform.pairing_attempts SET status = 'verifying', updated_at = now()
+         WHERE tenant_id = $1 AND id = $2 AND status = 'pending' AND expires_at > now()`,
+        [tenantId, attemptId]
+      );
+      return result.rowCount === 1;
+    });
+  }
+
+  async fail(tenantId: string, attemptId: string, reason: string): Promise<void> {
+    await this.#database.withTenant(this.#context, (client) => client.query(
+      `UPDATE platform.pairing_attempts
+       SET status = 'failed', failure_code = $3, updated_at = now()
+       WHERE tenant_id = $1 AND id = $2 AND status = 'verifying'`,
+      [tenantId, attemptId, reason.slice(0, 64)]
+    ).then(() => undefined));
+  }
+
+  async complete(
+    record: PairingAttemptRecord,
+    proof: VerifiedSiteProof,
+    siteId: string,
+    idempotencyKey: string
+  ): Promise<void> {
+    const requestDigest = createHash('sha256')
+      .update(`${record.id}\0${siteId}\0${proof.thumbprint}`, 'utf8')
+      .digest();
+    await this.#database.withTenant(this.#context, async (client) => {
+      const existing = await client.query<{ request_digest: Buffer; result_reference: string }>(
+        `SELECT request_digest, result_reference FROM platform.idempotency_records
+         WHERE tenant_id = $1 AND operation = 'pairing.complete' AND idempotency_key = $2`,
+        [record.tenantId, idempotencyKey]
+      );
+      const prior = existing.rows[0];
+      if (prior !== undefined) {
+        if (!prior.request_digest.equals(requestDigest) || prior.result_reference !== siteId) {
+          throw new Error('idempotency_conflict');
+        }
+        return;
+      }
+      const hostname = new URL(record.resource).hostname;
+      await client.query(
+        `INSERT INTO platform.sites
+          (tenant_id, id, resource_uri, display_hostname, status, protocol_version, site_public_jwk, site_key_thumbprint)
+         VALUES ($1, $2, $3, $4, 'active', '1', $5::jsonb, $6)`,
+        [record.tenantId, siteId, record.resource, hostname, JSON.stringify(proof.publicJwk), proof.thumbprint]
+      );
+      const consumed = await client.query(
+        `UPDATE platform.pairing_attempts
+         SET status = 'active', consumed_at = now(), site_id = $3, updated_at = now()
+         WHERE tenant_id = $1 AND id = $2 AND status = 'verifying' AND expires_at > now()`,
+        [record.tenantId, record.id, siteId]
+      );
+      if (consumed.rowCount !== 1) throw new Error('pairing_replay');
+      await client.query(
+        `INSERT INTO platform.idempotency_records
+          (tenant_id, operation, idempotency_key, request_digest, result_reference, expires_at)
+         VALUES ($1, 'pairing.complete', $2, $3, $4, now() + interval '24 hours')`,
+        [record.tenantId, idempotencyKey, requestDigest, siteId]
+      );
+    });
+  }
+}
+
+export class PostgresGrantRepository implements GrantRepository {
+  readonly #database: Database;
+  readonly #context: TenantContext;
+
+  constructor(database: Database, context: TenantContext) {
+    this.#database = database;
+    this.#context = TenantContextSchema.parse(context);
+  }
+
+  async createPending(record: Omit<PendingGrantRecord, 'publicJwk' | 'status'> & {
+    readonly consentVersion: string;
+  }): Promise<void> {
+    await this.#database.withTenant(this.#context, async (client) => {
+      const result = await client.query(
+        `INSERT INTO platform.grants
+          (tenant_id, id, site_id, subject_id, client_id, scopes, consent_challenge_hash,
+           consent_expires_at, status, consent_version)
+         SELECT $1, $2, site_record.id, $4, $5, $6, $7, $8, 'pending', $9
+         FROM platform.sites site_record
+         WHERE site_record.tenant_id = $1 AND site_record.id = $3
+           AND site_record.resource_uri = $10 AND site_record.status = 'active'`,
+        [record.tenantId, record.id, record.siteId, record.subjectId, record.clientId,
+          record.scopes, Buffer.from(record.challengeHash), record.expiresAt, record.consentVersion, record.resource]
+      );
+      if (result.rowCount !== 1) throw new Error('active_site_not_found');
+    });
+  }
+
+  async findPending(tenantId: string, grantId: string): Promise<PendingGrantRecord | undefined> {
+    return this.#database.withTenant(this.#context, async (client) => {
+      const result = await client.query<{
+        tenant_id: string;
+        id: string;
+        site_id: string;
+        subject_id: string;
+        client_id: string;
+        scopes: string[];
+        resource_uri: string;
+        site_public_jwk: PendingGrantRecord['publicJwk'];
+        consent_challenge_hash: Buffer;
+        consent_expires_at: Date;
+      }>(
+        `SELECT grant_record.tenant_id, grant_record.id, grant_record.site_id,
+                grant_record.subject_id, grant_record.client_id, grant_record.scopes,
+                grant_record.consent_challenge_hash, grant_record.consent_expires_at,
+                site_record.resource_uri, site_record.site_public_jwk
+         FROM platform.grants grant_record
+         JOIN platform.sites site_record
+           ON site_record.tenant_id = grant_record.tenant_id AND site_record.id = grant_record.site_id
+         WHERE grant_record.tenant_id = $1 AND grant_record.id = $2
+           AND grant_record.status = 'pending' AND site_record.status = 'active'`,
+        [tenantId, grantId]
+      );
+      const row = result.rows[0];
+      return row === undefined ? undefined : {
+        tenantId: row.tenant_id,
+        id: row.id,
+        siteId: row.site_id,
+        subjectId: row.subject_id,
+        clientId: row.client_id,
+        scopes: row.scopes,
+        resource: row.resource_uri,
+        publicJwk: row.site_public_jwk,
+        challengeHash: row.consent_challenge_hash,
+        expiresAt: row.consent_expires_at,
+        status: 'pending'
+      };
+    });
+  }
+
+  async activate(tenantId: string, grantId: string, idempotencyKey: string, proofThumbprint: string): Promise<void> {
+    const digest = createHash('sha256').update(`${grantId}\0${proofThumbprint}`, 'utf8').digest();
+    await this.#database.withTenant(this.#context, async (client) => {
+      const existing = await client.query<{ request_digest: Buffer; result_reference: string }>(
+        `SELECT request_digest, result_reference FROM platform.idempotency_records
+         WHERE tenant_id = $1 AND operation = 'grant.complete' AND idempotency_key = $2`,
+        [tenantId, idempotencyKey]
+      );
+      const prior = existing.rows[0];
+      if (prior !== undefined) {
+        if (!prior.request_digest.equals(digest) || prior.result_reference !== grantId) throw new Error('idempotency_conflict');
+        return;
+      }
+      const result = await client.query(
+        `UPDATE platform.grants SET status = 'active', updated_at = now()
+         WHERE tenant_id = $1 AND id = $2 AND status = 'pending' AND consent_expires_at > now()`,
+        [tenantId, grantId]
+      );
+      if (result.rowCount !== 1) throw new Error('grant_completion_replay');
+      await client.query(
+        `INSERT INTO platform.idempotency_records
+          (tenant_id, operation, idempotency_key, request_digest, result_reference, expires_at)
+         VALUES ($1, 'grant.complete', $2, $3, $4, now() + interval '24 hours')`,
+        [tenantId, idempotencyKey, digest, grantId]
+      );
+    });
+  }
+
+  async revoke(tenantId: string, grantId: string, reason: string): Promise<boolean> {
+    return this.#database.withTenant(this.#context, async (client) => {
+      const result = await client.query(
+        `UPDATE platform.grants
+         SET status = 'revoked', revoked_at = now(), revocation_reason = $3, updated_at = now()
+         WHERE tenant_id = $1 AND id = $2 AND status IN ('pending', 'active', 'suspended')`,
+        [tenantId, grantId, reason.slice(0, 64)]
+      );
+      return result.rowCount === 1;
+    });
+  }
+}
+
+export class PostgresResourceRegistry {
+  readonly #database: Database;
+
+  constructor(database: Database) {
+    this.#database = database;
+  }
+
+  async resolve(resource: string): Promise<{ readonly resource: string; readonly scopes: readonly string[] } | undefined> {
+    return this.#database.withAuthorizationService(async (client) => {
+      const result = await client.query<{ resource_uri: string }>(
+        `SELECT resource_uri FROM platform.sites WHERE resource_uri = $1 AND status = 'active' LIMIT 2`,
+        [resource]
+      );
+      const row = result.rows[0];
+      if (result.rowCount !== 1 || row === undefined) return undefined;
+      return {
+        resource: row.resource_uri,
+        scopes: ['mcp:read', 'mcp:content.write', 'mcp:media.write', 'mcp:taxonomy.write', 'mcp:seo.write']
+      };
+    });
+  }
+}
+
+export class PostgresGrantClaimsResolver {
+  readonly #database: Database;
+
+  constructor(database: Database) {
+    this.#database = database;
+  }
+
+  async resolve(subjectId: string): Promise<{
+    readonly tenantId: string;
+    readonly siteId: string;
+    readonly grantId: string;
+  } | undefined> {
+    return this.#database.withAuthorizationService(async (client) => {
+      const result = await client.query<{ tenant_id: string; site_id: string; id: string }>(
+        `SELECT grant_record.tenant_id, grant_record.site_id, grant_record.id
+         FROM platform.grants grant_record
+         JOIN platform.sites site_record
+           ON site_record.tenant_id = grant_record.tenant_id AND site_record.id = grant_record.site_id
+         WHERE grant_record.subject_id = $1
+           AND grant_record.status = 'active' AND site_record.status = 'active'
+         LIMIT 2`,
+        [subjectId]
+      );
+      const row = result.rows[0];
+      if (result.rowCount !== 1 || row === undefined) return undefined;
+      return { tenantId: row.tenant_id, siteId: row.site_id, grantId: row.id };
+    });
+  }
 }

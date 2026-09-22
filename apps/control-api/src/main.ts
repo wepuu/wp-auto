@@ -1,8 +1,8 @@
-import { Database, PostgresSecurityAuditSink } from '@wepuu/database';
+import { Database, PostgresAccountSessionStore, PostgresSecurityAuditSink } from '@wepuu/database';
 import {
   buildControlApi,
-  DenyAllAccountIdentityProvider,
-  PostgresControlStore
+  PostgresControlStore,
+  SessionAccountIdentityProvider
 } from './server.js';
 
 const databaseUrl = process.env['WEPUU_DATABASE_URL'];
@@ -10,7 +10,7 @@ if (databaseUrl === undefined || databaseUrl.length === 0) throw new Error('WEPU
 
 const database = new Database({ connectionString: databaseUrl, applicationName: 'wepuu-control-api' });
 const app = buildControlApi({
-  identityProvider: new DenyAllAccountIdentityProvider(),
+  identityProvider: new SessionAccountIdentityProvider(new PostgresAccountSessionStore(database)),
   store: new PostgresControlStore(database),
   audit: new PostgresSecurityAuditSink(database),
   readiness: () => database.checkReady()

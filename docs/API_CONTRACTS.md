@@ -2,10 +2,11 @@
 
 This document freezes endpoint responsibilities and security semantics, not final URL spelling or payload schemas. All production endpoints use HTTPS, bounded JSON, strict content types, request IDs, rate limits, and safe error responses.
 
-Phase 2.0.2 implements only the foundation subset: liveness/readiness, an
-authenticated tenant view, and tenant-scoped content-free security activity.
-The runtime identity adapter and grant/resource resolvers default to deny-all;
-pairing, grants, consent, and production authentication remain later phases.
+Phase 2.0.3A extends the foundation with hashed server-side account-session
+consumption, tenant-scoped site and grant views, revoke/disconnect mutations,
+pairing/grant repositories, and active resource/grant resolvers. Session minting
+through the external account IdP and real WordPress pairing/consent remain exit
+gates. Until those gates pass, the implementation is not production-ready.
 
 ## Public OAuth and MCP discovery surface
 
@@ -32,6 +33,16 @@ Conceptual operations:
 - tenant administrator suspends/disconnects a site;
 - retrieve content-free security activity visible to the authorized role;
 - begin verified account/data deletion.
+
+Implemented Phase 2.0.3A routes additionally include:
+
+- `GET /v1/tenants/{tenant_id}/sites`;
+- `GET /v1/tenants/{tenant_id}/grants`;
+- `POST /v1/tenants/{tenant_id}/grants/{grant_id}/revoke`;
+- `POST /v1/tenants/{tenant_id}/sites/{site_id}/disconnect`.
+
+Mutations require a bounded `Idempotency-Key`; revoke and disconnect are
+naturally idempotent and return no object-existence signal.
 
 Every operation derives account identity from the platform session and verifies tenant membership. Object IDs alone never authorize access.
 

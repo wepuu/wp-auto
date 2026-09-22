@@ -4,6 +4,7 @@ const opaqueIdPattern = /^[A-Za-z0-9_-]{8,128}$/u;
 
 export const OpaqueIdSchema = z.string().regex(opaqueIdPattern);
 export type OpaqueId = z.infer<typeof OpaqueIdSchema>;
+export const OAuthClientIdSchema = z.string().min(8).max(256).regex(/^[A-Za-z0-9._~-]+$/u);
 
 export const TenantContextSchema = z.object({
   tenantId: z.uuid(),
@@ -50,3 +51,42 @@ export const TenantViewSchema = z.object({
   createdAt: z.iso.datetime()
 }).strict();
 export type TenantView = z.infer<typeof TenantViewSchema>;
+
+export const CanonicalResourceSchema = z.url().superRefine((value, context) => {
+  const url = new URL(value);
+  if (url.protocol !== 'https:' || url.username !== '' || url.password !== '' || url.hash !== '' || url.search !== '') {
+    context.addIssue({ code: 'custom', message: 'resource_must_be_canonical_https' });
+  }
+  if (url.port !== '' && url.port !== '443') {
+    context.addIssue({ code: 'custom', message: 'resource_port_not_allowed' });
+  }
+});
+export type CanonicalResource = z.infer<typeof CanonicalResourceSchema>;
+
+export const SiteStatusSchema = z.enum(['pending', 'active', 'suspended', 'revoked', 'deleted']);
+export const PairingStatusSchema = z.enum(['pending', 'verifying', 'active', 'expired', 'cancelled', 'failed']);
+export const GrantStatusSchema = z.enum(['pending', 'active', 'suspended', 'revoked']);
+
+export const SiteViewSchema = z.object({
+  id: OpaqueIdSchema,
+  tenantId: z.uuid(),
+  resource: CanonicalResourceSchema,
+  displayHostname: z.string().min(1).max(253),
+  status: SiteStatusSchema,
+  protocolVersion: z.literal('1'),
+  createdAt: z.iso.datetime()
+}).strict();
+export type SiteView = z.infer<typeof SiteViewSchema>;
+
+export const GrantViewSchema = z.object({
+  id: OpaqueIdSchema,
+  tenantId: z.uuid(),
+  siteId: OpaqueIdSchema,
+  subjectId: OpaqueIdSchema,
+  clientId: OAuthClientIdSchema,
+  scopes: z.array(z.string().regex(/^mcp:[a-z][a-z0-9_.-]{0,63}$/u)).min(1).max(16),
+  status: GrantStatusSchema,
+  consentVersion: z.string().regex(/^\d+$/u),
+  createdAt: z.iso.datetime()
+}).strict();
+export type GrantView = z.infer<typeof GrantViewSchema>;

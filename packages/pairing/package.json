@@ -1,13 +1,14 @@
 {
-  "name": "@wepuu/oauth-provider",
+  "name": "@wepuu/pairing",
   "private": true,
   "version": "0.3.0",
   "type": "module",
   "exports": { ".": "./dist/index.js" },
   "types": "./dist/index.d.ts",
   "dependencies": {
-    "@wepuu/key-custody": "workspace:*",
-    "oidc-provider": "9.12.2",
+    "@wepuu/contracts": "workspace:*",
+    "ipaddr.js": "2.2.0",
+    "jose": "6.1.0",
     "zod": "4.6.5"
   }
 }

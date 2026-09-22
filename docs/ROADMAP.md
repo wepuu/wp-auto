@@ -46,6 +46,10 @@ WordPress connector change occurred or is authorized.
 
 ## Phase 2.0.3 - pairing and user grants
 
+Status: approved and in progress on 2026-09-22. Platform tranche 2.0.3A is
+implemented on `codex/phase-2-0-3`; real connector tranche 2.0.3B remains a
+separately approved task, so the phase is not closed.
+
 - Explicit administrator-initiated site pairing.
 - SSRF-resistant site verification.
 - Per-user local WordPress consent and opaque grant binding.

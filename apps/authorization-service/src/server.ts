@@ -1,12 +1,13 @@
 import { createServer, type Server } from 'node:http';
 import { z } from 'zod';
-import { Database, createOidcAdapterFactory } from '@wepuu/database';
-import { AwsKmsKeyCustody, keyCustodyConfigFromEnvironment } from '@wepuu/key-custody';
 import {
-  DenyAllGrantClaimsResolver,
-  DenyAllResourceRegistry,
-  createAuthorizationProvider
-} from '@wepuu/oauth-provider';
+  Database,
+  PostgresGrantClaimsResolver,
+  PostgresResourceRegistry,
+  createOidcAdapterFactory
+} from '@wepuu/database';
+import { AwsKmsKeyCustody, keyCustodyConfigFromEnvironment } from '@wepuu/key-custody';
+import { createAuthorizationProvider } from '@wepuu/oauth-provider';
 
 const ServiceConfigSchema = z.object({
   issuer: z.url().refine((value) => value.startsWith('https://')),
@@ -47,8 +48,8 @@ export async function startAuthorizationService(
       cookieKeys: config.cookieKeys,
       keyCustody: custody,
       adapter: createOidcAdapterFactory(database),
-      resourceRegistry: new DenyAllResourceRegistry(),
-      grantClaimsResolver: new DenyAllGrantClaimsResolver()
+      resourceRegistry: new PostgresResourceRegistry(database),
+      grantClaimsResolver: new PostgresGrantClaimsResolver(database)
     });
     provider.proxy = true;
     const callback = provider.callback();
