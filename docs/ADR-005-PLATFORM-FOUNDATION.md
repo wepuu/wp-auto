@@ -1,6 +1,6 @@
 # ADR-005: Phase 2.0.2 platform foundation
 
-- Status: accepted for implementation; exit evidence pending
+- Status: accepted, implemented, and validated
 - Date: 2026-09-16
 
 ## Context
@@ -69,3 +69,7 @@ Exit requires strict build and tests, migration replay, cross-tenant adversarial
 coverage, KMS adapter contract and outage coverage, content-free audit canaries,
 the retained OAuth conformance suite, SBOM/audit evidence, a Phase 2.0.2
 validation record, and confirmation that the connector repository is unchanged.
+
+All exit evidence passed by 2026-09-22. The live AWS KMS contract passed on
+2026-09-21, and hosted CI run `35672159119` passed the complete non-secret
+validation job for implementation commit `ab18b05` on 2026-09-22.

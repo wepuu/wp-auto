@@ -33,8 +33,8 @@ clients, known deviations, pinned versions, and rejected alternatives.
 
 ## Phase 2.0.2 - platform foundation
 
-Status: approved and in progress on 2026-09-16. No production deployment or
-WordPress connector change is authorized.
+Status: accepted and closed on 2026-09-22. No production deployment or
+WordPress connector change occurred or is authorized.
 
 - TypeScript strict-mode workspace.
 - Isolated authorization service and control API.

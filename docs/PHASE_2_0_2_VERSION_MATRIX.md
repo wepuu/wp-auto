@@ -1,6 +1,6 @@
 # Phase 2.0.2 Version Matrix
 
-- Status: local implementation verified; external exit evidence pending
+- Status: accepted and closed
 - Updated: 2026-09-17
 
 | Component | Pinned baseline | Local result |

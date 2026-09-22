@@ -1,6 +1,6 @@
 # Phase 2.0.2 Platform Foundation Validation
 
-- Status: implementation and live AWS KMS contract complete; phase exit pending hosted CI evidence
+- Status: accepted and closed
 - Date: 2026-09-17
 - Branch: `codex/phase-2-0-2`
 
@@ -41,26 +41,32 @@ control-plane tenant tables, and the control role cannot read provider state.
 | Dependency audit | pass | 0 info/low/moderate/high/critical across 282 dependencies after Fastify upgrade |
 | SBOM | pass | `PHASE_2_0_2_SBOM.json`, CycloneDX 1.6, 282 components |
 | Connector repository | pass | `D:\Codex\wp-auto-connector` remained clean on `main` |
-| Deployment/push | pass | none performed |
+| Deployment/push boundary | pass | no deployment; only the authorized `codex/phase-2-0-2` CI-validation branch was pushed |
+| Hosted CI | pass | GitHub Actions run `35672159119` validated implementation commit `ab18b05` in 55 seconds |
 
 The local PostgreSQL fixture used `postgres:16.10-alpine` on loopback port
 55433 with an ephemeral tmpfs data directory. It is test-only and contains no
 customer data.
 
-## Open exit evidence
+## Exit decision
 
 The live AWS KMS exit gate passed on 2026-09-21 using a narrowly scoped IAM
 user and a disposable asymmetric RSA `SIGN_VERIFY` key. The test recorded no
 credential, account, key ARN, public-key bytes, signature, or token material.
 
-Phase 2.0.2 must remain open until the hosted CI item below is recorded:
+GitHub Actions run
+`https://github.com/wepuu/wp-auto/actions/runs/35672159119` passed strict checks,
+PostgreSQL isolation, dependency audit, retained OAuth persistence, contract,
+and evidence validation for implementation commit `ab18b05` on 2026-09-22.
+The push-triggered live-KMS job was intentionally skipped because cloud access
+is manual and environment-protected; the real KMS contract had already passed
+locally with temporary least-privilege credentials.
 
-1. Run `.github/workflows/phase-2-foundation.yml` in hosted CI. Repository rules
-   prohibit pushing from this implementation session, so only the equivalent
-   local gates have run.
+All Phase 2.0.2 exit gates are satisfied. The phase is accepted and closed.
+This does not authorize Phase 2.0.3, deployment, production traffic, or a
+WordPress connector change.
 
-These are evidence gaps, not authorization to deploy. Even after Phase 2.0.2
-closes, production release remains gated on KMS rotation/JWKS overlap/PHP
+Production release remains gated on KMS rotation/JWKS overlap/PHP
 interoperability with the experimental `ExternalSigningKey` integration and an
 independent security review.
 

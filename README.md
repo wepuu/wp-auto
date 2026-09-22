@@ -11,12 +11,12 @@ Phase 2.0.0 and Phase 2.0.1 are accepted. The local provider, HTTPS,
 persistence, PHP, and Codex 0.154.0 pre-registered OAuth gates pass; Auth0 is
 rejected for the frozen S256 profile and WorkBuddy 5.5.2 is unsupported. The
 Phase 2.0.1 executable work remains isolated under `spikes/oauth-conformance/`.
-Phase 2.0.2 Platform Foundation is implemented locally on an isolated branch:
+Phase 2.0.2 Platform Foundation is accepted and closed after local, live AWS
+KMS, and hosted CI validation. It provides:
 strict TypeScript packages, an authorization service, a control API,
 PostgreSQL RLS, content-free audit records, and an AWS KMS asymmetric signing
-adapter. It is not deployed and does not modify the WordPress connector. The
-live AWS KMS contract passes. The hosted CI run remains the final exit evidence,
-so the phase is not yet closed.
+adapter. It is not deployed and does not modify the WordPress connector.
+Phase 2.0.3 has not started.
 
 ## Architecture
 
