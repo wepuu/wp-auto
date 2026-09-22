@@ -13,7 +13,7 @@
     "lint": "eslint apps packages",
     "test": "tsx --test \"packages/*/test/*.test.ts\" \"apps/*/src/*.test.ts\"",
     "test:kms:live": "tsx --test --test-name-pattern=\"live AWS KMS contract\" packages/key-custody/test/aws-kms.test.ts",
-    "check": "pnpm lint && pnpm typecheck && pnpm test",
+    "check": "pnpm typecheck && pnpm lint && pnpm test",
     "audit:high": "pnpm audit --audit-level high",
     "test:database": "tsx --test packages/database/test/tenant-isolation.test.ts",
     "db:migrate": "tsx packages/database/src/cli.ts migrate"
