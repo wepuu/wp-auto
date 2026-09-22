@@ -43,7 +43,7 @@ jobs:
         with:
           node-version: 24.19.0
       - name: Enable pinned pnpm
-        run: corepack prepare pnpm@11.19.0 --activate
+        run: corepack enable && corepack prepare pnpm@11.19.0 --activate
       - name: Install foundation dependencies
         run: pnpm install --frozen-lockfile
       - name: Strict checks
@@ -82,7 +82,7 @@ jobs:
         with:
           node-version: 24.19.0
       - name: Enable pinned pnpm
-        run: corepack prepare pnpm@11.19.0 --activate
+        run: corepack enable && corepack prepare pnpm@11.19.0 --activate
       - name: Install foundation dependencies
         run: pnpm install --frozen-lockfile
       - name: Obtain short-lived AWS credentials through OIDC
