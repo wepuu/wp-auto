@@ -1,0 +1,96 @@
+name: Phase 2 Platform Foundation
+
+on:
+  workflow_dispatch:
+    inputs:
+      live_kms:
+        description: Run the opt-in AWS KMS contract through GitHub OIDC
+        required: false
+        type: boolean
+        default: false
+  pull_request:
+  push:
+    branches: [main, codex/phase-2-0-2]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16.10-alpine
+        env:
+          POSTGRES_DB: wepuu_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: conformance
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d wepuu_test"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      CI: "true"
+      WEPUU_TEST_DATABASE_URL: postgresql://postgres:conformance@127.0.0.1:5432/wepuu_test
+      CONFORMANCE_DATABASE_URL: postgresql://postgres:conformance@127.0.0.1:5432/wepuu_test
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24.19.0
+      - name: Enable pinned pnpm
+        run: corepack prepare pnpm@11.19.0 --activate
+      - name: Install foundation dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Strict checks
+        run: pnpm check
+      - name: PostgreSQL migration and isolation tests
+        run: pnpm test:database
+      - name: Dependency audit
+        run: pnpm audit --audit-level high
+      - name: Install retained conformance dependencies
+        working-directory: spikes/oauth-conformance
+        run: npm ci
+      - name: Retained OAuth conformance suite
+        working-directory: spikes/oauth-conformance
+        run: npm run test:persistent
+      - name: Contract and evidence checks
+        working-directory: spikes/oauth-conformance
+        run: npm run check && npm run check:evidence
+
+  live-kms:
+    if: github.event_name == 'workflow_dispatch' && inputs.live_kms
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: kms-conformance
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      CI: "true"
+      AWS_REGION: ${{ vars.AWS_KMS_TEST_REGION }}
+      WEPUU_KMS_KEY_ID: ${{ vars.AWS_KMS_TEST_KEY_ID }}
+      WEPUU_KMS_KID: ${{ vars.AWS_KMS_TEST_KID }}
+      WEPUU_LIVE_KMS: "1"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24.19.0
+      - name: Enable pinned pnpm
+        run: corepack prepare pnpm@11.19.0 --activate
+      - name: Install foundation dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Obtain short-lived AWS credentials through OIDC
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_KMS_TEST_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_KMS_TEST_REGION }}
+          allowed-account-ids: ${{ vars.AWS_KMS_TEST_ACCOUNT_ID }}
+          role-session-name: wepuu-kms-conformance
+      - name: Run live KMS contract
+        run: pnpm test:kms:live

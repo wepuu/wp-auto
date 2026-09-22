@@ -1,6 +1,6 @@
 # ADR-004: Token and signing profile gate
 
-- Status: accepted for the Phase 2.0.1 spike; production values remain subject to Phase 2.0.2 review
+- Status: accepted for Phase 2.0.2 implementation; production release remains gated
 - Date: 2026-09-16
 
 ## Baseline decision
@@ -33,6 +33,17 @@ Production implementation must generate or import keys through KMS/HSM, publish
 the public JWK before activation, retain the prior key through token lifetime,
 skew, cache, and incident margins, and explicitly deny compromised `kid` values.
 Private key bytes never enter application configuration, logs, or the database.
+
+Phase 2.0.2 implements a provider-neutral custody port and AWS KMS asymmetric
+RSA signing adapter. The application receives only the public key, key
+identifier, lifecycle metadata, and signature result. A local signing adapter
+is permitted only inside tests and cannot be selected by production
+configuration.
+
+The live AWS contract passed on 2026-09-21 against a disposable asymmetric RSA
+`SIGN_VERIFY` key using least-privilege `DescribeKey`, `GetPublicKey`, and
+`Sign` access. The returned signature verified locally against the downloaded
+public key; no private key material entered the application.
 
 ## Refresh profile
 

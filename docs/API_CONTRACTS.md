@@ -2,6 +2,11 @@
 
 This document freezes endpoint responsibilities and security semantics, not final URL spelling or payload schemas. All production endpoints use HTTPS, bounded JSON, strict content types, request IDs, rate limits, and safe error responses.
 
+Phase 2.0.2 implements only the foundation subset: liveness/readiness, an
+authenticated tenant view, and tenant-scoped content-free security activity.
+The runtime identity adapter and grant/resource resolvers default to deny-all;
+pairing, grants, consent, and production authentication remain later phases.
+
 ## Public OAuth and MCP discovery surface
 
 | Endpoint responsibility | Principal | Contract |

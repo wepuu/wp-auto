@@ -1,0 +1,15 @@
+{
+  "name": "@wepuu/control-api",
+  "private": true,
+  "version": "0.2.0",
+  "type": "module",
+  "exports": { ".": "./dist/server.js" },
+  "types": "./dist/server.d.ts",
+  "dependencies": {
+    "@wepuu/contracts": "workspace:*",
+    "@wepuu/database": "workspace:*",
+    "@wepuu/security-audit": "workspace:*",
+    "fastify": "5.12.5",
+    "zod": "4.6.5"
+  }
+}

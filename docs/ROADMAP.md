@@ -33,10 +33,14 @@ clients, known deviations, pinned versions, and rejected alternatives.
 
 ## Phase 2.0.2 - platform foundation
 
+Status: approved and in progress on 2026-09-16. No production deployment or
+WordPress connector change is authorized.
+
 - TypeScript strict-mode workspace.
 - Isolated authorization service and control API.
 - PostgreSQL persistence with mandatory tenant scoping.
-- Managed key-custody adapter.
+- Provider-neutral key-custody boundary with an AWS KMS asymmetric signing
+  adapter; private key bytes never enter the application, database, or logs.
 - Structured, content-free security audit pipeline.
 - Local development and CI validation without production deployment.
 

@@ -6,12 +6,14 @@ This repository defines and will eventually implement the WePuu OAuth 2.1 contro
 
 ## Current phase
 
-Phase 2.0.1 is an accepted, closed conformance spike. Phase 2.0.2 has not
-started. Until a later phase is explicitly approved:
+Phase 2.0.1 is accepted and closed. Phase 2.0.2 Platform Foundation is approved
+and in progress. During this phase:
 
-- do not add production service code, production dependencies, database migrations, deployment configuration, or production lockfiles;
+- production foundation code, dependencies, database migrations, and local/CI configuration are allowed only for the Phase 2.0.2 scope;
 - spike-only dependencies, fixtures, and test lockfiles are allowed under `spikes/oauth-conformance/`;
-- do not deploy or push; the accepted Phase 2.0.1 record permits only its first local Git commit;
+- pushing `codex/phase-2-0-2` solely for hosted CI validation is authorized;
+  do not deploy, push another branch, or add production deployment
+  configuration;
 - do not modify `D:\Codex\wp-auto-connector`; it is a read-only reference implementation;
 - keep all architecture decisions consistent with the documents under `docs/`.
 

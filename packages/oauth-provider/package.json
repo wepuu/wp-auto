@@ -1,0 +1,13 @@
+{
+  "name": "@wepuu/oauth-provider",
+  "private": true,
+  "version": "0.2.0",
+  "type": "module",
+  "exports": { ".": "./dist/index.js" },
+  "types": "./dist/index.d.ts",
+  "dependencies": {
+    "@wepuu/key-custody": "workspace:*",
+    "oidc-provider": "9.12.2",
+    "zod": "4.6.5"
+  }
+}

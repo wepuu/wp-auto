@@ -1,0 +1,31 @@
+{
+  "name": "@wepuu/platform",
+  "private": true,
+  "version": "0.2.0",
+  "packageManager": "pnpm@11.19.0",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean",
+    "typecheck": "tsc -b --pretty false",
+    "lint": "eslint apps packages",
+    "test": "tsx --test \"packages/*/test/*.test.ts\" \"apps/*/src/*.test.ts\"",
+    "test:kms:live": "tsx --test --test-name-pattern=\"live AWS KMS contract\" packages/key-custody/test/aws-kms.test.ts",
+    "check": "pnpm lint && pnpm typecheck && pnpm test",
+    "audit:high": "pnpm audit --audit-level high",
+    "test:database": "tsx --test packages/database/test/tenant-isolation.test.ts",
+    "db:migrate": "tsx packages/database/src/cli.ts migrate"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.5",
+    "@types/node": "24.13.5",
+    "@types/oidc-provider": "9.12.1",
+    "@types/pg": "8.23.1",
+    "eslint": "9.39.5",
+    "tsx": "4.23.13",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.70.0"
+  }
+}

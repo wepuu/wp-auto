@@ -1,0 +1,12 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/contracts" },
+    { "path": "packages/security-audit" },
+    { "path": "packages/database" },
+    { "path": "packages/key-custody" },
+    { "path": "packages/oauth-provider" },
+    { "path": "apps/authorization-service" },
+    { "path": "apps/control-api" }
+  ]
+}

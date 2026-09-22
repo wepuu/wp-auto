@@ -1,17 +1,23 @@
 # ADR-003: OAuth engine selection gate
 
-- Status: accepted for the Phase 2.0.1 spike; production selection remains a Phase 2.0.2 decision
+- Status: accepted for Phase 2.0.2 implementation; production release remains gated
 - Date: 2026-09-16
 
 ## Decision
 
 Use a mature Authorization Server behind an internal provider-neutral adapter.
-The spike selects `node-oidc-provider` 9.12.2 as the candidate for the next
-phase. Auth0 is the managed comparison candidate, but tenant
+Phase 2.0.2 selects pinned `node-oidc-provider` 9.12.2 as the authorization
+engine behind that boundary. Auth0 was the managed comparison candidate, but tenant
 `dev-o173hfg1cbmd0crj` is rejected for the frozen profile because it advertises
 and accepts `plain` PKCE. The negative result is recorded in
 [PHASE_2_0_1_EVIDENCE.json](PHASE_2_0_1_EVIDENCE.json). No audience or PKCE
 compatibility shim may weaken the contract.
+
+The provider's experimental `ExternalSigningKey` boundary is permitted only
+behind the internal key-custody adapter. Its live AWS KMS contract passed on
+2026-09-21. Rotation, JWKS, PHP interoperability, and independent security
+qualification remain required before production release. Failure cannot fall
+back to an in-process or file-based private key.
 
 ## Required interface boundary
 

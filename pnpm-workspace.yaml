@@ -1,0 +1,11 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+allowBuilds:
+  esbuild: true
+
+minimumReleaseAgeExclude:
+  - '@aws-sdk/client-kms@3.1133.0'
+  - '@types/node@24.13.5'
+  - fastify@5.12.5

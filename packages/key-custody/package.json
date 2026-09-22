@@ -1,0 +1,12 @@
+{
+  "name": "@wepuu/key-custody",
+  "private": true,
+  "version": "0.2.0",
+  "type": "module",
+  "exports": { ".": "./dist/index.js" },
+  "types": "./dist/index.d.ts",
+  "dependencies": {
+    "@aws-sdk/client-kms": "3.1133.0",
+    "zod": "4.6.5"
+  }
+}

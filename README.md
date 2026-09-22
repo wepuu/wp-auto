@@ -10,8 +10,13 @@ data plane direct between the client and WordPress.
 Phase 2.0.0 and Phase 2.0.1 are accepted. The local provider, HTTPS,
 persistence, PHP, and Codex 0.154.0 pre-registered OAuth gates pass; Auth0 is
 rejected for the frozen S256 profile and WorkBuddy 5.5.2 is unsupported. The
-executable work is isolated under `spikes/oauth-conformance/` and is not
-production code. Phase 2.0.2 has not started.
+Phase 2.0.1 executable work remains isolated under `spikes/oauth-conformance/`.
+Phase 2.0.2 Platform Foundation is implemented locally on an isolated branch:
+strict TypeScript packages, an authorization service, a control API,
+PostgreSQL RLS, content-free audit records, and an AWS KMS asymmetric signing
+adapter. It is not deployed and does not modify the WordPress connector. The
+live AWS KMS contract passes. The hosted CI run remains the final exit evidence,
+so the phase is not yet closed.
 
 ## Architecture
 
@@ -40,6 +45,26 @@ WordPress passwords or Application Passwords.
 - Authentication, tenant boundaries, audience validation, token validation, and
   uncertain security states fail closed.
 
+## Foundation workspace
+
+Requirements are Node.js 24, pnpm 11.19.0, Docker Desktop, and PostgreSQL 16
+through the local test fixture. No `.env` file or local production signing key
+is supported.
+
+```powershell
+pnpm install --frozen-lockfile
+docker compose -f compose.test.yaml up -d --wait postgres
+$env:WEPUU_TEST_DATABASE_URL = 'postgresql://postgres:conformance@127.0.0.1:55433/wepuu_test'
+pnpm check
+pnpm test:database
+docker compose -f compose.test.yaml down
+```
+
+The authorization service requires an existing AWS KMS asymmetric RSA
+`SIGN_VERIFY` key through `AWS_REGION`, `WEPUU_KMS_KEY_ID`, and
+`WEPUU_KMS_KID`. Missing or invalid custody configuration prevents startup;
+there is no file-key fallback.
+
 ## Documentation map
 
 - [Roadmap](docs/ROADMAP.md)
@@ -47,6 +72,10 @@ WordPress passwords or Application Passwords.
 - [OAuth contract](docs/PHASE_2_0_AUTH_CONTRACT.md)
 - [ADR-003 provider gate](docs/ADR-003-OAUTH-ENGINE-SELECTION.md)
 - [ADR-004 token profile](docs/ADR-004-TOKEN-AND-SIGNING-PROFILE.md)
+- [ADR-005 platform foundation](docs/ADR-005-PLATFORM-FOUNDATION.md)
+- [Phase 2.0.2 validation](docs/PHASE_2_0_2_VALIDATION.md)
+- [Phase 2.0.2 versions](docs/PHASE_2_0_2_VERSION_MATRIX.md)
+- [AWS KMS test setup](docs/AWS_KMS_TEST_SETUP.md)
 - [Phase 2.0.1 validation](docs/PHASE_2_0_1_VALIDATION.md)
 - [Phase 2.0.1 compatibility](docs/PHASE_2_0_1_COMPATIBILITY_MATRIX.md)
 - [Phase 2.0.1 evidence](docs/PHASE_2_0_1_EVIDENCE.json)

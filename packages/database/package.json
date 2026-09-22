@@ -1,0 +1,14 @@
+{
+  "name": "@wepuu/database",
+  "private": true,
+  "version": "0.2.0",
+  "type": "module",
+  "exports": { ".": "./dist/index.js" },
+  "types": "./dist/index.d.ts",
+  "dependencies": {
+    "@wepuu/contracts": "workspace:*",
+    "@wepuu/security-audit": "workspace:*",
+    "pg": "8.23.0",
+    "zod": "4.6.5"
+  }
+}

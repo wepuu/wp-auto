@@ -1,0 +1,20 @@
+name: wepuu-platform-test
+
+services:
+  postgres:
+    image: postgres:16.10-alpine
+    environment:
+      POSTGRES_DB: wepuu_test
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: conformance
+    ports:
+      - "127.0.0.1:55433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d wepuu_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    tmpfs:
+      - /var/lib/postgresql/data
+    security_opt:
+      - no-new-privileges:true

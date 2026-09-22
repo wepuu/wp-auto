@@ -3,6 +3,12 @@ spikes/oauth-conformance/node_modules/
 spikes/oauth-conformance/php/vendor/
 spikes/oauth-conformance/php/.runtime-fixture.json
 
+# Phase 2.0.2 workspace artifacts
+node_modules/
+**/dist/
+.pnpm-store/
+.coverage/
+
 # Local credentials and provider state
 .env
 .env.*
