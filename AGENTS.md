@@ -7,16 +7,17 @@ This repository defines and will eventually implement the WePuu OAuth 2.1 contro
 ## Current phase
 
 Phase 2.0.1 and Phase 2.0.2 are accepted and closed. Phase 2.0.3A platform
-pairing and grants work is approved and in progress. Until 2.0.3B is explicitly
-approved:
+pairing and grants work is accepted. Phase 2.0.3B connector pairing and local
+consent work is approved and in progress on `codex/phase-2-0-3b-pairing`:
 
 - preserve the accepted Phase 2.0.2 foundation and its validation evidence;
-- pairing/grant platform code, migrations, fixtures, and tests are allowed;
-- do not modify the connector or add production deployment or later-phase
-  implementation without explicit approval;
+- pairing/grant platform and connector code, migrations, fixtures, and tests
+  are allowed within the accepted Phase 2.0.3 contracts;
+- do not add production deployment or Phase 2.0.4/2.0.5 implementation without
+  explicit approval;
 - pushing Phase 2.0.2 closure commits to `codex/phase-2-0-2` solely for hosted
   CI is authorized; Phase 2.0.3 push remains separately gated;
-- do not modify `D:\Codex\wp-auto-connector`; it is a read-only reference implementation;
+- do not push either Phase 2.0.3 branch without explicit approval;
 - keep all architecture decisions consistent with the documents under `docs/`.
 
 ## Non-negotiable product boundaries

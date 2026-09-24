@@ -1,0 +1,24 @@
+{
+	auto_https disable_redirects
+}
+
+https://platform.example.test {
+	tls internal
+	handle_path /conformance/* {
+		root * /srv/conformance
+		header Cache-Control "no-store"
+		header Referrer-Policy "no-referrer"
+		header Content-Security-Policy "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+		file_server
+	}
+	handle {
+		reverse_proxy control:3000
+	}
+}
+
+https://site.example.test, https://site-moved.example.test {
+	tls internal
+	reverse_proxy wordpress:80 {
+		header_up X-Forwarded-Proto https
+	}
+}

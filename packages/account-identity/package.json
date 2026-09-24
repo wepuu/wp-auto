@@ -1,0 +1,13 @@
+{
+  "name": "@wepuu/account-identity",
+  "private": true,
+  "version": "0.3.0",
+  "type": "module",
+  "exports": { ".": "./dist/index.js" },
+  "types": "./dist/index.d.ts",
+  "dependencies": {
+    "jose": "6.2.12",
+    "openid-client": "6.8.8",
+    "zod": "4.6.5"
+  }
+}

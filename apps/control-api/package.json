@@ -6,8 +6,11 @@
   "exports": { ".": "./dist/server.js" },
   "types": "./dist/server.d.ts",
   "dependencies": {
+    "@wepuu/account-identity": "workspace:*",
     "@wepuu/contracts": "workspace:*",
     "@wepuu/database": "workspace:*",
+    "@wepuu/key-custody": "workspace:*",
+    "@wepuu/pairing": "workspace:*",
     "@wepuu/security-audit": "workspace:*",
     "fastify": "5.12.5",
     "zod": "4.6.5"

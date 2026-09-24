@@ -4,6 +4,7 @@ import {
   Database,
   PostgresGrantClaimsResolver,
   PostgresGrantRepository,
+  PostgresAccountSessionStore,
   PostgresOidcAdapter,
   PostgresPairingRepository,
   PostgresResourceRegistry,
@@ -35,6 +36,52 @@ test('PostgreSQL RLS denies cross-tenant and missing-membership access', { skip:
             ($3, 'active', 'https://identity.example.test', $4),
             ($5, 'active', 'https://identity.example.test', $6)`,
     [accountA, 'a'.repeat(64), accountB, 'b'.repeat(64), accountC, 'c'.repeat(64)]
+  );
+
+  const sessions = new PostgresAccountSessionStore(database);
+  const sessionHash = Buffer.alloc(32, 7);
+  const createdSession = await sessions.createSession({
+    candidateAccountId: 'account_LOGIN0001',
+    identityIssuer: 'https://login.example.test/',
+    identitySubjectHash: 'h'.repeat(43),
+    sessionHash,
+    authenticatedAt: new Date('2026-09-22T00:00:00.000Z'),
+    expiresAt: new Date('2099-09-22T12:00:00.000Z')
+  });
+  assert.equal(createdSession?.accountId, 'account_LOGIN0001');
+  assert.equal((await sessions.createSession({
+    candidateAccountId: 'account_OTHER0001',
+    identityIssuer: 'https://login.example.test/',
+    identitySubjectHash: 'h'.repeat(43),
+    sessionHash: Buffer.alloc(32, 8),
+    authenticatedAt: new Date('2026-09-22T00:00:01.000Z'),
+    expiresAt: new Date('2099-09-22T12:00:01.000Z')
+  }))?.accountId, 'account_LOGIN0001');
+  assert.equal((await sessions.resolve(sessionHash))?.accountId, 'account_LOGIN0001');
+  await sessions.revoke(sessionHash);
+  assert.equal(await sessions.resolve(sessionHash), undefined);
+  const expiredHash = Buffer.alloc(32, 10);
+  await sessions.createSession({
+    candidateAccountId: 'account_EXPIRED01',
+    identityIssuer: 'https://login.example.test/',
+    identitySubjectHash: 'i'.repeat(43),
+    sessionHash: expiredHash,
+    authenticatedAt: new Date('2020-01-01T00:00:00.000Z'),
+    expiresAt: new Date('2020-01-01T12:00:00.000Z')
+  });
+  assert.equal(await sessions.resolve(expiredHash), undefined);
+  await admin.query("UPDATE platform.accounts SET status = 'suspended' WHERE id = 'account_LOGIN0001'");
+  assert.equal(await sessions.createSession({
+    candidateAccountId: 'account_OTHER0002',
+    identityIssuer: 'https://login.example.test/',
+    identitySubjectHash: 'h'.repeat(43),
+    sessionHash: Buffer.alloc(32, 9),
+    authenticatedAt: new Date('2026-09-22T00:00:02.000Z'),
+    expiresAt: new Date('2099-09-22T12:00:02.000Z')
+  }), undefined);
+  await assert.rejects(
+    database.withIdentityWriter((client) => client.query('SELECT 1 FROM platform.tenants')),
+    (error: unknown) => typeof error === 'object' && error !== null && 'code' in error && error.code === '42501'
   );
   await admin.query("INSERT INTO platform.tenants (id, status) VALUES ($1, 'active'), ($2, 'active')", [tenantA, tenantB]);
   await admin.query(
@@ -157,7 +204,10 @@ test('PostgreSQL RLS denies cross-tenant and missing-membership access', { skip:
   assert.equal(await database.withTenant(memberContext, (client) => new SiteRepository().disconnect(client, tenantA, 'site_00000001')), false);
 
   const grants = new PostgresGrantRepository(database, ownerContext);
-  await grants.createPending({
+  const grantCreatedAt = new Date();
+  const grantExpiresAt = new Date(grantCreatedAt.getTime() + 60_000);
+  const grantRequestDigest = secretHash('grant-create-request-0001');
+  const createdGrant = await grants.createPending({
     tenantId: tenantA,
     id: 'grant_00000001',
     siteId: 'site_00000001',
@@ -166,9 +216,21 @@ test('PostgreSQL RLS denies cross-tenant and missing-membership access', { skip:
     scopes: ['mcp:read'],
     resource,
     challengeHash: secretHash('challenge_00000000000000000000000'),
-    expiresAt: new Date(Date.now() + 60_000),
-    consentVersion: '1'
+    expiresAt: grantExpiresAt,
+    consentVersion: '1',
+    idempotencyKey: 'idempotency_CREATE001',
+    requestDigest: grantRequestDigest,
+    createdAt: grantCreatedAt
   });
+  assert.equal(createdGrant.id, 'grant_00000001');
+  const replayedGrant = await grants.createPending({
+    tenantId: tenantA, id: 'grant_ignored0001', siteId: 'site_00000001', subjectId: accountA,
+    clientId: 'client_00000001', scopes: ['mcp:read'], resource,
+    challengeHash: secretHash('challenge_00000000000000000000000'), expiresAt: new Date(grantExpiresAt.getTime() + 10_000),
+    consentVersion: '1', idempotencyKey: 'idempotency_CREATE001', requestDigest: grantRequestDigest,
+    createdAt: new Date(grantCreatedAt.getTime() + 10_000)
+  });
+  assert.equal(replayedGrant.id, 'grant_00000001');
   await grants.activate(tenantA, 'grant_00000001', 'idempotency_GRANT001', proof.thumbprint);
   assert.deepEqual(await new PostgresGrantClaimsResolver(database).resolve(accountA), {
     tenantId: tenantA,

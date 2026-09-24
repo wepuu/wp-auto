@@ -50,18 +50,39 @@ importers:
 
   apps/control-api:
     dependencies:
+      '@wepuu/account-identity':
+        specifier: workspace:*
+        version: link:../../packages/account-identity
       '@wepuu/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
       '@wepuu/database':
         specifier: workspace:*
         version: link:../../packages/database
+      '@wepuu/key-custody':
+        specifier: workspace:*
+        version: link:../../packages/key-custody
+      '@wepuu/pairing':
+        specifier: workspace:*
+        version: link:../../packages/pairing
       '@wepuu/security-audit':
         specifier: workspace:*
         version: link:../../packages/security-audit
       fastify:
         specifier: 5.12.5
         version: 5.12.5
+      zod:
+        specifier: 4.6.5
+        version: 4.6.5
+
+  packages/account-identity:
+    dependencies:
+      jose:
+        specifier: 6.2.12
+        version: 6.2.12
+      openid-client:
+        specifier: 6.8.8
+        version: 6.8.8
       zod:
         specifier: 4.6.5
         version: 4.6.5
@@ -95,6 +116,12 @@ importers:
       '@aws-sdk/client-kms':
         specifier: 3.1133.0
         version: 3.1133.0
+      '@keyobject/aws-kms':
+        specifier: 0.0.2
+        version: 0.0.2
+      jose:
+        specifier: 6.1.0
+        version: 6.1.0
       zod:
         specifier: 4.6.5
         version: 4.6.5
@@ -432,6 +459,45 @@ packages:
   '@humanwhocodes/retry@0.4.3':
     resolution: {integrity: sha512-bV0Tgo9K4hfPCek+aMAn81RppFKv2ySDQeMoSZuvTASywNTnVJCArCZE2FWqpvIatKu7VMRLWlR1EazvVhDyhQ==}
     engines: {node: '>=18.18'}
+
+  '@keyobject/aws-kms-darwin-arm64@0.0.2':
+    resolution: {integrity: sha512-thlAHOvO2dPP+mSoWcD3XkqMesaBxgNC2RU08UVZqoldwMLdKg61eU90ouWeukh5WMIsXSPZKBLMT5n/vom4Vg==}
+    engines: {node: '>=26.7.0'}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@keyobject/aws-kms-linux-arm64@0.0.2':
+    resolution: {integrity: sha512-W5GAigIdIR9LlNqcil9Y975pC2i5GHTcP79byUP8nuQR14lsIGr0v3Oq94gxjdXe5M9pvvzxFugKk9DFZZotxg==}
+    engines: {node: '>=26.7.0'}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
+  '@keyobject/aws-kms-linux-x64@0.0.2':
+    resolution: {integrity: sha512-MdFDcAx9eJ8aa6NqPGKQmLE0/PspavBz2xkL2caHNOjgL3UYOHYVhEq7WMtkSXJt+AypfOrsQdwf77ZPUj4vzw==}
+    engines: {node: '>=26.7.0'}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@keyobject/aws-kms-linuxmusl-arm64@0.0.2':
+    resolution: {integrity: sha512-wYTvnphGokLYWpgh4YTtuwq1QimkO2oPoaapcFBLSNS+C7697rCjoyo7M3VgwpWypzM3jufysGadNY3jyi24Xg==}
+    engines: {node: '>=26.7.0'}
+    cpu: [arm64]
+    os: [linux]
+    libc: [musl]
+
+  '@keyobject/aws-kms-linuxmusl-x64@0.0.2':
+    resolution: {integrity: sha512-UzKd9nlhro+04W7yjVQGjlfo3iCBMmdO/HycgMpjMCepGL7kHJIgv+DhpIwv/cm2ahpKVp1VVrpyooGeE0lDGA==}
+    engines: {node: '>=26.7.0'}
+    cpu: [x64]
+    os: [linux]
+    libc: [musl]
+
+  '@keyobject/aws-kms@0.0.2':
+    resolution: {integrity: sha512-RBNHHYgnNcK7y2mGd9o6pS8wYjedNHtFaoeR6aPDOCBVeeAW//Q+TTUDARQRjx1KMUXFbV5cSJJHkNHsqxYtMw==}
+    engines: {node: '>=26.7.0'}
+    hasBin: true
 
   '@pinojs/redact@0.4.0':
     resolution: {integrity: sha512-k2ENnmBugE/rzQfEcdWHcCY+/FM3VLzH9cYEsbdsoqrvzAKRhUZeRNhAZvB8OitQJ1TBed3yqWtdjzS6wJKBwg==}
@@ -1008,6 +1074,9 @@ packages:
     resolution: {integrity: sha512-+EUsqGPLsM+j/zdChZjsnX51g4XrHFOIXwfnCVPGlQk/k5giakcKsuxCObBRu6DSm9opw/O6slWbJdghQM4bBg==}
     engines: {node: '>= 0.6'}
 
+  oauth4webapi@3.8.8:
+    resolution: {integrity: sha512-8N28E+a/oxfXWBgOMt+ZP/JUf/XR+IFbvkAEPP3gznXOMv9BpAAwiIj0TFNz3tGTPc0ZQ8zmWBNgN1nAys0gng==}
+
   oidc-provider@9.12.2:
     resolution: {integrity: sha512-UaqeVpeijTocxVbDowPqPKloGjb49bxRSzHfChyI86teR+6xxoiI1V5jv8CHL2AIUmA2rg0xTZcYaC9GguympA==}
 
@@ -1018,6 +1087,9 @@ packages:
   on-finished@2.4.1:
     resolution: {integrity: sha512-oVlzkg3ENAhCk2zdv7IJwd/QUD4z2RxRwpkcGY8psCVcCYZNq4wYnVWALHM+brtuJjePWiYF/ClmuDr8Ch5+kg==}
     engines: {node: '>= 0.8'}
+
+  openid-client@6.8.8:
+    resolution: {integrity: sha512-ZsucJA5Ad04Uv7YN4ql+s4GXNmb9uAYQwyJTsJx7CH/MX3JZioLE2pVKi1SC+YrbSLA4Px3Gi30dMjgOZtb6pA==}
 
   optionator@0.9.4:
     resolution: {integrity: sha512-6IpQ7mKUxRcZNLIObR0hz7lxsapSSIYNZJwXPGeF0mTVqGKFIXj1DQcMoT22S3ROcLyY/rz0PWaWZ9ayWmad9g==}
@@ -1603,6 +1675,29 @@ snapshots:
   '@humanwhocodes/module-importer@1.0.1': {}
 
   '@humanwhocodes/retry@0.4.3': {}
+
+  '@keyobject/aws-kms-darwin-arm64@0.0.2':
+    optional: true
+
+  '@keyobject/aws-kms-linux-arm64@0.0.2':
+    optional: true
+
+  '@keyobject/aws-kms-linux-x64@0.0.2':
+    optional: true
+
+  '@keyobject/aws-kms-linuxmusl-arm64@0.0.2':
+    optional: true
+
+  '@keyobject/aws-kms-linuxmusl-x64@0.0.2':
+    optional: true
+
+  '@keyobject/aws-kms@0.0.2':
+    optionalDependencies:
+      '@keyobject/aws-kms-darwin-arm64': 0.0.2
+      '@keyobject/aws-kms-linux-arm64': 0.0.2
+      '@keyobject/aws-kms-linux-x64': 0.0.2
+      '@keyobject/aws-kms-linuxmusl-arm64': 0.0.2
+      '@keyobject/aws-kms-linuxmusl-x64': 0.0.2
 
   '@pinojs/redact@0.4.0': {}
 
@@ -2269,6 +2364,8 @@ snapshots:
 
   negotiator@0.6.3: {}
 
+  oauth4webapi@3.8.8: {}
+
   oidc-provider@9.12.2(supports-color@7.2.0):
     dependencies:
       debug: 4.4.3(supports-color@7.2.0)
@@ -2282,6 +2379,11 @@ snapshots:
   on-finished@2.4.1:
     dependencies:
       ee-first: 1.1.1
+
+  openid-client@6.8.8:
+    dependencies:
+      jose: 6.2.12
+      oauth4webapi: 3.8.8
 
   optionator@0.9.4:
     dependencies:

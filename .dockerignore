@@ -1,0 +1,10 @@
+.git
+.github
+.pnpm-store
+.tmp
+node_modules
+docs
+spikes
+test/account-oidc/*.crt
+npm-debug.log*
+pnpm-debug.log*

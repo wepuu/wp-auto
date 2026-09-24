@@ -34,7 +34,7 @@ WordPress content is deliberately outside the platform boundary. Its appearance 
 | T03 | Domain ownership transfer | bind exact canonical endpoint; suspend and re-pair on any material URI change | domain-change and stale-proof tests |
 | T04 | Redirect URI manipulation | exact registration and comparison; narrow RFC 8252 loopback-port exception | alternate scheme/host/path/query/port tests |
 | T05 | Authorization code interception | PKCE S256, single-use short code, exact client/redirect/resource binding | wrong verifier, reuse and race tests |
-| T06 | Login CSRF or mix-up | unpredictable state, issuer response validation, fixed issuer metadata, no silent issuer fallback | missing/mismatched state and issuer tests |
+| T06 | Login CSRF, mix-up, or account correlation leak | encrypted five-minute transaction cookie, unpredictable state/nonce, PKCE S256, fixed issuer metadata, exact callback, RS256 ID token, issuer-bound subject HMAC, no silent issuer fallback | tampered/expired transaction, missing/mismatched state/nonce/issuer, unsafe return path, outage and raw-sub absence tests |
 | T07 | Audience confusion/confused deputy | exact RFC 8707 resource in both requests and exact single `aud` at RS | origin, sibling path, slash, case, alias, array and wildcard tests |
 | T08 | Token passthrough | platform has no MCP proxy route; outbound allow-list; architecture/data-flow checks | route inventory and egress tests |
 | T09 | Access-token replay | short expiry, TLS, unique `jti`, no logging, optional local denylist; evaluate sender constraint later | duplicate/high-risk revoke tests |
@@ -51,6 +51,7 @@ WordPress content is deliberately outside the platform boundary. Its appearance 
 | T20 | Deletion leakage | tombstone workflow, outbox purge, backup expiry, verified deletion report | deletion and restore tests |
 | T21 | Supply-chain compromise | pinned packages, lockfile review, provenance/SBOM, vulnerability response, no remote executable code | CI policy and release evidence |
 | T22 | Platform outage | cached JWKS safety window, short token lifetime, local revoke, AP independence, fail-closed unsafe cache | outage/failover exercises |
+| T23 | Platform session theft or fixation | 256-bit opaque value, digest-only storage, `__Host-` Secure HttpOnly SameSite cookie, 12-hour absolute expiry, rotation on login, exact-origin logout | plaintext absence, malformed/expired/revoked cookie, fixation and logout-CSRF tests |
 
 ## Abuse cases
 

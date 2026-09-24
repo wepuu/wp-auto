@@ -25,10 +25,12 @@ This is a logical model, not a migration specification. Names and field types ma
 ### accounts
 
 - `id`
-- minimum login-provider subject and contact fields required for account recovery
+- exact login-provider issuer and an HMAC-SHA-256 digest of `issuer || NUL || sub`
 - MFA/recovery status references
 - lifecycle timestamps
 
+The raw external `sub`, provider profile, email, access token, refresh token, and
+ID token are not stored. The HMAC key is separate from cookie and signing keys.
 This is platform identity only; it must not be conflated with WordPress identity.
 
 ### tenant_memberships
@@ -82,7 +84,18 @@ The platform record does not contain `wp_user_id`, WordPress email, username, ro
 Pending grants store only a consent challenge digest and short expiry. Paired
 sites store an Ed25519 public JWK and thumbprint; the site private key remains
 WordPress-local. Platform account sessions store only a SHA-256 session-token
-digest and are read through a dedicated non-login database role.
+digest, upstream issuer, authentication/expiry timestamps, and revocation time.
+They are read and written through separate least-privilege non-login database
+roles. Plain session tokens and OIDC transaction state never enter PostgreSQL.
+
+Migration `004_grant_reconsent.sql` replaces the original permanent
+tenant/site/subject/client uniqueness constraint with a partial unique index
+over `pending`, `active`, and `suspended` rows. This preserves one live grant
+while allowing a new explicit consent after a prior row is revoked. Completion
+idempotency records retain only a request digest and opaque result reference.
+The raw grant challenge is deterministically recoverable for an identical
+bounded retry only by the control process using the dedicated grant-idempotency
+HMAC key; neither the key nor raw challenge is persisted.
 
 ### authorization_transactions and authorization_codes
 

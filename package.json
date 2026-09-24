@@ -4,7 +4,7 @@
   "version": "0.3.0",
   "packageManager": "pnpm@11.19.0",
   "engines": {
-    "node": ">=24 <25"
+    "node": ">=26.7 <27"
   },
   "scripts": {
     "build": "tsc -b",
@@ -12,11 +12,13 @@
     "typecheck": "tsc -b --pretty false",
     "lint": "eslint apps packages",
     "test": "tsx --test \"packages/*/test/*.test.ts\" \"apps/*/src/*.test.ts\"",
-    "test:kms:live": "tsx --test --test-name-pattern=\"live AWS KMS contract\" packages/key-custody/test/aws-kms.test.ts",
+    "test:kms:live": "node packages/key-custody/node_modules/@keyobject/aws-kms/bin/awskms.js exec -- node --import tsx --test --test-name-pattern=\"live AWS KMS contract|live AWS KMS JOSE consent\" packages/key-custody/test/aws-kms.test.ts",
+    "test:account-oidc:discovery": "tsc -b && node scripts/check-account-oidc-discovery.mjs",
     "check": "pnpm typecheck && pnpm lint && pnpm test",
     "audit:high": "pnpm audit --audit-level high",
     "test:database": "tsx --test packages/database/test/tenant-isolation.test.ts",
-    "db:migrate": "tsx packages/database/src/cli.ts migrate"
+    "db:migrate": "tsx packages/database/src/cli.ts migrate",
+    "start:control": "node packages/key-custody/node_modules/@keyobject/aws-kms/bin/awskms.js exec -- node apps/control-api/dist/main.js"
   },
   "devDependencies": {
     "@eslint/js": "9.39.5",

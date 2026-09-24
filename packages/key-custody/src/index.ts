@@ -12,7 +12,8 @@ import {
   type GetPublicKeyCommandOutput,
   type SignCommandOutput
 } from '@aws-sdk/client-kms';
-import { createPublicKey, type JsonWebKey, type KeyObject } from 'node:crypto';
+import { createPrivateKey, createPublicKey, type JsonWebKey, type KeyObject } from 'node:crypto';
+import { SignJWT } from 'jose';
 import { z } from 'zod';
 
 export const KeyCustodyConfigSchema = z.object({
@@ -32,6 +33,54 @@ export interface SigningKeyDescriptor {
 export interface KeyCustody {
   describeSigningKey(): Promise<SigningKeyDescriptor>;
   sign(signingInput: Uint8Array): Promise<Uint8Array>;
+}
+
+/** Signs the bounded platform consent request through a JOSE-managed JWS. */
+export class JoseConsentRequestSigner {
+  readonly #privateKey: KeyObject;
+  readonly #kid: string;
+
+  constructor(privateKey: KeyObject, kid: string) {
+    if (privateKey.type !== 'private' || !/^[A-Za-z0-9_-]{8,128}$/u.test(kid)) {
+      throw new KeyCustodyUnavailableError();
+    }
+    this.#privateKey = privateKey;
+    this.#kid = kid;
+  }
+
+  async sign(payload: Readonly<Record<string, unknown>>): Promise<string> {
+    try {
+      return await new SignJWT({ ...payload })
+        .setProtectedHeader({ alg: 'RS256', typ: 'wepuu-consent-request+jwt', kid: this.#kid })
+        .sign(this.#privateKey);
+    } catch {
+      throw new KeyCustodyUnavailableError();
+    }
+  }
+}
+
+/**
+ * Load one AWS KMS asymmetric key through the Node 26.7+ OpenSSL provider.
+ * The process must start with `--import @keyobject/aws-kms/register`.
+ */
+export function createAwsKmsConsentRequestSigner(input: KeyCustodyConfig): JoseConsentRequestSigner {
+  const config = KeyCustodyConfigSchema.parse(input);
+  const keyArn = /^arn:aws(?:-us-gov|-cn)?:kms:([a-z0-9-]+):\d{12}:key\/[0-9a-f-]{36}$/iu.exec(config.keyId);
+  if (!/^[a-z]{2}(?:-gov)?-[a-z0-9-]+-\d$/u.test(config.region)
+    || keyArn?.[1] !== config.region) {
+    throw new KeyCustodyUnavailableError();
+  }
+  try {
+    // @types/node 24 does not yet describe Node 26.7's OpenSSL STORE URL overload.
+    // The production engine floor and runtime acceptance test guard this narrow cast.
+    const createPrivateKeyFromStoreUrl = createPrivateKey as unknown as (options: { readonly key: URL }) => KeyObject;
+    const key = createPrivateKeyFromStoreUrl({
+      key: new URL(`aws-kms:key-id=${config.keyId};region=${config.region}`)
+    });
+    return new JoseConsentRequestSigner(key, config.kid);
+  } catch {
+    throw new KeyCustodyUnavailableError();
+  }
 }
 
 export class KeyCustodyUnavailableError extends Error {

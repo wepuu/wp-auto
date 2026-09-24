@@ -2,11 +2,12 @@
 
 This document freezes endpoint responsibilities and security semantics, not final URL spelling or payload schemas. All production endpoints use HTTPS, bounded JSON, strict content types, request IDs, rate limits, and safe error responses.
 
-Phase 2.0.3A extends the foundation with hashed server-side account-session
-consumption, tenant-scoped site and grant views, revoke/disconnect mutations,
-pairing/grant repositories, and active resource/grant resolvers. Session minting
-through the external account IdP and real WordPress pairing/consent remain exit
-gates. Until those gates pass, the implementation is not production-ready.
+Phase 2.0.3A extends the foundation with external OIDC account login, hashed
+server-side account-session minting and consumption, tenant-scoped site and
+grant views, revoke/disconnect mutations, pairing/grant repositories, and active
+resource/grant resolvers. Live browser callback acceptance has passed; the real
+WordPress browser pairing/consent acceptance path remains an exit gate. Until
+that gate passes, the implementation is not production-ready.
 
 ## Public OAuth and MCP discovery surface
 
@@ -36,6 +37,19 @@ Conceptual operations:
 
 Implemented Phase 2.0.3A routes additionally include:
 
+- `GET /v1/account/oidc/login?return_to={local_path}`;
+- `GET /v1/account/oidc/callback`;
+- `GET /v1/account/session`;
+- `POST /v1/account/logout`;
+- `GET /v1/pairing/start` (fixed fragment-consuming page; the fragment is not
+  received or logged by the server);
+- `POST /v1/tenants/{tenant_id}/pairing` (exact-origin, authenticated pairing
+  completion with bounded JSON);
+- `POST /v1/tenants/{tenant_id}/sites/{site_id}/grants` (create one pending
+  grant and return the fragment-based WordPress consent URL);
+- `GET /v1/consent/complete` (fixed fragment-consuming completion page);
+- `POST /v1/tenants/{tenant_id}/grants/{grant_id}/complete` (approve or deny
+  with a site-signed proof, challenge, and idempotency key);
 - `GET /v1/tenants/{tenant_id}/sites`;
 - `GET /v1/tenants/{tenant_id}/grants`;
 - `POST /v1/tenants/{tenant_id}/grants/{grant_id}/revoke`;
@@ -44,14 +58,31 @@ Implemented Phase 2.0.3A routes additionally include:
 Mutations require a bounded `Idempotency-Key`; revoke and disconnect are
 naturally idempotent and return no object-existence signal.
 
+Grant creation accepts only the frozen five MCP scopes in canonical order.
+The KMS-signed request uses `alg=RS256`,
+`typ=wepuu-consent-request+jwt`, the pinned KMS `kid`, a single-string audience
+equal to the exact resource, and a maximum 120-second lifetime. Consent results
+return in a fragment and are removed from browser history before same-origin
+completion; proofs and challenges are never placed in query strings or audit
+records.
+
+Account login uses a five-minute encrypted and authenticated transaction cookie
+containing state, nonce, PKCE verifier, and a validated local return path. The
+callback validates the configured issuer, code response, state, nonce, PKCE,
+RS256 ID token, and exact callback before creating a 12-hour opaque session.
+Only the SHA-256 session digest and an issuer-bound HMAC of the upstream subject
+are persisted. Cookies use the `__Host-` prefix, `Secure`, `HttpOnly`,
+`SameSite=Lax`, and `Path=/`; logout requires an exact trusted `Origin`.
+
 Every operation derives account identity from the platform session and verifies tenant membership. Object IDs alone never authorize access.
 
 ## WordPress control endpoints
 
-Future connector operations, separately approved:
+Approved Phase 2.0.3B connector operations now include:
 
-- begin pairing from authenticated wp-admin;
-- expose bounded pairing proof/status;
+- begin pairing from authenticated wp-admin through a separate nonce-protected
+  Connect action;
+- expose `POST /wp-json/wp-auto/v1/pairing/proof` with bounded proof/status;
 - complete local-user consent;
 - locally list/revoke grants;
 - receive or poll signed revocation events;

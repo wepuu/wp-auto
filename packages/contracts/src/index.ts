@@ -5,6 +5,22 @@ const opaqueIdPattern = /^[A-Za-z0-9_-]{8,128}$/u;
 export const OpaqueIdSchema = z.string().regex(opaqueIdPattern);
 export type OpaqueId = z.infer<typeof OpaqueIdSchema>;
 export const OAuthClientIdSchema = z.string().min(8).max(256).regex(/^[A-Za-z0-9._~-]+$/u);
+export const McpScopeSchema = z.enum([
+  'mcp:read',
+  'mcp:content.write',
+  'mcp:media.write',
+  'mcp:taxonomy.write',
+  'mcp:seo.write'
+]);
+export type McpScope = z.infer<typeof McpScopeSchema>;
+export const MCP_SCOPE_ORDER: readonly McpScope[] = McpScopeSchema.options;
+export const McpScopeSetSchema = z.array(McpScopeSchema).min(1).max(MCP_SCOPE_ORDER.length)
+  .refine((scopes) => new Set(scopes).size === scopes.length, 'duplicate_scope')
+  .refine((scopes) => scopes.every((scope, index) => {
+    const previous = scopes[index - 1];
+    return index === 0 || (previous !== undefined
+      && MCP_SCOPE_ORDER.indexOf(previous) < MCP_SCOPE_ORDER.indexOf(scope));
+  }), 'scope_order_invalid');
 
 export const TenantContextSchema = z.object({
   tenantId: z.uuid(),
@@ -84,7 +100,7 @@ export const GrantViewSchema = z.object({
   siteId: OpaqueIdSchema,
   subjectId: OpaqueIdSchema,
   clientId: OAuthClientIdSchema,
-  scopes: z.array(z.string().regex(/^mcp:[a-z][a-z0-9_.-]{0,63}$/u)).min(1).max(16),
+  scopes: McpScopeSetSchema,
   status: GrantStatusSchema,
   consentVersion: z.string().regex(/^\d+$/u),
   createdAt: z.iso.datetime()

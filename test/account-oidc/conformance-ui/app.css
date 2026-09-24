@@ -1,0 +1,5 @@
+:root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+main { max-width: 44rem; margin: 4rem auto; padding: 0 1.25rem; }
+.actions { display: flex; gap: .75rem; flex-wrap: wrap; }
+button { padding: .7rem 1rem; font: inherit; cursor: pointer; }
+#status { margin-top: 1.5rem; }

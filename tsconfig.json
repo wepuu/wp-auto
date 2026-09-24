@@ -5,6 +5,7 @@
     { "path": "packages/security-audit" },
     { "path": "packages/database" },
     { "path": "packages/key-custody" },
+    { "path": "packages/account-identity" },
     { "path": "packages/pairing" },
     { "path": "packages/oauth-provider" },
     { "path": "apps/authorization-service" },

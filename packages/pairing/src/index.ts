@@ -1,12 +1,19 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { resolve4, resolve6 } from 'node:dns/promises';
 import { request as httpsRequest } from 'node:https';
-import { isIP } from 'node:net';
+import { isIP, type LookupFunction } from 'node:net';
 import { URL } from 'node:url';
 import ipaddr from 'ipaddr.js';
 import { calculateJwkThumbprint, compactVerify, importJWK, type JWK } from 'jose';
 import { z } from 'zod';
-import { CanonicalResourceSchema, OpaqueIdSchema, type CanonicalResource } from '@wepuu/contracts';
+import {
+  CanonicalResourceSchema,
+  McpScopeSetSchema,
+  OAuthClientIdSchema,
+  OpaqueIdSchema,
+  type CanonicalResource,
+  type McpScope
+} from '@wepuu/contracts';
 
 export const PAIRING_PROTOCOL_VERSION = '1';
 export const PAIRING_ATTEMPT_TTL_MS = 10 * 60 * 1_000;
@@ -17,7 +24,7 @@ const SitePublicJwkSchema = z.object({
   kty: z.literal('OKP'),
   crv: z.literal('Ed25519'),
   x: z.string().min(40).max(64),
-  kid: OpaqueIdSchema.optional(),
+  kid: OpaqueIdSchema,
   alg: z.literal('EdDSA').optional(),
   use: z.literal('sig').optional()
 }).strict();
@@ -30,11 +37,15 @@ const SiteProofClaimsSchema = z.object({
   tenant_id: z.uuid(),
   site_id: OpaqueIdSchema.optional(),
   pairing_attempt_id: OpaqueIdSchema.optional(),
+  platform_signing_key_sha256: z.string().regex(/^[A-Za-z0-9_-]{43}$/u).optional(),
+  platform_signing_kid: OpaqueIdSchema.optional(),
   grant_id: OpaqueIdSchema.optional(),
   subject_id: OpaqueIdSchema.optional(),
-  client_id: OpaqueIdSchema.optional(),
+  client_id: OAuthClientIdSchema.optional(),
   resource: CanonicalResourceSchema,
-  scope: z.array(z.string().regex(/^mcp:[a-z][a-z0-9_.-]{0,63}$/u)).min(1).max(16).optional(),
+  aud: CanonicalResourceSchema.optional(),
+  scope: McpScopeSetSchema.optional(),
+  decision: z.enum(['approved', 'denied']).optional(),
   challenge: z.string().regex(/^[A-Za-z0-9_-]{32,128}$/u),
   iat: z.number().int(),
   exp: z.number().int()
@@ -50,10 +61,14 @@ export interface ExpectedSiteProof {
   readonly resource: CanonicalResource;
   readonly challenge: string;
   readonly pairingAttemptId?: string;
+  readonly siteId?: string;
+  readonly platformSigningKeySha256?: string;
+  readonly platformSigningKid?: string;
   readonly grantId?: string;
   readonly clientId?: string;
   readonly subjectId?: string;
   readonly scopes?: readonly string[];
+  readonly decision?: 'approved' | 'denied';
   readonly now?: Date;
 }
 
@@ -97,8 +112,20 @@ export async function resolvePublicAddresses(hostname: string): Promise<readonly
   return addresses.sort();
 }
 
+export function createPinnedAddressLookup(pinnedAddress: string): LookupFunction {
+  const family = isIP(pinnedAddress);
+  if (family === 0) throw new Error('pinned_address_invalid');
+  return (_hostname, options, callback) => {
+    if (options.all === true) {
+      callback(null, [{ address: pinnedAddress, family }]);
+      return;
+    }
+    callback(null, pinnedAddress, family);
+  };
+}
+
 function exactClaim(actual: string | undefined, expected: string | undefined, name: string): void {
-  if (expected !== undefined && actual !== expected) throw new Error(`${name}_mismatch`);
+  if (actual !== expected) throw new Error(`${name}_mismatch`);
 }
 
 export async function verifySiteProof(
@@ -110,7 +137,9 @@ export async function verifySiteProof(
   const publicJwk = SitePublicJwkSchema.parse(publicJwkInput);
   const key = await importJWK(publicJwk as JWK, 'EdDSA');
   const verified = await compactVerify(compactJws, key, { algorithms: ['EdDSA'] });
-  if (verified.protectedHeader.typ !== 'wepuu-site-proof+jwt') throw new Error('proof_typ_invalid');
+  if (Object.keys(verified.protectedHeader).sort().join(',') !== 'alg,kid,typ'
+    || verified.protectedHeader.typ !== 'wepuu-site-proof+jwt'
+    || verified.protectedHeader.kid !== publicJwk.kid) throw new Error('proof_header_invalid');
   const claims = SiteProofClaimsSchema.parse(JSON.parse(new TextDecoder().decode(verified.payload)) as unknown);
   const now = Math.floor((expected.now ?? new Date()).getTime() / 1_000);
   if (claims.exp <= now || claims.iat > now + 5 || claims.exp - claims.iat > SITE_PROOF_TTL_SECONDS) {
@@ -123,12 +152,17 @@ export async function verifySiteProof(
   if (claims.resource !== expected.resource) throw new Error('resource_mismatch');
   if (claims.challenge !== expected.challenge) throw new Error('challenge_mismatch');
   exactClaim(claims.pairing_attempt_id, expected.pairingAttemptId, 'pairing_attempt');
+  exactClaim(claims.site_id, expected.siteId, 'site');
+  exactClaim(claims.platform_signing_key_sha256, expected.platformSigningKeySha256, 'platform_signing_key');
+  exactClaim(claims.platform_signing_kid, expected.platformSigningKid, 'platform_signing_kid');
   exactClaim(claims.grant_id, expected.grantId, 'grant');
   exactClaim(claims.client_id, expected.clientId, 'client');
   exactClaim(claims.subject_id, expected.subjectId, 'subject');
+  exactClaim(claims.aud, expected.kind === 'consent' ? expected.resource : undefined, 'audience');
+  exactClaim(claims.decision, expected.decision, 'decision');
   if (expected.scopes !== undefined) {
-    const actualScopes = [...(claims.scope ?? [])].sort();
-    const expectedScopes = [...expected.scopes].sort();
+    const actualScopes = [...(claims.scope ?? [])];
+    const expectedScopes = [...expected.scopes];
     if (actualScopes.length !== expectedScopes.length || actualScopes.some((scope, index) => scope !== expectedScopes[index])) {
       throw new Error('scope_mismatch');
     }
@@ -150,6 +184,9 @@ export interface SiteVerificationRequest {
   readonly platformIssuer: string;
   readonly tenantId: string;
   readonly pairingAttemptId: string;
+  readonly siteId: string;
+  readonly platformSigningKeyPem: string;
+  readonly platformSigningKid: string;
   readonly verifier: string;
   readonly challenge: string;
 }
@@ -170,9 +207,7 @@ async function requestSiteProof(url: URL, body: Uint8Array, pinnedAddress: strin
       method: 'POST',
       servername: url.hostname,
       headers: { 'content-type': 'application/json', 'content-length': String(body.byteLength), accept: 'application/json' },
-      lookup: (_hostname, _options, callback) => {
-        callback(null, pinnedAddress, isIP(pinnedAddress));
-      }
+      lookup: createPinnedAddressLookup(pinnedAddress)
     }, (response) => {
       if (response.statusCode !== 200) {
         response.resume();
@@ -225,7 +260,11 @@ export class HttpsSiteVerificationClient implements SiteVerificationClient {
     if (pinnedAddress === undefined || !isPublicAddress(pinnedAddress)) throw new Error('unsafe_destination');
     const body = Buffer.from(JSON.stringify({
       protocol_version: PAIRING_PROTOCOL_VERSION,
+      tenant_id: input.tenantId,
       pairing_attempt_id: input.pairingAttemptId,
+      site_id: input.siteId,
+      platform_signing_key_pem: input.platformSigningKeyPem,
+      platform_signing_kid: input.platformSigningKid,
       verifier: input.verifier,
       challenge: input.challenge,
       platform_issuer: input.platformIssuer,
@@ -238,7 +277,10 @@ export class HttpsSiteVerificationClient implements SiteVerificationClient {
       tenantId: input.tenantId,
       resource,
       challenge: input.challenge,
-      pairingAttemptId: input.pairingAttemptId
+      pairingAttemptId: input.pairingAttemptId,
+      siteId: input.siteId,
+      platformSigningKeySha256: createHash('sha256').update(input.platformSigningKeyPem, 'utf8').digest('base64url'),
+      platformSigningKid: input.platformSigningKid
     });
   }
 }
@@ -273,17 +315,25 @@ export class PairingService {
   readonly #repository: PairingRepository;
   readonly #verifier: SiteVerificationClient;
   readonly #platformIssuer: string;
+  readonly #platformSigningKeyPem: string;
+  readonly #platformSigningKid: string;
   readonly #now: () => Date;
 
   constructor(options: {
     repository: PairingRepository;
     verifier: SiteVerificationClient;
     platformIssuer: string;
+    platformSigningKeyPem: string;
+    platformSigningKid: string;
     now?: () => Date;
   }) {
     this.#repository = options.repository;
     this.#verifier = options.verifier;
     this.#platformIssuer = options.platformIssuer;
+    if (!/^-----BEGIN PUBLIC KEY-----\r?\n[A-Za-z0-9+/=\r\n]+-----END PUBLIC KEY-----\r?\n?$/u.test(options.platformSigningKeyPem)
+      || options.platformSigningKeyPem.length > 8_192) throw new Error('platform_signing_key_invalid');
+    this.#platformSigningKeyPem = options.platformSigningKeyPem;
+    this.#platformSigningKid = OpaqueIdSchema.parse(options.platformSigningKid);
     this.#now = options.now ?? (() => new Date());
   }
 
@@ -331,6 +381,9 @@ export class PairingService {
         platformIssuer: this.#platformIssuer,
         tenantId: attempt.tenantId,
         pairingAttemptId: attempt.id,
+        siteId: input.siteId,
+        platformSigningKeyPem: this.#platformSigningKeyPem,
+        platformSigningKid: this.#platformSigningKid,
         verifier: input.verifier,
         challenge: randomBytes(32).toString('base64url')
       });
@@ -349,18 +402,25 @@ export interface PendingGrantRecord {
   readonly siteId: string;
   readonly subjectId: string;
   readonly clientId: string;
-  readonly scopes: readonly string[];
+  readonly scopes: readonly McpScope[];
   readonly resource: CanonicalResource;
   readonly publicJwk: SitePublicJwk;
   readonly challengeHash: Uint8Array;
   readonly expiresAt: Date;
   readonly status: 'pending';
+  readonly completionReplay?: boolean;
 }
 
 export interface GrantRepository {
-  createPending(record: Omit<PendingGrantRecord, 'publicJwk' | 'status'> & { readonly consentVersion: string }): Promise<void>;
-  findPending(tenantId: string, grantId: string): Promise<PendingGrantRecord | undefined>;
+  createPending(record: Omit<PendingGrantRecord, 'publicJwk' | 'status'> & {
+    readonly consentVersion: string;
+    readonly idempotencyKey: string;
+    readonly requestDigest: Uint8Array;
+    readonly createdAt: Date;
+  }): Promise<{ readonly id: string; readonly createdAt: Date; readonly expiresAt: Date }>;
+  findPending(tenantId: string, grantId: string, idempotencyKey: string): Promise<PendingGrantRecord | undefined>;
   activate(tenantId: string, grantId: string, idempotencyKey: string, proofThumbprint: string): Promise<void>;
+  deny(tenantId: string, grantId: string, idempotencyKey: string, proofThumbprint: string): Promise<void>;
   revoke(tenantId: string, grantId: string, reason: string): Promise<boolean>;
 }
 
@@ -368,25 +428,25 @@ export interface ConsentRequestSigner {
   sign(payload: Readonly<Record<string, unknown>>): Promise<string>;
 }
 
-const RequestedScopeSchema = z.array(z.string().regex(/^mcp:[a-z][a-z0-9_.-]{0,63}$/u)).min(1).max(16)
-  .refine((scopes) => new Set(scopes).size === scopes.length, 'duplicate_scope');
-
 export class GrantService {
   readonly #repository: GrantRepository;
   readonly #signer: ConsentRequestSigner;
   readonly #platformIssuer: string;
   readonly #now: () => Date;
+  readonly #challengeFactory: (input: Readonly<Record<string, unknown>>) => string;
 
   constructor(options: {
     repository: GrantRepository;
     signer: ConsentRequestSigner;
     platformIssuer: string;
     now?: () => Date;
+    challengeFactory?: (input: Readonly<Record<string, unknown>>) => string;
   }) {
     this.#repository = options.repository;
     this.#signer = options.signer;
     this.#platformIssuer = options.platformIssuer;
     this.#now = options.now ?? (() => new Date());
+    this.#challengeFactory = options.challengeFactory ?? (() => randomBytes(32).toString('base64url'));
   }
 
   async begin(input: {
@@ -395,16 +455,22 @@ export class GrantService {
     siteId: string;
     subjectId: string;
     clientId: string;
-    scopes: readonly string[];
+    scopes: readonly McpScope[];
     resource: string;
     consentVersion: string;
-  }): Promise<{ readonly request: string; readonly challenge: string; readonly expiresAt: Date }> {
-    const scopes = RequestedScopeSchema.parse(input.scopes);
+    idempotencyKey: string;
+  }): Promise<{ readonly grantId: string; readonly request: string; readonly challenge: string; readonly expiresAt: Date }> {
+    const scopes = McpScopeSetSchema.parse(input.scopes);
     const resource = canonicalizeResource(input.resource);
-    const challenge = randomBytes(32).toString('base64url');
+    const immutableInput = {
+      tenantId: input.tenantId, siteId: input.siteId, subjectId: input.subjectId,
+      clientId: input.clientId, scopes, resource, consentVersion: input.consentVersion,
+      idempotencyKey: input.idempotencyKey
+    };
+    const challenge = z.string().regex(/^[A-Za-z0-9_-]{43}$/u).parse(this.#challengeFactory(immutableInput));
     const now = this.#now();
     const expiresAt = new Date(now.getTime() + 2 * 60 * 1_000);
-    await this.#repository.createPending({
+    const created = await this.#repository.createPending({
       tenantId: input.tenantId,
       id: OpaqueIdSchema.parse(input.grantId),
       siteId: OpaqueIdSchema.parse(input.siteId),
@@ -414,7 +480,10 @@ export class GrantService {
       resource,
       challengeHash: secretHash(challenge),
       expiresAt,
-      consentVersion: z.string().regex(/^\d+$/u).parse(input.consentVersion)
+      consentVersion: z.string().regex(/^\d+$/u).parse(input.consentVersion),
+      idempotencyKey: z.string().regex(/^[A-Za-z0-9_-]{16,128}$/u).parse(input.idempotencyKey),
+      requestDigest: createHash('sha256').update(JSON.stringify(immutableInput), 'utf8').digest(),
+      createdAt: now
     });
     const request = await this.#signer.sign({
       kind: 'consent_request',
@@ -422,16 +491,17 @@ export class GrantService {
       iss: this.#platformIssuer,
       tenant_id: input.tenantId,
       site_id: input.siteId,
-      grant_id: input.grantId,
+      grant_id: created.id,
       subject_id: input.subjectId,
       client_id: input.clientId,
+      aud: resource,
       resource,
       scope: scopes,
       challenge,
-      iat: Math.floor(now.getTime() / 1_000),
-      exp: Math.floor(expiresAt.getTime() / 1_000)
+      iat: Math.floor(created.createdAt.getTime() / 1_000),
+      exp: Math.floor(created.expiresAt.getTime() / 1_000)
     });
-    return { request, challenge, expiresAt };
+    return { grantId: created.id, request, challenge, expiresAt: created.expiresAt };
   }
 
   async complete(input: {
@@ -439,10 +509,11 @@ export class GrantService {
     grantId: string;
     proof: string;
     challenge: string;
+    decision: 'approved' | 'denied';
     idempotencyKey: string;
   }): Promise<VerifiedSiteProof> {
-    const grant = await this.#repository.findPending(input.tenantId, input.grantId);
-    if (grant === undefined || grant.expiresAt <= this.#now()) throw new Error('grant_not_pending');
+    const grant = await this.#repository.findPending(input.tenantId, input.grantId, input.idempotencyKey);
+    if (grant === undefined || (!grant.completionReplay && grant.expiresAt <= this.#now())) throw new Error('grant_not_pending');
     const challengeHash = secretHash(input.challenge);
     if (challengeHash.byteLength !== grant.challengeHash.byteLength || !timingSafeEqual(challengeHash, grant.challengeHash)) {
       throw new Error('consent_challenge_invalid');
@@ -451,15 +522,21 @@ export class GrantService {
       kind: 'consent',
       platformIssuer: this.#platformIssuer,
       tenantId: grant.tenantId,
+      siteId: grant.siteId,
       resource: grant.resource,
       challenge: input.challenge,
       grantId: grant.id,
       clientId: grant.clientId,
       subjectId: grant.subjectId,
       scopes: grant.scopes,
+      decision: input.decision,
       now: this.#now()
     });
-    await this.#repository.activate(grant.tenantId, grant.id, input.idempotencyKey, proof.thumbprint);
+    if (input.decision === 'approved') {
+      await this.#repository.activate(grant.tenantId, grant.id, input.idempotencyKey, proof.thumbprint);
+    } else {
+      await this.#repository.deny(grant.tenantId, grant.id, input.idempotencyKey, proof.thumbprint);
+    }
     return proof;
   }
 }

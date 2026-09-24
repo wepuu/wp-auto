@@ -4,6 +4,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Pool, type PoolClient, type PoolConfig } from 'pg';
 import {
+  McpScopeSetSchema,
   TenantContextSchema,
   type GrantView,
   type SiteView,
@@ -158,6 +159,22 @@ export class Database {
     }
   }
 
+  async withIdentityWriter<T>(operation: (client: PoolClient) => Promise<T>): Promise<T> {
+    const client = await this.#pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SET LOCAL ROLE wepuu_identity_writer');
+      const result = await operation(client);
+      await client.query('COMMIT');
+      return result;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async close(): Promise<void> {
     await this.#pool.end();
   }
@@ -207,6 +224,47 @@ export class PostgresAccountSessionStore {
       };
     });
   }
+
+  async createSession(input: {
+    readonly candidateAccountId: string;
+    readonly identityIssuer: string;
+    readonly identitySubjectHash: string;
+    readonly sessionHash: Uint8Array;
+    readonly authenticatedAt: Date;
+    readonly expiresAt: Date;
+  }): Promise<{ readonly accountId: string } | undefined> {
+    return this.#database.withIdentityWriter(async (client) => {
+      await client.query(
+        `INSERT INTO platform.accounts (id, status, identity_issuer, identity_subject_hash)
+         VALUES ($1, 'active', $2, $3)
+         ON CONFLICT DO NOTHING`,
+        [input.candidateAccountId, input.identityIssuer, input.identitySubjectHash]
+      );
+      const accountResult = await client.query<{ id: string; status: 'active' | 'suspended' | 'deleted' }>(
+        `SELECT id, status FROM platform.accounts
+         WHERE identity_issuer = $1 AND identity_subject_hash = $2`,
+        [input.identityIssuer, input.identitySubjectHash]
+      );
+      const account = accountResult.rows[0];
+      if (account === undefined || account.status !== 'active') return undefined;
+      await client.query(
+        `INSERT INTO platform.account_sessions
+          (session_hash, account_id, identity_issuer, authenticated_at, expires_at)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [Buffer.from(input.sessionHash), account.id, input.identityIssuer, input.authenticatedAt, input.expiresAt]
+      );
+      return { accountId: account.id };
+    });
+  }
+
+  async revoke(sessionHash: Uint8Array): Promise<void> {
+    await this.#database.withIdentityWriter((client) => client.query(
+      `UPDATE platform.account_sessions
+       SET revoked_at = COALESCE(revoked_at, now())
+       WHERE session_hash = $1`,
+      [Buffer.from(sessionHash)]
+    ).then(() => undefined));
+  }
 }
 
 export interface SecurityEventView {
@@ -248,6 +306,32 @@ export class SecurityEventRepository {
 }
 
 export class SiteRepository {
+  async findActive(client: PoolClient, tenantId: string, siteId: string): Promise<SiteView | undefined> {
+    const result = await client.query<{
+      tenant_id: string;
+      id: string;
+      resource_uri: string;
+      display_hostname: string;
+      status: SiteView['status'];
+      protocol_version: '1';
+      created_at: Date;
+    }>(
+      `SELECT tenant_id, id, resource_uri, display_hostname, status, protocol_version, created_at
+       FROM platform.sites WHERE tenant_id = $1 AND id = $2 AND status = 'active'`,
+      [tenantId, siteId]
+    );
+    const row = result.rows[0];
+    return row === undefined ? undefined : {
+      tenantId: row.tenant_id,
+      id: row.id,
+      resource: row.resource_uri,
+      displayHostname: row.display_hostname,
+      status: row.status,
+      protocolVersion: row.protocol_version,
+      createdAt: row.created_at.toISOString()
+    };
+  }
+
   async list(client: PoolClient): Promise<readonly SiteView[]> {
     const result = await client.query<{
       tenant_id: string;
@@ -314,7 +398,7 @@ export class GrantViewRepository {
       siteId: row.site_id,
       subjectId: row.subject_id,
       clientId: row.client_id,
-      scopes: row.scopes,
+      scopes: McpScopeSetSchema.parse(row.scopes),
       status: row.status,
       consentVersion: row.consent_version,
       createdAt: row.created_at.toISOString()
@@ -595,24 +679,60 @@ export class PostgresGrantRepository implements GrantRepository {
 
   async createPending(record: Omit<PendingGrantRecord, 'publicJwk' | 'status'> & {
     readonly consentVersion: string;
-  }): Promise<void> {
-    await this.#database.withTenant(this.#context, async (client) => {
+    readonly idempotencyKey: string;
+    readonly requestDigest: Uint8Array;
+    readonly createdAt: Date;
+  }): Promise<{ readonly id: string; readonly createdAt: Date; readonly expiresAt: Date }> {
+    return this.#database.withTenant(this.#context, async (client) => {
+      await client.query(
+        `SELECT pg_advisory_xact_lock(hashtextextended($1::text || ':' || $2, 0))`,
+        [record.tenantId, record.idempotencyKey]
+      );
+      const existing = await client.query<{
+        request_digest: Buffer;
+        result_reference: string;
+        created_at: Date;
+        consent_expires_at: Date;
+      }>(
+        `SELECT idempotency.request_digest, idempotency.result_reference,
+                grant_record.created_at, grant_record.consent_expires_at
+         FROM platform.idempotency_records idempotency
+         JOIN platform.grants grant_record
+           ON grant_record.tenant_id = idempotency.tenant_id
+          AND grant_record.id = idempotency.result_reference
+         WHERE idempotency.tenant_id = $1 AND idempotency.operation = 'grant.create'
+           AND idempotency.idempotency_key = $2`,
+        [record.tenantId, record.idempotencyKey]
+      );
+      const prior = existing.rows[0];
+      if (prior !== undefined) {
+        if (!prior.request_digest.equals(Buffer.from(record.requestDigest))) throw new Error('idempotency_conflict');
+        return { id: prior.result_reference, createdAt: prior.created_at, expiresAt: prior.consent_expires_at };
+      }
       const result = await client.query(
         `INSERT INTO platform.grants
           (tenant_id, id, site_id, subject_id, client_id, scopes, consent_challenge_hash,
-           consent_expires_at, status, consent_version)
-         SELECT $1, $2, site_record.id, $4, $5, $6, $7, $8, 'pending', $9
+           consent_expires_at, status, consent_version, created_at, updated_at)
+         SELECT $1, $2, site_record.id, $4, $5, $6, $7, $8, 'pending', $9, $11, $11
          FROM platform.sites site_record
          WHERE site_record.tenant_id = $1 AND site_record.id = $3
            AND site_record.resource_uri = $10 AND site_record.status = 'active'`,
         [record.tenantId, record.id, record.siteId, record.subjectId, record.clientId,
-          record.scopes, Buffer.from(record.challengeHash), record.expiresAt, record.consentVersion, record.resource]
+          record.scopes, Buffer.from(record.challengeHash), record.expiresAt, record.consentVersion, record.resource,
+          record.createdAt]
       );
       if (result.rowCount !== 1) throw new Error('active_site_not_found');
+      await client.query(
+        `INSERT INTO platform.idempotency_records
+          (tenant_id, operation, idempotency_key, request_digest, result_reference, expires_at)
+         VALUES ($1, 'grant.create', $2, $3, $4, now() + interval '24 hours')`,
+        [record.tenantId, record.idempotencyKey, Buffer.from(record.requestDigest), record.id]
+      );
+      return { id: record.id, createdAt: record.createdAt, expiresAt: record.expiresAt };
     });
   }
 
-  async findPending(tenantId: string, grantId: string): Promise<PendingGrantRecord | undefined> {
+  async findPending(tenantId: string, grantId: string, idempotencyKey: string): Promise<PendingGrantRecord | undefined> {
     return this.#database.withTenant(this.#context, async (client) => {
       const result = await client.query<{
         tenant_id: string;
@@ -625,17 +745,25 @@ export class PostgresGrantRepository implements GrantRepository {
         site_public_jwk: PendingGrantRecord['publicJwk'];
         consent_challenge_hash: Buffer;
         consent_expires_at: Date;
+        completion_replay: boolean;
       }>(
         `SELECT grant_record.tenant_id, grant_record.id, grant_record.site_id,
                 grant_record.subject_id, grant_record.client_id, grant_record.scopes,
                 grant_record.consent_challenge_hash, grant_record.consent_expires_at,
-                site_record.resource_uri, site_record.site_public_jwk
+                site_record.resource_uri, site_record.site_public_jwk,
+                (completion.idempotency_key IS NOT NULL) AS completion_replay
          FROM platform.grants grant_record
          JOIN platform.sites site_record
            ON site_record.tenant_id = grant_record.tenant_id AND site_record.id = grant_record.site_id
+         LEFT JOIN platform.idempotency_records completion
+           ON completion.tenant_id = grant_record.tenant_id
+          AND completion.operation = 'grant.complete'
+          AND completion.idempotency_key = $3
+          AND completion.result_reference = grant_record.id
          WHERE grant_record.tenant_id = $1 AND grant_record.id = $2
-           AND grant_record.status = 'pending' AND site_record.status = 'active'`,
-        [tenantId, grantId]
+           AND (grant_record.status = 'pending' OR completion.idempotency_key IS NOT NULL)
+           AND site_record.status = 'active'`,
+        [tenantId, grantId, idempotencyKey]
       );
       const row = result.rows[0];
       return row === undefined ? undefined : {
@@ -644,12 +772,13 @@ export class PostgresGrantRepository implements GrantRepository {
         siteId: row.site_id,
         subjectId: row.subject_id,
         clientId: row.client_id,
-        scopes: row.scopes,
+        scopes: McpScopeSetSchema.parse(row.scopes),
         resource: row.resource_uri,
         publicJwk: row.site_public_jwk,
         challengeHash: row.consent_challenge_hash,
         expiresAt: row.consent_expires_at,
-        status: 'pending'
+        status: 'pending',
+        completionReplay: row.completion_replay
       };
     });
   }
@@ -669,6 +798,35 @@ export class PostgresGrantRepository implements GrantRepository {
       }
       const result = await client.query(
         `UPDATE platform.grants SET status = 'active', updated_at = now()
+         WHERE tenant_id = $1 AND id = $2 AND status = 'pending' AND consent_expires_at > now()`,
+        [tenantId, grantId]
+      );
+      if (result.rowCount !== 1) throw new Error('grant_completion_replay');
+      await client.query(
+        `INSERT INTO platform.idempotency_records
+          (tenant_id, operation, idempotency_key, request_digest, result_reference, expires_at)
+         VALUES ($1, 'grant.complete', $2, $3, $4, now() + interval '24 hours')`,
+        [tenantId, idempotencyKey, digest, grantId]
+      );
+    });
+  }
+
+  async deny(tenantId: string, grantId: string, idempotencyKey: string, proofThumbprint: string): Promise<void> {
+    const digest = createHash('sha256').update(`${grantId}\0${proofThumbprint}`, 'utf8').digest();
+    await this.#database.withTenant(this.#context, async (client) => {
+      const existing = await client.query<{ request_digest: Buffer; result_reference: string }>(
+        `SELECT request_digest, result_reference FROM platform.idempotency_records
+         WHERE tenant_id = $1 AND operation = 'grant.complete' AND idempotency_key = $2`,
+        [tenantId, idempotencyKey]
+      );
+      const prior = existing.rows[0];
+      if (prior !== undefined) {
+        if (!prior.request_digest.equals(digest) || prior.result_reference !== grantId) throw new Error('idempotency_conflict');
+        return;
+      }
+      const result = await client.query(
+        `UPDATE platform.grants
+         SET status = 'revoked', revoked_at = now(), revocation_reason = 'consent_denied', updated_at = now()
          WHERE tenant_id = $1 AND id = $2 AND status = 'pending' AND consent_expires_at > now()`,
         [tenantId, grantId]
       );

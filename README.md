@@ -18,9 +18,13 @@ PostgreSQL RLS, content-free audit records, and an AWS KMS asymmetric signing
 adapter. It is not deployed and does not modify the WordPress connector.
 Phase 2.0.3 is in progress. Platform tranche 2.0.3A implements tenant-scoped
 site/pairing/grant persistence, SSRF-safe verification, Ed25519 site proofs,
-hashed server-side sessions, and fail-closed authorization resolvers. The real
-WordPress connector tranche 2.0.3B still requires separate approval, so the
-phase is not closed.
+external OIDC account login, hashed server-side sessions, and fail-closed
+authorization resolvers. The real WordPress connector tranche 2.0.3B is now
+approved and in progress on its dedicated branch: explicit fragment-safe
+Connect handoff, site-ID-bound Ed25519 pairing proof, and local opaque grant
+storage pass locally. The signing runtime is now pinned to Node 26.7+ and uses
+`jose` with an AWS KMS-backed `KeyObject`; live Node 26/KMS CI and real wp-admin
+consent/browser acceptance remain open, so the phase is not closed.
 
 ## Architecture
 
@@ -51,7 +55,7 @@ WordPress passwords or Application Passwords.
 
 ## Foundation workspace
 
-Requirements are Node.js 24, pnpm 11.19.0, Docker Desktop, and PostgreSQL 16
+Requirements are Node.js 26.7 through Node 26.x, pnpm 11.19.0, Docker Desktop, and PostgreSQL 16
 through the local test fixture. No `.env` file or local production signing key
 is supported.
 
@@ -69,6 +73,19 @@ The authorization service requires an existing AWS KMS asymmetric RSA
 `WEPUU_KMS_KID`. Missing or invalid custody configuration prevents startup;
 there is no file-key fallback.
 
+Any process that creates KMS-backed JOSE signatures must be launched through
+`pnpm start:control` (or the equivalent `keyobject-aws-kms exec -- node ...`)
+so the reviewed OpenSSL provider is registered before application crypto code.
+
+The control API account login requires the exact external OIDC profile recorded
+in ADR-007: Authorization Code, PKCE S256, `openid` only, RS256 ID tokens, an
+exact HTTPS callback, two rotating 32-byte transaction-cookie keys, and a
+separate 32-byte subject-HMAC key. Grant creation additionally requires a
+separate 32-byte `WEPUU_GRANT_IDEMPOTENCY_HMAC_KEY`; it deterministically
+derives retry-safe consent challenges while PostgreSQL stores only their
+digests. Secrets are process environment values or secret-manager injections
+only; they must not be placed in `.env`, logs, or Git.
+
 ## Documentation map
 
 - [Roadmap](docs/ROADMAP.md)
@@ -78,6 +95,9 @@ there is no file-key fallback.
 - [ADR-004 token profile](docs/ADR-004-TOKEN-AND-SIGNING-PROFILE.md)
 - [ADR-005 platform foundation](docs/ADR-005-PLATFORM-FOUNDATION.md)
 - [ADR-006 site pairing proof](docs/ADR-006-SITE-PAIRING-PROOF.md)
+- [ADR-007 external account OIDC](docs/ADR-007-EXTERNAL-ACCOUNT-OIDC.md)
+- [ADR-008 Node 26 KMS JOSE runtime](docs/ADR-008-NODE-26-KMS-JOSE-RUNTIME.md)
+- [External account OIDC local acceptance](docs/ACCOUNT_OIDC_TEST_SETUP.md)
 - [Phase 2.0.3 test plan](docs/PHASE_2_0_3_TEST_PLAN.md)
 - [Phase 2.0.3 validation](docs/PHASE_2_0_3_VALIDATION.md)
 - [Phase 2.0.3 versions](docs/PHASE_2_0_3_VERSION_MATRIX.md)

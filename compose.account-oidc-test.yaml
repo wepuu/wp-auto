@@ -1,0 +1,164 @@
+name: wepuu-account-oidc-test
+
+services:
+  platform-db:
+    image: postgres:16.10-alpine
+    environment:
+      POSTGRES_DB: wepuu_test
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: conformance
+    ports:
+      - "127.0.0.1:55433:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d wepuu_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    security_opt:
+      - no-new-privileges:true
+
+  wordpress-db:
+    image: mariadb:11.8.3-noble@sha256:1cc14cc479613f2925315a5da7aa0eb5288f938565d94b56cd137b724d2ea12b
+    environment:
+      MARIADB_DATABASE: wordpress
+      MARIADB_USER: wordpress
+      MARIADB_PASSWORD: conformance
+      MARIADB_ROOT_PASSWORD: conformance-root
+    volumes:
+      - account-oidc-wordpress-db:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    security_opt:
+      - no-new-privileges:true
+
+  wordpress:
+    image: wordpress:6.9-php8.3-apache@sha256:85c24b4b92dc7fcea65317d2be635643189d0d8ad4bba65d79a660fd018fe246
+    depends_on:
+      wordpress-db:
+        condition: service_healthy
+    environment:
+      WORDPRESS_DB_HOST: wordpress-db:3306
+      WORDPRESS_DB_USER: wordpress
+      WORDPRESS_DB_PASSWORD: conformance
+      WORDPRESS_DB_NAME: wordpress
+      WORDPRESS_CONFIG_EXTRA: |
+        if (isset($$_SERVER['HTTP_X_FORWARDED_PROTO']) && strpos($$_SERVER['HTTP_X_FORWARDED_PROTO'], 'https') !== false) {
+          $$_SERVER['HTTPS'] = 'on';
+        }
+    volumes:
+      - account-oidc-wordpress:/var/www/html
+      - ../wp-auto-connector:/var/www/html/wp-content/plugins/wepuu-auto-connector:ro
+    healthcheck:
+      test: ["CMD-SHELL", "php -r 'exit(@fsockopen(\"127.0.0.1\", 80) ? 0 : 1);'"]
+      interval: 2s
+      timeout: 3s
+      retries: 45
+    security_opt:
+      - no-new-privileges:true
+
+  wpcli:
+    image: wordpress:cli-2.12.0-php8.3@sha256:9e1e5309e3e3b27bef70e62874978d5fecac970e4b1d46ca95f596a711ef3dc1
+    entrypoint: ["wp"]
+    profiles: ["tools"]
+    depends_on:
+      wordpress-db:
+        condition: service_healthy
+    environment:
+      WORDPRESS_DB_HOST: wordpress-db:3306
+      WORDPRESS_DB_USER: wordpress
+      WORDPRESS_DB_PASSWORD: conformance
+      WORDPRESS_DB_NAME: wordpress
+    volumes:
+      - account-oidc-wordpress:/var/www/html
+      - ../wp-auto-connector:/var/www/html/wp-content/plugins/wepuu-auto-connector:ro
+    security_opt:
+      - no-new-privileges:true
+
+  caddy:
+    image: caddy:2.10.2-alpine
+    ports:
+      - "127.0.0.1:443:443"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      default: {}
+      pairing-public:
+        ipv4_address: 11.255.255.2
+        aliases:
+          - site.example.test
+          - site-moved.example.test
+    volumes:
+      - ./test/account-oidc/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./test/account-oidc/conformance-ui:/srv/conformance:ro
+      - account-oidc-caddy-data:/data
+      - account-oidc-caddy-config:/config
+    healthcheck:
+      test: ["CMD-SHELL", "test -s /data/caddy/pki/authorities/local/root.crt"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+    security_opt:
+      - no-new-privileges:true
+
+  control:
+    profiles: ["control"]
+    build:
+      context: .
+      dockerfile: test/account-oidc/Control.Dockerfile
+    depends_on:
+      platform-db:
+        condition: service_healthy
+      caddy:
+        condition: service_healthy
+    environment:
+      WEPUU_DATABASE_URL: postgresql://postgres:conformance@platform-db:5432/wepuu_test
+      WEPUU_ACCOUNT_OIDC_ISSUER: https://dev-o173hfg1cbmd0crj.us.auth0.com/
+      WEPUU_ACCOUNT_OIDC_CLIENT_ID: AY4V93U0IUs6aWPKgLqClwodKWOneQa9
+      WEPUU_ACCOUNT_OIDC_REDIRECT_URI: https://platform.example.test/v1/account/oidc/callback
+      WEPUU_ACCOUNT_OIDC_SCOPES: openid
+      WEPUU_ACCOUNT_OIDC_CLIENT_AUTH_METHOD: client_secret_basic
+      WEPUU_CONTROL_PUBLIC_ORIGIN: https://platform.example.test
+      WEPUU_ACCOUNT_OIDC_CLIENT_SECRET: ${WEPUU_ACCOUNT_OIDC_CLIENT_SECRET:-}
+      WEPUU_OIDC_TRANSACTION_KEYS_JSON: ${WEPUU_OIDC_TRANSACTION_KEYS_JSON:-}
+      WEPUU_IDENTITY_SUBJECT_HMAC_KEY: ${WEPUU_IDENTITY_SUBJECT_HMAC_KEY:-}
+      WEPUU_GRANT_IDEMPOTENCY_HMAC_KEY: ${WEPUU_GRANT_IDEMPOTENCY_HMAC_KEY:-}
+      WEPUU_ISSUER: https://platform.example.test
+      WEPUU_CONTROL_HOST: 0.0.0.0
+      WEPUU_CONTROL_PORT: "3000"
+      NODE_EXTRA_CA_CERTS: /caddy-data/caddy/pki/authorities/local/root.crt
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+      AWS_REGION: us-east-1
+      WEPUU_KMS_KEY_ID: arn:aws:kms:us-east-1:453168420598:key/40426a27-701e-4fd3-b17b-4345ed26e2c3
+      WEPUU_KMS_KID: wepuu-test-2026-01
+    volumes:
+      - account-oidc-caddy-data:/caddy-data:ro
+    networks:
+      - default
+      - pairing-public
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/health/ready >/dev/null"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  account-oidc-caddy-data:
+  account-oidc-caddy-config:
+  account-oidc-wordpress:
+  account-oidc-wordpress-db:
+
+networks:
+  pairing-public:
+    internal: true
+    ipam:
+      config:
+        - subnet: 11.255.255.0/24

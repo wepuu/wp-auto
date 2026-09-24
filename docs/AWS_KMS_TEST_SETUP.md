@@ -96,6 +96,10 @@ region, key/key-IAM policy, credential source, or network path failed closed.
 
 Use GitHub OIDC; do not create GitHub secrets containing AWS access keys.
 
+The exact role policy, immutable GitHub subject, environment automation, and
+current Phase 2.0.3 branch restriction are maintained in
+[`AWS_KMS_GITHUB_OIDC_SETUP.md`](AWS_KMS_GITHUB_OIDC_SETUP.md).
+
 1. Create or reuse the AWS IAM OIDC provider for
    `https://token.actions.githubusercontent.com` with audience
    `sts.amazonaws.com`.
@@ -121,21 +125,20 @@ repo:wepuu@254826526/wp-auto@1370748793:environment:kms-conformance
 ```
 
 Use the following trust condition and additionally restrict the GitHub
-environment to the branch being tested:
+environment to `codex/phase-2-0-3`:
 
 ```json
 {
   "StringEquals": {
     "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
-    "token.actions.githubusercontent.com:sub": "repo:wepuu@254826526/wp-auto@1370748793:environment:kms-conformance",
-    "token.actions.githubusercontent.com:ref": "refs/heads/codex/phase-2-0-2"
+    "token.actions.githubusercontent.com:sub": "repo:wepuu@254826526/wp-auto@1370748793:environment:kms-conformance"
   }
 }
 ```
 
-If the branch is merged later, intentionally change both the IAM `ref`
-condition and the GitHub environment branch rule to `refs/heads/main`. Do not
-replace either repository or branch with a wildcard.
+The environment's deployment branch policy enforces the branch restriction.
+If the branch is merged later, intentionally change that policy to `main`. Do
+not replace either repository or branch with a wildcard.
 
 The workflow pins all external Actions to immutable commit SHAs and requests
 `id-token: write` only in the live KMS job.

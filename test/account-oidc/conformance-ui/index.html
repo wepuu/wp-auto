@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WePuu consent conformance</title>
+<link rel="stylesheet" href="app.css">
+<main>
+  <h1>WePuu consent conformance</h1>
+  <p>This disposable page starts a same-origin grant request without reading or displaying session credentials.</p>
+  <div class="actions">
+    <button id="approve" type="button">Start approval test</button>
+    <button id="deny" type="button">Start denial test</button>
+    <button id="disconnect" type="button">Disconnect active site</button>
+    <button id="logout" type="button">Revoke platform session</button>
+  </div>
+  <p id="status" role="status">Ready.</p>
+</main>
+<script src="app.js"></script>
+</html>

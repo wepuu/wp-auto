@@ -19,6 +19,7 @@ node_modules/
 coverage/
 dist/
 .artifacts/
+.tmp/
 spikes/oauth-conformance/.artifacts/
 spikes/oauth-conformance/.tmp/
 .DS_Store
