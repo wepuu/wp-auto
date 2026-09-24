@@ -6,18 +6,17 @@ This repository defines and will eventually implement the WePuu OAuth 2.1 contro
 
 ## Current phase
 
-Phase 2.0.1 and Phase 2.0.2 are accepted and closed. Phase 2.0.3A platform
-pairing and grants work is accepted. Phase 2.0.3B connector pairing and local
-consent work is approved and in progress on `codex/phase-2-0-3b-pairing`:
+Phase 2.0.1, Phase 2.0.2, and Phase 2.0.3 are accepted and closed. The accepted
+Phase 2.0.3 implementation is retained on `codex/phase-2-0-3`, with connector
+pairing and local consent on `codex/phase-2-0-3b-pairing`:
 
 - preserve the accepted Phase 2.0.2 foundation and its validation evidence;
-- pairing/grant platform and connector code, migrations, fixtures, and tests
-  are allowed within the accepted Phase 2.0.3 contracts;
+- preserve the accepted pairing/grant platform and connector contracts,
+  migrations, fixtures, tests, and validation evidence;
 - do not add production deployment or Phase 2.0.4/2.0.5 implementation without
   explicit approval;
-- pushing Phase 2.0.2 closure commits to `codex/phase-2-0-2` solely for hosted
-  CI is authorized; Phase 2.0.3 push remains separately gated;
-- do not push either Phase 2.0.3 branch without explicit approval;
+- do not reopen or materially change the closed Phase 2.0.3 contract without
+  an ADR and explicit approval;
 - keep all architecture decisions consistent with the documents under `docs/`.
 
 ## Non-negotiable product boundaries

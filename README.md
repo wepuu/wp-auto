@@ -16,15 +16,15 @@ KMS, and hosted CI validation. It provides:
 strict TypeScript packages, an authorization service, a control API,
 PostgreSQL RLS, content-free audit records, and an AWS KMS asymmetric signing
 adapter. It is not deployed and does not modify the WordPress connector.
-Phase 2.0.3 is in progress. Platform tranche 2.0.3A implements tenant-scoped
+Phase 2.0.3 is accepted and closed. Platform tranche 2.0.3A implements tenant-scoped
 site/pairing/grant persistence, SSRF-safe verification, Ed25519 site proofs,
 external OIDC account login, hashed server-side sessions, and fail-closed
-authorization resolvers. The real WordPress connector tranche 2.0.3B is now
-approved and in progress on its dedicated branch: explicit fragment-safe
-Connect handoff, site-ID-bound Ed25519 pairing proof, and local opaque grant
-storage pass locally. The signing runtime is now pinned to Node 26.7+ and uses
-`jose` with an AWS KMS-backed `KeyObject`; live Node 26/KMS CI and real wp-admin
-consent/browser acceptance remain open, so the phase is not closed.
+authorization resolvers. The real WordPress connector tranche 2.0.3B adds an
+explicit fragment-safe Connect handoff, site-ID-bound Ed25519 pairing proof,
+and local opaque grant storage. The signing runtime is pinned to Node 26.7+
+and uses `jose` with an AWS KMS-backed `KeyObject`; real wp-admin pairing,
+consent, domain migration/re-pair, cleanup, and hosted GitHub OIDC/KMS
+acceptance all pass. No production deployment or Phase 2.0.4 work has begun.
 
 ## Architecture
 

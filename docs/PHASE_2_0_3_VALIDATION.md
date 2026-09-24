@@ -1,6 +1,6 @@
 # Phase 2.0.3 Pairing and Grants Validation
 
-- Status: Phase 2.0.3A accepted; Phase 2.0.3B pairing implementation in progress; Phase 2.0.3 remains open
+- Status: accepted and closed
 - Date: 2026-09-24
 - Branch: `codex/phase-2-0-3`
 
@@ -79,16 +79,14 @@
 | Local callback fixture | pass: pinned Caddy 2.10.2, fingerprinted CurrentUser CA/hosts handling, and a v2rayN exact-domain proxy bypass for `platform.example.test` |
 | Dependency audit | pass in Node 26.7.0: no known vulnerabilities |
 | SBOM | pass: CycloneDX 1.6, 293 resolved components; includes `@keyobject/aws-kms` 0.0.2, `openid-client` 6.8.8 and both pinned `jose` versions |
-| KMS JOSE runtime | implementation pass: the full build/lint/test suite passes in the pinned Linux Node 26.7.0 image; `jose` signs through the OpenSSL KMS `KeyObject`, fixed RS256/typ/kid tests pass, and unsafe STORE parameters fail closed; live Node 26/KMS CI remains required |
-| Live AWS KMS | Phase 2.0.2 SDK contract passed previously; Node 26 provider-backed JOSE test is opt-in and not yet run in hosted CI |
+| KMS JOSE runtime | pass: the full build/lint/test suite passes in Linux Node 26.7.0; `jose` signs through the OpenSSL KMS `KeyObject`, fixed RS256/typ/kid tests pass, and unsafe STORE parameters fail closed |
+| Live AWS KMS | pass: GitHub Actions run [`35967643811`](https://github.com/wepuu/wp-auto/actions/runs/35967643811) obtained short-lived AWS credentials through the environment-bound OIDC role and completed the real Node 26.7 provider-backed JOSE/KMS contract without exporting private key material |
 | Real WordPress connector | pass for pairing and consent acceptance on `codex/phase-2-0-3b-pairing`: canonical resource, real browser pairing, pinned platform `kid`, strict approve/deny, replay denial, local grant binding, disconnect/re-pair and plugin disable/re-enable all fail closed as required |
 | PHP-to-TypeScript proof | pass: the real connector `SiteProofSigner` output, with integer NumericDate claims, verified in TypeScript JOSE under Node 26.7.0 |
 | Test cleanup | pass: the dual-domain fixture containers, networks and volumes were destroyed; the marked hosts entries and fingerprinted CurrentUser CA were removed with `HOSTS_RESTORED=True` and `TRUST_RESTORED=True` |
 
-## Remaining exit gates
+## Exit decision
 
-- Run the accepted ADR-008 Node 26.7+ `@keyobject/aws-kms`/`jose` live contract
-  in hosted CI with GitHub OIDC and the exact test-key IAM boundary.
-- Run hosted CI on the final Phase 2.0.3 commit after push authorization.
-
-Phase 2.0.3 is not closed, and Phase 2.0.4 is not authorized.
+All Phase 2.0.3 security, interoperability, real-browser, resource-migration,
+cleanup, dependency, and hosted KMS gates pass. Phase 2.0.3 is accepted and
+closed. Phase 2.0.4 remains separately gated and is not authorized.

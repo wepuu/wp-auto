@@ -46,18 +46,18 @@ WordPress connector change occurred or is authorized.
 
 ## Phase 2.0.3 - pairing and user grants
 
-Status: approved and in progress on 2026-09-22. Platform tranche 2.0.3A now
+Status: accepted and closed on 2026-09-24. Platform tranche 2.0.3A
 includes external OIDC account login and hashed session minting on
 `codex/phase-2-0-3`; its real Auth0 browser callback, restart persistence,
 logout revocation, replay boundary, and database/log privacy acceptance gates
-passed on 2026-09-22. Real connector tranche 2.0.3B is approved and in progress
+passed on 2026-09-22. Real connector tranche 2.0.3B is retained
 on `codex/phase-2-0-3b-pairing`; the cross-origin fragment handoff, SSRF-safe
 site verification, site-ID-bound Ed25519 proof, platform KMS-backed consent
 request, strict local approve/deny ceremony, and local opaque grant repository
-now pass locally. The real wp-admin pairing, approval, denial, replay, restart,
-logout and plugin-disable acceptance paths passed on 2026-09-24. The remaining
-resource/domain-change re-pair gate, fixture cleanup, and hosted Node 26/KMS CI
-keep the phase open; user invalidation and uninstall/reinstall passed locally.
+pass. Real wp-admin pairing, approval, denial, replay, restart, logout,
+plugin-disable, user invalidation, uninstall/reinstall, resource/domain-change
+re-pair, and cleanup passed. Hosted Node 26.7 GitHub OIDC/KMS acceptance passed
+in run `35967643811`. Phase 2.0.4 remains separately gated and unstarted.
 
 - Explicit administrator-initiated site pairing.
 - SSRF-resistant site verification.

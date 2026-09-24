@@ -2,7 +2,7 @@
 
 | Component | Pinned/observed version | Role |
 |---|---:|---|
-| Node.js | 26.7.0 minimum, `<27`; pinned Linux image validated; Windows host observed 24.19.0 | production/hosted signing runtime; the Windows host performs orchestration only |
+| Node.js | 26.7.0 minimum, `<27`; pinned Linux image and hosted GitHub Actions KMS path validated; Windows host observed 24.19.0 | production/hosted signing runtime; the Windows host performs orchestration only |
 | pnpm | 11.19.0 | workspace package manager |
 | TypeScript | 5.9.3 | strict compiler |
 | PostgreSQL | 16.10-alpine | migration and RLS fixture |
