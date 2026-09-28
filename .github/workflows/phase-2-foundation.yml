@@ -156,6 +156,7 @@ jobs:
           role-session-name: wepuu-kms-rotation-conformance
       - name: Run two-key KMS lifecycle gate
         run: >-
+          pnpm build &&
           node node_modules/tsx/dist/cli.mjs --test
           --test-name-pattern="live two-key AWS KMS lifecycle"
           apps/authorization-service/src/live-kms-rotation.test.ts
