@@ -6,18 +6,16 @@ This repository defines and will eventually implement the WePuu OAuth 2.1 contro
 
 ## Current phase
 
-Phase 2.0.1, Phase 2.0.2, and Phase 2.0.3 are accepted and closed. Phase 2.0.4A
-token lifecycle work is approved and in progress on
-`codex/phase-2-0-4-token-lifecycle`; connector revocation work is isolated on
-`codex/phase-2-0-4b-revocation`:
+Phase 2.0.1 through Phase 2.0.4 are accepted and closed. Phase 2.0.5 has not
+started and requires explicit approval:
 
 - preserve the accepted Phase 2.0.2 foundation and its validation evidence;
 - preserve the accepted pairing/grant platform and connector contracts,
   migrations, fixtures, tests, and validation evidence;
-- implement only the Phase 2.0.4 token, refresh, key-rotation, revocation and
-  abuse-control contracts; do not connect Bearer authentication to MCP tools;
-- do not push, deploy, merge to `main`, or start Phase 2.0.5 without explicit
-  approval;
+- preserve the accepted Phase 2.0.4 token, refresh, key-rotation, revocation,
+  abuse-control, connector fail-closed, and data-boundary contracts;
+- do not start Phase 2.0.5 or connect Bearer authentication to MCP tools
+  without explicit approval;
 - do not reopen or materially change the closed Phase 2.0.3 contract without
   an ADR and explicit approval;
 - keep all architecture decisions consistent with the documents under `docs/`.

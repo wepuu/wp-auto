@@ -69,10 +69,11 @@ Connector work is a separate task and requires separate approval.
 
 ## Phase 2.0.4 - token lifecycle
 
-Status: approved and in progress on 2026-09-24. Platform work is isolated on
-`codex/phase-2-0-4-token-lifecycle`; connector JWKS and revocation work is
-isolated on `codex/phase-2-0-4b-revocation`. Push, deployment, merge and
-Phase 2.0.5 remain separately gated.
+Status: accepted and closed on 2026-09-28. Platform work was completed on
+`codex/phase-2-0-4-token-lifecycle`; connector JWKS and revocation work was
+completed on `codex/phase-2-0-4b-revocation`. Deterministic, live HTTPS,
+real two-key AWS KMS, hosted-CI, cleanup, and privacy gates passed. Phase 2.0.5
+remains separately gated.
 
 - Short-lived JWT access tokens.
 - Opaque rotating refresh families with reuse detection.
