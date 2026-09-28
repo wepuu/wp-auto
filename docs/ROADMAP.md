@@ -57,7 +57,8 @@ request, strict local approve/deny ceremony, and local opaque grant repository
 pass. Real wp-admin pairing, approval, denial, replay, restart, logout,
 plugin-disable, user invalidation, uninstall/reinstall, resource/domain-change
 re-pair, and cleanup passed. Hosted Node 26.7 GitHub OIDC/KMS acceptance passed
-in run `35967643811`. Phase 2.0.4 remains separately gated and unstarted.
+in run `35967643811`. Phase 2.0.4 is now approved and in progress on its two
+isolated local branches.
 
 - Explicit administrator-initiated site pairing.
 - SSRF-resistant site verification.
@@ -68,11 +69,21 @@ Connector work is a separate task and requires separate approval.
 
 ## Phase 2.0.4 - token lifecycle
 
+Status: approved and in progress on 2026-09-24. Platform work is isolated on
+`codex/phase-2-0-4-token-lifecycle`; connector JWKS and revocation work is
+isolated on `codex/phase-2-0-4b-revocation`. Push, deployment, merge and
+Phase 2.0.5 remain separately gated.
+
 - Short-lived JWT access tokens.
 - Opaque rotating refresh families with reuse detection.
 - JWKS cache and overlapping rotation.
 - Signed revocation outbox and local denylist behavior.
 - Rate limits, abuse controls, and recovery procedures.
+
+Exit gate: all cases in `PHASE_2_0_4_TEST_PLAN.md` pass, including real
+two-key AWS KMS overlap/rotation, refresh-family concurrency/replay, signed
+revocation delivery and connector fail-closed behavior. Acceptance requires a
+completed validation record; fixture-only key rotation cannot close the phase.
 
 ## Phase 2.0.5 - scoped connector integration
 

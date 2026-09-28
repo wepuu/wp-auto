@@ -1,9 +1,10 @@
-import { createHash } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Pool, type PoolClient, type PoolConfig } from 'pg';
 import {
+  MCP_SCOPE_ORDER,
   McpScopeSetSchema,
   TenantContextSchema,
   type GrantView,
@@ -267,6 +268,25 @@ export class PostgresAccountSessionStore {
   }
 }
 
+export class PostgresAccountRegistry {
+  readonly #database: Database;
+
+  constructor(database: Database) {
+    this.#database = database;
+  }
+
+  async isActive(accountId: string): Promise<boolean> {
+    return this.#database.withAuthorizationService(async (client) => {
+      const result = await client.query(
+        `SELECT 1 FROM platform.accounts
+         WHERE id = $1 AND status = 'active' LIMIT 1`,
+        [accountId]
+      );
+      return result.rowCount === 1;
+    });
+  }
+}
+
 export interface SecurityEventView {
   readonly id: string;
   readonly occurredAt: string;
@@ -357,22 +377,11 @@ export class SiteRepository {
   }
 
   async disconnect(client: PoolClient, tenantId: string, siteId: string): Promise<boolean> {
-    const result = await client.query(
-      `UPDATE platform.sites
-       SET status = 'revoked', revoked_at = COALESCE(revoked_at, now()), updated_at = now()
-       WHERE tenant_id = $1 AND id = $2 AND status IN ('active', 'pending', 'suspended')`,
+    const result = await client.query<{ changed: boolean }>(
+      'SELECT oauth.disconnect_site_with_event($1::uuid, $2) AS changed',
       [tenantId, siteId]
     );
-    if (result.rowCount === 1) {
-      await client.query(
-        `UPDATE platform.grants
-         SET status = 'revoked', revoked_at = COALESCE(revoked_at, now()),
-             revocation_reason = 'site_disconnected', updated_at = now()
-         WHERE tenant_id = $1 AND site_id = $2 AND status IN ('pending', 'active', 'suspended')`,
-        [tenantId, siteId]
-      );
-    }
-    return result.rowCount === 1;
+    return result.rows[0]?.changed === true;
   }
 }
 
@@ -406,14 +415,11 @@ export class GrantViewRepository {
   }
 
   async revoke(client: PoolClient, tenantId: string, grantId: string): Promise<boolean> {
-    const result = await client.query(
-      `UPDATE platform.grants
-       SET status = 'revoked', revoked_at = COALESCE(revoked_at, now()),
-           revocation_reason = 'platform_user_revoked', updated_at = now()
-       WHERE tenant_id = $1 AND id = $2 AND status IN ('pending', 'active', 'suspended')`,
+    const result = await client.query<{ changed: boolean }>(
+      'SELECT oauth.revoke_grant_with_event($1::uuid, $2) AS changed',
       [tenantId, grantId]
     );
-    return result.rowCount === 1;
+    return result.rows[0]?.changed === true;
   }
 }
 
@@ -455,25 +461,109 @@ export class PostgresSecurityAuditSink implements SecurityAuditSink {
 
 type ProviderPayload = Record<string, unknown>;
 
+class OAuthInvalidGrantError extends Error {
+  readonly error = 'invalid_grant';
+  readonly error_description = 'grant request is invalid';
+  readonly status = 400;
+  readonly statusCode = 400;
+  readonly expose = true;
+
+  constructor() {
+    super('invalid_grant');
+    this.name = 'InvalidGrant';
+  }
+}
+
+export interface SecretArtifactLookup {
+  readonly version: number;
+  readonly digest: Uint8Array;
+}
+
+/** Versioned one-way lookup for OAuth bearer artifacts. Raw values never cross the storage boundary. */
+export class SecretArtifactCodec {
+  readonly #keys: ReadonlyArray<{ readonly version: number; readonly key: Uint8Array }>;
+
+  constructor(keys: readonly Uint8Array[]) {
+    if (keys.length < 1 || keys.length > 2 || keys.some((key) => key.byteLength < 32)) {
+      throw new Error('oauth_artifact_key_rotation_set_required');
+    }
+    this.#keys = keys.map((key, index) => ({ version: keys.length - index, key: new Uint8Array(key) }));
+  }
+
+  current(value: string): SecretArtifactLookup {
+    const current = this.#keys[0];
+    if (current === undefined || value.length < 8 || value.length > 4096) throw new Error('invalid_oauth_artifact');
+    return { version: current.version, digest: createHmac('sha256', current.key).update(value, 'utf8').digest() };
+  }
+
+  candidates(value: string): readonly SecretArtifactLookup[] {
+    if (value.length < 8 || value.length > 4096) return [];
+    return this.#keys.map(({ version, key }) => ({
+      version,
+      digest: createHmac('sha256', key).update(value, 'utf8').digest()
+    }));
+  }
+
+  matches(value: string, lookup: SecretArtifactLookup): boolean {
+    return this.candidates(value).some((candidate) => candidate.version === lookup.version
+      && candidate.digest.byteLength === lookup.digest.byteLength
+      && timingSafeEqual(candidate.digest, lookup.digest));
+  }
+}
+
+function decodeArtifactKey(value: string): Uint8Array {
+  if (!/^[A-Za-z0-9_-]{43,128}$/u.test(value)) throw new Error('invalid_oauth_artifact_key');
+  const decoded = Buffer.from(value, 'base64url');
+  if (decoded.byteLength < 32) throw new Error('invalid_oauth_artifact_key');
+  return decoded;
+}
+
+export function secretArtifactCodecFromEnvironment(environment: NodeJS.ProcessEnv): SecretArtifactCodec {
+  const parsed: unknown = JSON.parse(environment['WEPUU_OAUTH_ARTIFACT_KEYS_JSON'] ?? '[]');
+  if (!Array.isArray(parsed) || parsed.some((value) => typeof value !== 'string')) {
+    throw new Error('invalid_oauth_artifact_key_rotation_set');
+  }
+  return new SecretArtifactCodec(parsed.map(decodeArtifactKey));
+}
+
+export function rateLimitSubjectCodecFromEnvironment(environment: NodeJS.ProcessEnv): RateLimitSubjectCodec {
+  return new RateLimitSubjectCodec(decodeArtifactKey(environment['WEPUU_RATE_LIMIT_HMAC_KEY'] ?? ''));
+}
+
 function payloadTenantId(payload: ProviderPayload): string | undefined {
   const tenantId = payload['tenantId'] ?? payload['tenant_id'];
   return typeof tenantId === 'string' && tenantId.length > 0 ? tenantId : undefined;
 }
 
+const secretArtifactModels = new Set([
+  'AccessToken',
+  'AuthorizationCode',
+  'BackchannelAuthenticationRequest',
+  'DeviceCode',
+  'InitialAccessToken',
+  'PushedAuthorizationRequest',
+  'RefreshToken',
+  'RegistrationAccessToken'
+]);
+
 export class PostgresOidcAdapter {
   readonly #model: string;
   readonly #database: Database;
+  readonly #codec: SecretArtifactCodec;
+  readonly #rateLimitCodec: RateLimitSubjectCodec | undefined;
 
-  constructor(model: string, database: Database) {
+  constructor(model: string, database: Database, codec: SecretArtifactCodec, rateLimitCodec?: RateLimitSubjectCodec) {
     this.#model = model;
     this.#database = database;
+    this.#codec = codec;
+    this.#rateLimitCodec = rateLimitCodec;
   }
 
   async upsert(id: string, payload: ProviderPayload, expiresIn?: number): Promise<void> {
     const tenantId = payloadTenantId(payload);
     const expiresAt = expiresIn === undefined ? null : new Date(Date.now() + expiresIn * 1_000);
-    await this.#database.withAuthorizationService(async (client) => {
-      await client.query(
+    if (!secretArtifactModels.has(this.#model)) {
+      await this.#database.withAuthorizationService((client) => client.query(
         `INSERT INTO oauth.provider_artifacts
           (model, artifact_id, tenant_id, partition_kind, payload, expires_at)
          VALUES ($1, $2, $3, $4, $5::jsonb, $6)
@@ -483,38 +573,142 @@ export class PostgresOidcAdapter {
                        payload = EXCLUDED.payload,
                        expires_at = EXCLUDED.expires_at`,
         [this.#model, id, tenantId ?? null, tenantId === undefined ? 'global' : 'tenant', JSON.stringify(payload), expiresAt]
+      ).then(() => undefined));
+      return;
+    }
+    const lookup = this.#codec.current(id);
+    const storedPayload = { ...payload };
+    delete storedPayload['jti'];
+    await this.#database.withAuthorizationService(async (client) => {
+      await client.query(
+        `INSERT INTO oauth.secret_artifacts
+          (model, lookup_version, artifact_hash, tenant_id, partition_kind, payload, expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
+         ON CONFLICT (model, lookup_version, artifact_hash)
+         DO UPDATE SET tenant_id = EXCLUDED.tenant_id,
+                       partition_kind = EXCLUDED.partition_kind,
+                       payload = EXCLUDED.payload,
+                       expires_at = EXCLUDED.expires_at,
+                       consumed_at = NULL,
+                       updated_at = now()`,
+        [this.#model, lookup.version, Buffer.from(lookup.digest), tenantId ?? null,
+          tenantId === undefined ? 'global' : 'tenant', JSON.stringify(storedPayload), expiresAt]
       );
     });
   }
 
   async find(id: string): Promise<ProviderPayload | undefined> {
+    if (!secretArtifactModels.has(this.#model)) {
+      return this.#database.withAuthorizationService(async (client) => {
+        const result = await client.query<{ payload: ProviderPayload }>(
+          `SELECT payload FROM oauth.provider_artifacts
+           WHERE model = $1 AND artifact_id = $2
+             AND (expires_at IS NULL OR expires_at > now())`,
+          [this.#model, id]
+        );
+        return result.rows[0]?.payload;
+      });
+    }
     return this.#database.withAuthorizationService(async (client) => {
-      const result = await client.query<{ payload: ProviderPayload }>(
-        `SELECT payload FROM oauth.provider_artifacts
-         WHERE model = $1 AND artifact_id = $2
-           AND (expires_at IS NULL OR expires_at > now())`,
-        [this.#model, id]
-      );
-      return result.rows[0]?.payload;
+      for (const lookup of this.#codec.candidates(id)) {
+        const result = await client.query<{ payload: ProviderPayload; consumed_at: Date | null }>(
+          `SELECT payload, consumed_at FROM oauth.secret_artifacts
+           WHERE model = $1 AND lookup_version = $2 AND artifact_hash = $3
+             AND (expires_at IS NULL OR expires_at > now())`,
+          [this.#model, lookup.version, Buffer.from(lookup.digest)]
+        );
+        const row = result.rows[0];
+        if (row !== undefined) return {
+          ...row.payload,
+          jti: id,
+          ...(row.consumed_at === null ? {} : { consumed: Math.floor(row.consumed_at.getTime() / 1_000) })
+        };
+      }
+      return undefined;
     });
   }
 
   async destroy(id: string): Promise<void> {
-    await this.#database.withAuthorizationService((client) =>
-      client.query('DELETE FROM oauth.provider_artifacts WHERE model = $1 AND artifact_id = $2', [this.#model, id]).then(() => undefined)
-    );
+    if (!secretArtifactModels.has(this.#model)) {
+      await this.#database.withAuthorizationService((client) => client.query(
+        'DELETE FROM oauth.provider_artifacts WHERE model = $1 AND artifact_id = $2',
+        [this.#model, id]
+      ).then(() => undefined));
+      return;
+    }
+    await this.#database.withAuthorizationService(async (client) => {
+      for (const lookup of this.#codec.candidates(id)) {
+        await client.query(
+          'DELETE FROM oauth.secret_artifacts WHERE model = $1 AND lookup_version = $2 AND artifact_hash = $3',
+          [this.#model, lookup.version, Buffer.from(lookup.digest)]
+        );
+      }
+    });
   }
 
   async consume(id: string): Promise<void> {
-    const consumed = Math.floor(Date.now() / 1_000);
-    await this.#database.withAuthorizationService((client) =>
-      client.query(
+    if (!secretArtifactModels.has(this.#model)) {
+      const consumed = Math.floor(Date.now() / 1_000);
+      const updated = await this.#database.withAuthorizationService((client) => client.query(
         `UPDATE oauth.provider_artifacts
          SET payload = jsonb_set(payload, '{consumed}', to_jsonb($3::bigint), true)
-         WHERE model = $1 AND artifact_id = $2`,
+         WHERE model = $1 AND artifact_id = $2 AND NOT (payload ? 'consumed')`,
         [this.#model, id, consumed]
-      ).then(() => undefined)
-    );
+      ).then((result) => result.rowCount === 1));
+      if (!updated) throw new Error('oauth_artifact_already_consumed');
+      return;
+    }
+    const candidates = this.#codec.candidates(id);
+    const consumed = await this.#database.withAuthorizationService(async (client): Promise<'consumed' | 'missing' | 'rate_limited' | 'replay'> => {
+      for (const lookup of candidates) {
+        if (this.#model === 'RefreshToken') {
+          const stored = await client.query<{ payload: ProviderPayload }>(
+            `SELECT payload FROM oauth.secret_artifacts
+             WHERE model = $1 AND lookup_version = $2 AND artifact_hash = $3
+               AND consumed_at IS NULL AND (expires_at IS NULL OR expires_at > now())
+             FOR UPDATE`,
+            [this.#model, lookup.version, Buffer.from(lookup.digest)]
+          );
+          const grantId = stored.rows[0]?.payload['grantId'];
+          if (stored.rowCount !== 1) continue;
+          if (typeof grantId !== 'string' || this.#rateLimitCodec === undefined) {
+            return 'rate_limited';
+          }
+          const allowed = await client.query<{ allowed: boolean }>(
+            'SELECT oauth.consume_rate_limit($1, $2, $3, $4, now()) AS allowed',
+            ['oauth.refresh_family', Buffer.from(this.#rateLimitCodec.digest('oauth.refresh_family', grantId)), 10, 60]
+          );
+          if (allowed.rows[0]?.allowed !== true) return 'rate_limited';
+        }
+        const result = await client.query(
+          `UPDATE oauth.secret_artifacts
+           SET consumed_at = now(), updated_at = now()
+           WHERE model = $1 AND lookup_version = $2 AND artifact_hash = $3
+             AND consumed_at IS NULL AND (expires_at IS NULL OR expires_at > now())`,
+          [this.#model, lookup.version, Buffer.from(lookup.digest)]
+        );
+        if (result.rowCount === 1) return 'consumed';
+      }
+      if (this.#model === 'RefreshToken') {
+        for (const lookup of candidates) {
+          const replay = await client.query<{ grant_id: string | null }>(
+            `SELECT payload->>'grantId' AS grant_id FROM oauth.secret_artifacts
+             WHERE model = $1 AND lookup_version = $2 AND artifact_hash = $3
+               AND consumed_at IS NOT NULL LIMIT 1`,
+            [this.#model, lookup.version, Buffer.from(lookup.digest)]
+          );
+          const grantId = replay.rows[0]?.grant_id;
+          if (typeof grantId === 'string') {
+            await client.query("SELECT oauth.revoke_refresh_grant($1, now(), 'refresh_replay')", [grantId]);
+            return 'replay';
+          }
+        }
+      }
+      return 'missing';
+    });
+    if (consumed === 'rate_limited') throw new Error('refresh_family_rate_limited');
+    if (consumed === 'replay') throw new OAuthInvalidGrantError();
+    if (consumed !== 'consumed') throw new Error('oauth_artifact_already_consumed');
   }
 
   async findByUid(uid: string): Promise<ProviderPayload | undefined> {
@@ -526,6 +720,7 @@ export class PostgresOidcAdapter {
   }
 
   async #findSecondary(field: 'uid' | 'userCode', value: string): Promise<ProviderPayload | undefined> {
+    if (secretArtifactModels.has(this.#model)) return undefined;
     return this.#database.withAuthorizationService(async (client) => {
       const result = await client.query<{ payload: ProviderPayload }>(
         `SELECT payload FROM oauth.provider_artifacts
@@ -539,18 +734,193 @@ export class PostgresOidcAdapter {
   }
 
   async revokeByGrantId(grantId: string): Promise<void> {
-    await this.#database.withAuthorizationService((client) =>
-      client.query("DELETE FROM oauth.provider_artifacts WHERE payload->>'grantId' = $1", [grantId]).then(() => undefined)
-    );
+    await this.#database.withAuthorizationService(async (client) => {
+      if (this.#model === 'RefreshToken') {
+        await client.query(
+          "SELECT oauth.revoke_refresh_grant($1, now(), 'token_revoked')",
+          [grantId]
+        );
+      }
+      await client.query("DELETE FROM oauth.secret_artifacts WHERE payload->>'grantId' = $1", [grantId]);
+      await client.query("DELETE FROM oauth.provider_artifacts WHERE payload->>'grantId' = $1", [grantId]);
+    });
   }
 }
 
-export function createOidcAdapterFactory(database: Database): new (model: string) => PostgresOidcAdapter {
+export function createOidcAdapterFactory(
+  database: Database,
+  codec: SecretArtifactCodec,
+  rateLimitCodec?: RateLimitSubjectCodec
+): new (model: string) => PostgresOidcAdapter {
   return class BoundPostgresOidcAdapter extends PostgresOidcAdapter {
     constructor(model: string) {
-      super(model, database);
+      super(model, database, codec, rateLimitCodec);
     }
   };
+}
+
+export type RefreshRotationResult = 'rotated' | 'replay' | 'denied';
+
+/** Narrow database boundary for the atomic refresh-family state transition. */
+export class PostgresRefreshFamilyRepository {
+  readonly #database: Database;
+
+  constructor(database: Database) {
+    this.#database = database;
+  }
+
+  async create(input: Readonly<{
+    familyId: string;
+    tenantId: string;
+    siteId: string;
+    grantId: string;
+    clientId: string;
+    subjectId: string;
+    issuedAt: Date;
+    absoluteExpiresAt: Date;
+  }>): Promise<void> {
+    if (input.absoluteExpiresAt.getTime() - input.issuedAt.getTime() > 90 * 24 * 60 * 60 * 1_000
+      || input.absoluteExpiresAt <= input.issuedAt) throw new Error('invalid_refresh_family_lifetime');
+    await this.#database.withAuthorizationService((client) => client.query(
+      `INSERT INTO oauth.refresh_families
+        (family_id, tenant_id, site_id, grant_id, client_id, subject_id, status,
+         current_generation, last_used_at, absolute_expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6, 'active', 0, $7, $8)`,
+      [input.familyId, input.tenantId, input.siteId, input.grantId, input.clientId,
+        input.subjectId, input.issuedAt, input.absoluteExpiresAt]
+    ).then(() => undefined));
+  }
+
+  async rotate(familyId: string, expectedGeneration: number, observedAt = new Date()): Promise<RefreshRotationResult> {
+    if (!Number.isInteger(expectedGeneration) || expectedGeneration < 0) return 'denied';
+    return this.#database.withAuthorizationService(async (client) => {
+      const result = await client.query<{ result: RefreshRotationResult }>(
+        'SELECT oauth.rotate_refresh_family($1::uuid, $2::integer, $3::timestamptz) AS result',
+        [familyId, expectedGeneration, observedAt]
+      );
+      return result.rows[0]?.result ?? 'denied';
+    });
+  }
+}
+
+export class RateLimitSubjectCodec {
+  readonly #key: Uint8Array;
+
+  constructor(key: Uint8Array) {
+    if (key.byteLength < 32) throw new Error('rate_limit_hmac_key_required');
+    this.#key = new Uint8Array(key);
+  }
+
+  digest(policy: string, subject: string): Uint8Array {
+    if (!/^[a-z][a-z0-9_.-]{2,63}$/u.test(policy) || subject.length < 1 || subject.length > 2048) {
+      throw new Error('invalid_rate_limit_subject');
+    }
+    return createHmac('sha256', this.#key).update(`${policy}\0${subject}`, 'utf8').digest();
+  }
+}
+
+export interface RateLimitPolicy {
+  readonly name: string;
+  readonly limit: number;
+  readonly windowSeconds: number;
+}
+
+/** Database-backed limiter. Dependency errors propagate so issuance fails closed. */
+export class PostgresOAuthRateLimiter {
+  readonly #database: Database;
+  readonly #codec: RateLimitSubjectCodec;
+
+  constructor(database: Database, codec: RateLimitSubjectCodec) {
+    this.#database = database;
+    this.#codec = codec;
+  }
+
+  async allow(policy: RateLimitPolicy, subject: string, observedAt = new Date()): Promise<boolean> {
+    const digest = this.#codec.digest(policy.name, subject);
+    if (!Number.isInteger(policy.limit) || !Number.isInteger(policy.windowSeconds)) return false;
+    return this.#database.withAuthorizationService(async (client) => {
+      const result = await client.query<{ allowed: boolean }>(
+        'SELECT oauth.consume_rate_limit($1, $2, $3, $4, $5) AS allowed',
+        [policy.name, Buffer.from(digest), policy.limit, policy.windowSeconds, observedAt]
+      );
+      return result.rows[0]?.allowed === true;
+    });
+  }
+}
+
+export interface RevocationOutboxRecord {
+  readonly id: string;
+  readonly tenantId: string;
+  readonly siteId: string;
+  readonly resource: string;
+  readonly sequence: number;
+  readonly eventType: 'grant' | 'site' | 'subject' | 'token' | 'key';
+  readonly grantId?: string;
+  readonly keyId?: string;
+  readonly reason: string;
+  readonly attempts: number;
+}
+
+export class PostgresRevocationOutbox {
+  readonly #database: Database;
+
+  constructor(database: Database) {
+    this.#database = database;
+  }
+
+  async claim(limit = 20): Promise<readonly RevocationOutboxRecord[]> {
+    const boundedLimit = Math.max(1, Math.min(100, Math.trunc(limit)));
+    return this.#database.withAuthorizationService(async (client) => {
+      const result = await client.query<{
+        id: string; tenant_id: string; site_id: string; resource_uri: string;
+        event_sequence: string; event_type: RevocationOutboxRecord['eventType'];
+        grant_id: string | null; key_id: string | null; reason: string; attempts: number;
+      }>(
+        `WITH candidates AS (
+           SELECT id FROM oauth.revocation_outbox
+           WHERE delivered_at IS NULL AND not_before <= now() AND attempts < 20
+             AND (locked_at IS NULL OR locked_at < now() - interval '2 minutes')
+           ORDER BY id FOR UPDATE SKIP LOCKED LIMIT $1
+         )
+         UPDATE oauth.revocation_outbox target
+         SET locked_at = now(), attempts = attempts + 1
+         FROM candidates WHERE target.id = candidates.id
+         RETURNING target.id::text, target.tenant_id::text, target.site_id,
+           target.resource_uri, target.event_sequence::text, target.event_type,
+           target.grant_id, target.key_id, target.reason, target.attempts`,
+        [boundedLimit]
+      );
+      return result.rows.map((row) => ({
+        id: row.id,
+        tenantId: row.tenant_id,
+        siteId: row.site_id,
+        resource: row.resource_uri,
+        sequence: Number(row.event_sequence),
+        eventType: row.event_type,
+        ...(row.grant_id === null ? {} : { grantId: row.grant_id }),
+        ...(row.key_id === null ? {} : { keyId: row.key_id }),
+        reason: row.reason,
+        attempts: row.attempts
+      }));
+    });
+  }
+
+  async markDelivered(id: string): Promise<void> {
+    await this.#database.withAuthorizationService((client) => client.query(
+      `UPDATE oauth.revocation_outbox SET delivered_at = now(), locked_at = NULL,
+         last_error_code = NULL WHERE id = $1 AND delivered_at IS NULL`, [id]
+    ).then(() => undefined));
+  }
+
+  async reschedule(id: string, errorCode: string, delaySeconds: number): Promise<void> {
+    const boundedDelay = Math.max(1, Math.min(3600, Math.trunc(delaySeconds)));
+    const safeCode = /^[a-z][a-z0-9_.-]{2,63}$/u.test(errorCode) ? errorCode : 'delivery_failed';
+    await this.#database.withAuthorizationService((client) => client.query(
+      `UPDATE oauth.revocation_outbox SET locked_at = NULL,
+         not_before = now() + make_interval(secs => $2), last_error_code = $3
+       WHERE id = $1 AND delivered_at IS NULL`, [id, boundedDelay, safeCode]
+    ).then(() => undefined));
+  }
 }
 
 export class PostgresPairingRepository implements PairingRepository {
@@ -876,6 +1246,121 @@ export class PostgresResourceRegistry {
   }
 }
 
+export class PostgresOAuthClientRepository {
+  readonly #database: Database;
+
+  constructor(database: Database) {
+    this.#database = database;
+  }
+
+  async loadActivePublicClients(): Promise<readonly {
+    readonly clientId: string;
+    readonly redirectUris: readonly string[];
+  }[]> {
+    return this.#database.withAuthorizationService(async (client) => {
+      const result = await client.query<{ client_id: string; redirect_uris: unknown }>(
+        `SELECT client_id, redirect_uris FROM oauth.clients
+         WHERE status = 'active' ORDER BY client_id`
+      );
+      return result.rows.map((row) => {
+        if (!Array.isArray(row.redirect_uris) || row.redirect_uris.length === 0
+          || row.redirect_uris.some((uri) => typeof uri !== 'string')) {
+          throw new Error('invalid_oauth_client_metadata');
+        }
+        return { clientId: row.client_id, redirectUris: row.redirect_uris as string[] };
+      });
+    });
+  }
+}
+
+export interface SigningKeyLifecycleRecord {
+  readonly kid: string;
+  readonly custodyReference: string;
+  readonly publicJwk: Readonly<Record<string, unknown>>;
+  readonly status: 'published' | 'active' | 'retiring';
+}
+
+export class PostgresSigningKeyRepository {
+  readonly #database: Database;
+
+  constructor(database: Database) {
+    this.#database = database;
+  }
+
+  async loadUsable(): Promise<Readonly<{
+    active: SigningKeyLifecycleRecord;
+    verification: readonly SigningKeyLifecycleRecord[];
+  }>> {
+    return this.#database.withAuthorizationService(async (client) => {
+      const result = await client.query<{
+        kid: string; custody_reference: string; public_jwk: Record<string, unknown>;
+        status: SigningKeyLifecycleRecord['status'];
+      }>(
+        `SELECT kid, custody_reference, public_jwk, status
+         FROM oauth.signing_key_metadata
+         WHERE status IN ('published', 'active', 'retiring')
+           AND publish_at <= now()
+           AND (status <> 'active' OR activate_at IS NOT NULL AND activate_at <= now())
+           AND (status <> 'retiring' OR retire_at IS NULL OR retire_at > now())
+         ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'published' THEN 1 ELSE 2 END, publish_at, kid`
+      );
+      const records = result.rows.map((row) => ({
+        kid: row.kid,
+        custodyReference: row.custody_reference,
+        publicJwk: row.public_jwk,
+        status: row.status
+      }));
+      const active = records.filter((record) => record.status === 'active');
+      if (active.length !== 1 || active[0] === undefined) throw new Error('single_active_signing_key_required');
+      return { active: active[0], verification: records.filter((record) => record.status !== 'active') };
+    });
+  }
+
+  async isActive(kid: string): Promise<boolean> {
+    return this.#database.withAuthorizationService(async (client) => {
+      const result = await client.query(
+        `SELECT 1 FROM oauth.signing_key_metadata
+         WHERE kid = $1 AND status = 'active' AND activate_at <= now()
+           AND revoke_at IS NULL LIMIT 1`,
+        [kid]
+      );
+      return result.rowCount === 1;
+    });
+  }
+
+  async publish(input: Readonly<{
+    kid: string;
+    custodyReference: string;
+    publicJwk: Readonly<Record<string, unknown>>;
+    publishedAt?: Date;
+  }>): Promise<void> {
+    await this.#database.withAuthorizationService((client) => client.query(
+      `INSERT INTO oauth.signing_key_metadata
+        (kid, algorithm, custody_provider, custody_reference, public_jwk, status, publish_at)
+       VALUES ($1, 'RS256', 'aws-kms', $2, $3::jsonb, 'published', $4)`,
+      [input.kid, input.custodyReference, JSON.stringify(input.publicJwk), input.publishedAt ?? new Date()]
+    ).then(() => undefined));
+  }
+
+  async activate(kid: string, observedAt = new Date()): Promise<boolean> {
+    return this.#database.withAuthorizationService(async (client) => {
+      const result = await client.query<{ changed: boolean }>(
+        'SELECT oauth.activate_signing_key($1, $2) AS changed', [kid, observedAt]
+      );
+      return result.rows[0]?.changed === true;
+    });
+  }
+
+  async revoke(kid: string, observedAt = new Date()): Promise<boolean> {
+    return this.#database.withAuthorizationService(async (client) => {
+      const result = await client.query<{ changed: boolean }>(
+        'SELECT oauth.revoke_signing_key($1, $2) AS changed', [kid, observedAt]
+      );
+      return result.rows[0]?.changed === true;
+    });
+  }
+}
+
 export class PostgresGrantClaimsResolver {
   readonly #database: Database;
 
@@ -883,7 +1368,11 @@ export class PostgresGrantClaimsResolver {
     this.#database = database;
   }
 
-  async resolve(subjectId: string): Promise<{
+  async resolve(subjectId: string, binding?: Readonly<{
+    grantId?: string;
+    clientId?: string;
+    resource?: string;
+  }>): Promise<{
     readonly tenantId: string;
     readonly siteId: string;
     readonly grantId: string;
@@ -896,12 +1385,80 @@ export class PostgresGrantClaimsResolver {
            ON site_record.tenant_id = grant_record.tenant_id AND site_record.id = grant_record.site_id
          WHERE grant_record.subject_id = $1
            AND grant_record.status = 'active' AND site_record.status = 'active'
+           AND ($2::text IS NULL OR grant_record.id = $2)
+           AND ($3::text IS NULL OR grant_record.client_id = $3)
+           AND ($4::text IS NULL OR site_record.resource_uri = $4)
          LIMIT 2`,
-        [subjectId]
+        [subjectId, binding?.grantId ?? null, binding?.clientId ?? null, binding?.resource ?? null]
       );
       const row = result.rows[0];
       if (result.rowCount !== 1 || row === undefined) return undefined;
       return { tenantId: row.tenant_id, siteId: row.site_id, grantId: row.id };
+    });
+  }
+}
+
+export interface AuthorizationGrantBinding {
+  readonly tenantId: string;
+  readonly siteId: string;
+  readonly grantId: string;
+  readonly subjectId: string;
+  readonly clientId: string;
+  readonly resource: string;
+  readonly scopes: readonly string[];
+}
+
+/** Resolves one already-consented platform grant for an OAuth interaction. */
+export class PostgresAuthorizationGrantRepository {
+  readonly #database: Database;
+
+  constructor(database: Database) {
+    this.#database = database;
+  }
+
+  async resolveExact(input: Readonly<{
+    subjectId: string;
+    clientId: string;
+    resource: string;
+    scopes: readonly string[];
+  }>): Promise<AuthorizationGrantBinding | undefined> {
+    const requested = [...new Set(input.scopes)].sort(
+      (left, right) => MCP_SCOPE_ORDER.indexOf(left as typeof MCP_SCOPE_ORDER[number])
+        - MCP_SCOPE_ORDER.indexOf(right as typeof MCP_SCOPE_ORDER[number])
+    );
+    if (requested.length === 0) return undefined;
+    return this.#database.withAuthorizationService(async (client) => {
+      const result = await client.query<{
+        tenant_id: string; site_id: string; id: string; subject_id: string;
+        client_id: string; resource_uri: string; scopes: string[];
+      }>(
+        `SELECT grant_record.tenant_id, grant_record.site_id, grant_record.id,
+                grant_record.subject_id, grant_record.client_id,
+                site_record.resource_uri, grant_record.scopes
+         FROM platform.grants grant_record
+         JOIN platform.sites site_record
+           ON site_record.tenant_id = grant_record.tenant_id
+          AND site_record.id = grant_record.site_id
+         WHERE grant_record.subject_id = $1
+           AND grant_record.client_id = $2
+           AND site_record.resource_uri = $3
+           AND grant_record.scopes = $4::text[]
+           AND grant_record.status = 'active'
+           AND site_record.status = 'active'
+         LIMIT 2`,
+        [input.subjectId, input.clientId, input.resource, requested]
+      );
+      const row = result.rows[0];
+      if (result.rowCount !== 1 || row === undefined) return undefined;
+      return {
+        tenantId: row.tenant_id,
+        siteId: row.site_id,
+        grantId: row.id,
+        subjectId: row.subject_id,
+        clientId: row.client_id,
+        resource: row.resource_uri,
+        scopes: McpScopeSetSchema.parse(row.scopes)
+      };
     });
   }
 }

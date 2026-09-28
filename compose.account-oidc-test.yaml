@@ -53,6 +53,10 @@ services:
     volumes:
       - account-oidc-wordpress:/var/www/html
       - ../wp-auto-connector:/var/www/html/wp-content/plugins/wepuu-auto-connector:ro
+      - account-oidc-caddy-data:/caddy-data:ro
+    networks:
+      - default
+      - pairing-public
     healthcheck:
       test: ["CMD-SHELL", "php -r 'exit(@fsockopen(\"127.0.0.1\", 80) ? 0 : 1);'"]
       interval: 2s
@@ -76,6 +80,7 @@ services:
     volumes:
       - account-oidc-wordpress:/var/www/html
       - ../wp-auto-connector:/var/www/html/wp-content/plugins/wepuu-auto-connector:ro
+      - ./test/account-oidc:/fixture:ro
     security_opt:
       - no-new-privileges:true
 
@@ -90,6 +95,7 @@ services:
       pairing-public:
         ipv4_address: 11.255.255.2
         aliases:
+          - platform.example.test
           - site.example.test
           - site-moved.example.test
     volumes:
@@ -144,6 +150,43 @@ services:
       - pairing-public
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/health/ready >/dev/null"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+    security_opt:
+      - no-new-privileges:true
+
+  authorization:
+    profiles: ["revocation"]
+    build:
+      context: .
+      dockerfile: test/account-oidc/Control.Dockerfile
+    command: ["sh", "-ec", "exec pnpm start:authorization"]
+    depends_on:
+      platform-db:
+        condition: service_healthy
+      caddy:
+        condition: service_healthy
+    environment:
+      WEPUU_DATABASE_URL: postgresql://postgres:conformance@platform-db:5432/wepuu_test
+      WEPUU_ISSUER: https://platform.example.test
+      WEPUU_AUTH_HOST: 0.0.0.0
+      WEPUU_AUTH_PORT: "3001"
+      WEPUU_COOKIE_KEYS_JSON: ${WEPUU_COOKIE_KEYS_JSON:-}
+      WEPUU_OAUTH_ARTIFACT_KEYS_JSON: ${WEPUU_OAUTH_ARTIFACT_KEYS_JSON:-}
+      WEPUU_RATE_LIMIT_HMAC_KEY: ${WEPUU_RATE_LIMIT_HMAC_KEY:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      NODE_EXTRA_CA_CERTS: /caddy-data/caddy/pki/authorities/local/root.crt
+    volumes:
+      - account-oidc-caddy-data:/caddy-data:ro
+    networks:
+      - default
+      - pairing-public
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3001/health/ready >/dev/null"]
       interval: 3s
       timeout: 3s
       retries: 40

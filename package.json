@@ -18,7 +18,8 @@
     "audit:high": "pnpm audit --audit-level high",
     "test:database": "tsx --test packages/database/test/tenant-isolation.test.ts",
     "db:migrate": "tsx packages/database/src/cli.ts migrate",
-    "start:control": "node packages/key-custody/node_modules/@keyobject/aws-kms/bin/awskms.js exec -- node apps/control-api/dist/main.js"
+    "start:control": "node packages/key-custody/node_modules/@keyobject/aws-kms/bin/awskms.js exec -- node apps/control-api/dist/main.js",
+    "start:authorization": "node packages/key-custody/node_modules/@keyobject/aws-kms/bin/awskms.js exec -- node apps/authorization-service/dist/main.js"
   },
   "devDependencies": {
     "@eslint/js": "9.39.5",

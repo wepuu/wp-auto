@@ -18,6 +18,7 @@ import {
   AwsKmsKeyCustody,
   createAwsKmsConsentRequestSigner,
   JoseConsentRequestSigner,
+  JoseRevocationEventSigner,
   KeyCustodyUnavailableError,
   type KmsClientLike
 } from '../src/index.js';
@@ -91,6 +92,31 @@ test('live AWS KMS JOSE consent signs without exporting private material', {
   assert.equal('d' in descriptor.publicJwk, false);
 });
 
+test('live two-key AWS KMS rotation contract keeps both public keys verifiable', {
+  skip: process.env['WEPUU_LIVE_KMS_ROTATION'] !== '1'
+}, async () => {
+  const region = process.env['AWS_REGION'];
+  const firstId = process.env['WEPUU_KMS_KEY_ID'];
+  const firstKid = process.env['WEPUU_KMS_KID'];
+  const secondId = process.env['WEPUU_KMS_SECOND_KEY_ID'];
+  const secondKid = process.env['WEPUU_KMS_SECOND_KID'];
+  assert.ok(region && firstId && firstKid && secondId && secondKid);
+  assert.notEqual(firstId, secondId);
+  assert.notEqual(firstKid, secondKid);
+  const first = new AwsKmsKeyCustody({ region, keyId: firstId, kid: firstKid });
+  const second = new AwsKmsKeyCustody({ region, keyId: secondId, kid: secondKid });
+  const [firstDescriptor, secondDescriptor] = await Promise.all([
+    first.describeSigningKey(), second.describeSigningKey()
+  ]);
+  assert.notEqual(firstDescriptor.publicJwk.n, secondDescriptor.publicJwk.n);
+  const input = Buffer.from('wepuu-live-kms-rotation-contract');
+  const [firstSignature, secondSignature] = await Promise.all([first.sign(input), second.sign(input)]);
+  assert.equal(verify('RSA-SHA256', input, firstDescriptor.publicKey, firstSignature), true);
+  assert.equal(verify('RSA-SHA256', input, secondDescriptor.publicKey, secondSignature), true);
+  assert.equal(firstDescriptor.publicJwk.d, undefined);
+  assert.equal(secondDescriptor.publicJwk.d, undefined);
+});
+
 test('AWS KMS custody exposes only public material and produces RS256 signatures', async () => {
   const custody = new AwsKmsKeyCustody(config, fakeClient());
   const descriptor = await custody.describeSigningKey();
@@ -138,4 +164,30 @@ test('JOSE consent signer fixes RS256 type and key identifier without exposing p
   });
   assert.equal(verified.payload['kind'], 'consent_request');
   assert.equal(JSON.stringify(verified.protectedHeader).includes('private'), false);
+});
+
+test('JOSE revocation signer fixes the content-free exact-audience profile', async () => {
+  const pair = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const signer = new JoseRevocationEventSigner(pair.privateKey, 'kms-key-0001');
+  const token = await signer.sign({
+    issuer: 'https://auth.example.test',
+    resource: 'https://site.example.test/wp-json/wp-auto/mcp',
+    tenantId: '11111111-1111-4111-8111-111111111111',
+    siteId: 'site_00000001',
+    sequence: 7,
+    eventType: 'grant',
+    grantId: 'grant_00000001',
+    reason: 'refresh_replay'
+  }, new Date(1_790_000_000_000));
+  assert.deepEqual(decodeProtectedHeader(token), {
+    alg: 'RS256', typ: 'wepuu-revocation+jwt', kid: 'kms-key-0001'
+  });
+  const verified = await jwtVerify(token, pair.publicKey, {
+    algorithms: ['RS256'], issuer: 'https://auth.example.test',
+    audience: 'https://site.example.test/wp-json/wp-auto/mcp',
+    currentDate: new Date(1_790_000_001_000)
+  });
+  assert.equal(verified.payload['kind'], 'revocation');
+  assert.equal(verified.payload['sequence'], 7);
+  assert.equal('content' in verified.payload, false);
 });

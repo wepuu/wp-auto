@@ -59,6 +59,73 @@ export class JoseConsentRequestSigner {
   }
 }
 
+const RevocationEventSchema = z.object({
+  issuer: z.url().refine((value) => value.startsWith('https://')),
+  resource: z.url().refine((value) => value.startsWith('https://')),
+  tenantId: z.uuid(),
+  siteId: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u),
+  sequence: z.number().int().positive(),
+  eventType: z.enum(['grant', 'site', 'subject', 'token', 'key']),
+  grantId: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u).optional(),
+  tokenJtiHash: z.string().regex(/^[A-Za-z0-9_-]{43}$/u).optional(),
+  keyId: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u).optional(),
+  reason: z.string().regex(/^[a-z][a-z0-9_.-]{2,63}$/u)
+}).strict().superRefine((value, context) => {
+  if (value.eventType === 'grant' && value.grantId === undefined) {
+    context.addIssue({ code: 'custom', message: 'grant_id_required' });
+  }
+  if (value.eventType === 'token' && value.tokenJtiHash === undefined) {
+    context.addIssue({ code: 'custom', message: 'token_jti_hash_required' });
+  }
+  if (value.eventType === 'key' && value.keyId === undefined) {
+    context.addIssue({ code: 'custom', message: 'key_id_required' });
+  }
+});
+
+export type RevocationEvent = z.infer<typeof RevocationEventSchema>;
+
+/** Creates the compact, content-free event accepted by the paired connector. */
+export class JoseRevocationEventSigner {
+  readonly #privateKey: KeyObject;
+  readonly #kid: string;
+
+  constructor(privateKey: KeyObject, kid: string) {
+    if (privateKey.type !== 'private' || !/^[A-Za-z0-9_-]{8,128}$/u.test(kid)) {
+      throw new KeyCustodyUnavailableError();
+    }
+    this.#privateKey = privateKey;
+    this.#kid = kid;
+  }
+
+  async sign(input: RevocationEvent, now = new Date()): Promise<string> {
+    const event = RevocationEventSchema.parse(input);
+    const issuedAt = Math.floor(now.getTime() / 1_000);
+    try {
+      return await new SignJWT({
+        kind: 'revocation',
+        protocol_version: '1',
+        tenant_id: event.tenantId,
+        site_id: event.siteId,
+        sequence: event.sequence,
+        event_type: event.eventType,
+        reason: event.reason,
+        ...(event.grantId === undefined ? {} : { grant_id: event.grantId }),
+        ...(event.tokenJtiHash === undefined ? {} : { token_jti_hash: event.tokenJtiHash }),
+        ...(event.keyId === undefined ? {} : { key_id: event.keyId })
+      })
+        .setProtectedHeader({ alg: 'RS256', typ: 'wepuu-revocation+jwt', kid: this.#kid })
+        .setIssuer(event.issuer)
+        .setAudience(event.resource)
+        .setIssuedAt(issuedAt)
+        .setNotBefore(issuedAt - 5)
+        .setExpirationTime(issuedAt + 60)
+        .sign(this.#privateKey);
+    } catch {
+      throw new KeyCustodyUnavailableError();
+    }
+  }
+}
+
 /**
  * Load one AWS KMS asymmetric key through the Node 26.7+ OpenSSL provider.
  * The process must start with `--import @keyobject/aws-kms/register`.
@@ -78,6 +145,24 @@ export function createAwsKmsConsentRequestSigner(input: KeyCustodyConfig): JoseC
       key: new URL(`aws-kms:key-id=${config.keyId};region=${config.region}`)
     });
     return new JoseConsentRequestSigner(key, config.kid);
+  } catch {
+    throw new KeyCustodyUnavailableError();
+  }
+}
+
+/** Load the same managed key into a signer restricted to revocation-event JWS. */
+export function createAwsKmsRevocationEventSigner(input: KeyCustodyConfig): JoseRevocationEventSigner {
+  const config = KeyCustodyConfigSchema.parse(input);
+  const keyArn = /^arn:aws(?:-us-gov|-cn)?:kms:([a-z0-9-]+):\d{12}:key\/[0-9a-f-]{36}$/iu.exec(config.keyId);
+  if (!/^[a-z]{2}(?:-gov)?-[a-z0-9-]+-\d$/u.test(config.region) || keyArn?.[1] !== config.region) {
+    throw new KeyCustodyUnavailableError();
+  }
+  try {
+    const createPrivateKeyFromStoreUrl = createPrivateKey as unknown as (options: { readonly key: URL }) => KeyObject;
+    const key = createPrivateKeyFromStoreUrl({
+      key: new URL(`aws-kms:key-id=${config.keyId};region=${config.region}`)
+    });
+    return new JoseRevocationEventSigner(key, config.kid);
   } catch {
     throw new KeyCustodyUnavailableError();
   }

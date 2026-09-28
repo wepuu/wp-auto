@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   Database,
+  PostgresAccountRegistry,
+  PostgresAuthorizationGrantRepository,
   PostgresGrantClaimsResolver,
   PostgresGrantRepository,
   PostgresAccountSessionStore,
@@ -9,7 +11,10 @@ import {
   PostgresPairingRepository,
   PostgresResourceRegistry,
   PostgresSecurityAuditSink,
+  PostgresSigningKeyRepository,
   SecurityEventRepository,
+  SecretArtifactCodec,
+  RateLimitSubjectCodec,
   SiteRepository,
   TenantRepository
 } from '../src/index.js';
@@ -161,11 +166,12 @@ test('PostgreSQL RLS denies cross-tenant and missing-membership access', { skip:
   );
   assert.equal(otherEvents.length, 0);
 
-  const adapter = new PostgresOidcAdapter('Grant', database);
+  const artifactCodec = new SecretArtifactCodec([Buffer.alloc(32, 31)]);
+  const adapter = new PostgresOidcAdapter('Grant', database, artifactCodec);
   await adapter.upsert('persistent_grant_0001', { tenantId: tenantA, grantId: 'grant_00000001' }, 300);
   const secondConnection = new Database({ connectionString, applicationName: 'wepuu-restart-test' });
   try {
-    const restored = await new PostgresOidcAdapter('Grant', secondConnection).find('persistent_grant_0001');
+    const restored = await new PostgresOidcAdapter('Grant', secondConnection, artifactCodec).find('persistent_grant_0001');
     assert.equal(restored?.['grantId'], 'grant_00000001');
   } finally {
     await secondConnection.close();
@@ -232,6 +238,19 @@ test('PostgreSQL RLS denies cross-tenant and missing-membership access', { skip:
   });
   assert.equal(replayedGrant.id, 'grant_00000001');
   await grants.activate(tenantA, 'grant_00000001', 'idempotency_GRANT001', proof.thumbprint);
+  assert.equal(await new PostgresAccountRegistry(database).isActive(accountA), true);
+  assert.deepEqual(await new PostgresAuthorizationGrantRepository(database).resolveExact({
+    subjectId: accountA,
+    clientId: 'client_00000001',
+    resource,
+    scopes: ['mcp:read']
+  }).then((binding) => binding?.grantId), 'grant_00000001');
+  assert.equal(await new PostgresAuthorizationGrantRepository(database).resolveExact({
+    subjectId: accountA,
+    clientId: 'client_wrong0001',
+    resource,
+    scopes: ['mcp:read']
+  }), undefined);
   assert.deepEqual(await new PostgresGrantClaimsResolver(database).resolve(accountA), {
     tenantId: tenantA,
     siteId: 'site_00000001',
@@ -247,4 +266,108 @@ test('PostgreSQL RLS denies cross-tenant and missing-membership access', { skip:
   assert.equal(await pairing.markVerifying(tenantA, reparingAttempt.id), true);
   await pairing.complete(reparingAttempt, proof, 'site_00000002', 'idempotency_PAIR0002');
   assert.equal(await new PostgresResourceRegistry(database).resolve(resource).then((value) => value?.resource), resource);
+});
+
+test('refresh CAS has one winner and replay revokes the exact grant with one outbox event', {
+  skip: connectionString === undefined
+}, async (t) => {
+  assert.ok(connectionString);
+  const database = new Database({ connectionString, applicationName: 'wepuu-refresh-replay-test' });
+  t.after(() => database.close());
+  await database.migrate();
+  const admin = database.poolForMigrationsAndTests;
+  const tenant = '33333333-3333-4333-8333-333333333333';
+  const resource = 'https://refresh.example.test/wp-json/wp-auto/mcp';
+  await admin.query(
+    `INSERT INTO platform.accounts (id, status, identity_issuer, identity_subject_hash)
+     VALUES ('account_REFRESH', 'active', 'https://identity.example.test/', $1)
+     ON CONFLICT DO NOTHING`,
+    ['c'.repeat(64)]
+  );
+  await admin.query(
+    `INSERT INTO platform.tenants (id, status) VALUES ($1, 'active') ON CONFLICT DO NOTHING`,
+    [tenant]
+  );
+  await admin.query("DELETE FROM oauth.signing_key_metadata WHERE kid IN ('kms_active_test', 'kms_retiring_test', 'kms_revoked_test', 'kms_published_test')");
+  const publicJwk = JSON.stringify({ kty: 'RSA', n: 'abc', e: 'AQAB', alg: 'RS256', use: 'sig', kid: 'placeholder' });
+  await admin.query(
+    `INSERT INTO oauth.signing_key_metadata
+       (kid, algorithm, custody_provider, custody_reference, public_jwk, status, publish_at, activate_at, retire_at, revoke_at)
+     VALUES
+       ('kms_active_test', 'RS256', 'aws-kms', 'arn:aws:kms:us-east-1:111111111111:key/11111111-1111-4111-8111-111111111111',
+        ($1::jsonb || '{"kid":"kms_active_test"}'::jsonb), 'active', now() - interval '30 minutes', now() - interval '10 minutes', NULL, NULL),
+       ('kms_retiring_test', 'RS256', 'aws-kms', 'arn:aws:kms:us-east-1:111111111111:key/22222222-2222-4222-8222-222222222222',
+        ($1::jsonb || '{"kid":"kms_retiring_test"}'::jsonb), 'retiring', now() - interval '1 hour', now() - interval '40 minutes', now() + interval '20 minutes', NULL),
+       ('kms_revoked_test', 'RS256', 'aws-kms', 'arn:aws:kms:us-east-1:111111111111:key/33333333-3333-4333-8333-333333333333',
+        ($1::jsonb || '{"kid":"kms_revoked_test"}'::jsonb), 'revoked', now() - interval '1 hour', now() - interval '40 minutes', now(), now())`,
+    [publicJwk]
+  );
+  const lifecycle = await new PostgresSigningKeyRepository(database).loadUsable();
+  assert.equal(lifecycle.active.kid, 'kms_active_test');
+  assert.deepEqual(lifecycle.verification.map((key) => key.kid), ['kms_retiring_test']);
+  const keyRepository = new PostgresSigningKeyRepository(database);
+  await keyRepository.publish({
+    kid: 'kms_published_test',
+    custodyReference: 'arn:aws:kms:us-east-1:111111111111:key/44444444-4444-4444-8444-444444444444',
+    publicJwk: { ...JSON.parse(publicJwk) as Record<string, unknown>, kid: 'kms_published_test' },
+    publishedAt: new Date(Date.now() - 21 * 60 * 1_000)
+  });
+  assert.equal(await keyRepository.activate('kms_published_test'), true);
+  assert.equal(await keyRepository.isActive('kms_published_test'), true);
+  await admin.query(
+    `INSERT INTO platform.sites
+       (tenant_id, id, resource_uri, display_hostname, status, protocol_version, site_public_jwk, site_key_thumbprint)
+     VALUES ($1, 'site_REFRESH01', $2, 'refresh.example.test', 'active', '1',
+       '{"kty":"OKP","crv":"Ed25519","x":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}'::jsonb,
+       'thumbprint_REFRESH000000000000000000000000000000000000000000000000000000')
+     ON CONFLICT DO NOTHING`,
+    [tenant, resource]
+  );
+  await admin.query(
+    `INSERT INTO platform.grants
+       (tenant_id, id, site_id, subject_id, client_id, scopes, consent_challenge_hash,
+        consent_expires_at, status, consent_version)
+     VALUES ($1, 'grant_REFRESH01', 'site_REFRESH01', 'account_REFRESH', 'client_REFRESH01',
+       ARRAY['mcp:read'], decode(repeat('11', 32), 'hex'), now() + interval '5 minutes', 'active', '1')
+     ON CONFLICT DO NOTHING`,
+    [tenant]
+  );
+  const adapter = new PostgresOidcAdapter(
+    'RefreshToken', database, new SecretArtifactCodec([Buffer.alloc(32, 4)]),
+    new RateLimitSubjectCodec(Buffer.alloc(32, 5))
+  );
+  const token = 'refresh-token-value-00000000000000000000000000000001';
+  await adapter.upsert(token, {
+    kind: 'RefreshToken', grantId: 'grant_REFRESH01', accountId: 'account_REFRESH',
+    clientId: 'client_REFRESH01', rotations: 0
+  }, 3600);
+  const attempts = await Promise.allSettled([adapter.consume(token), adapter.consume(token)]);
+  assert.equal(attempts.filter((attempt) => attempt.status === 'fulfilled').length, 1);
+  assert.equal(attempts.filter((attempt) => attempt.status === 'rejected').length, 1);
+  const grant = await admin.query<{ status: string }>(
+    'SELECT status FROM platform.grants WHERE tenant_id = $1 AND id = $2',
+    [tenant, 'grant_REFRESH01']
+  );
+  assert.equal(grant.rows[0]?.status, 'revoked');
+  const events = await admin.query<{ count: string }>(
+    `SELECT count(*)::text AS count FROM oauth.revocation_outbox
+     WHERE tenant_id = $1 AND grant_id = $2 AND reason = 'refresh_replay'`,
+    [tenant, 'grant_REFRESH01']
+  );
+  assert.equal(events.rows[0]?.count, '1');
+  await assert.rejects(adapter.consume(token));
+  const repeatEvents = await admin.query<{ count: string }>(
+    `SELECT count(*)::text AS count FROM oauth.revocation_outbox
+     WHERE tenant_id = $1 AND grant_id = $2 AND reason = 'refresh_replay'`,
+    [tenant, 'grant_REFRESH01']
+  );
+  assert.equal(repeatEvents.rows[0]?.count, '1');
+  assert.equal(await keyRepository.revoke('kms_published_test'), true);
+  assert.equal(await keyRepository.isActive('kms_published_test'), false);
+  const keyEvents = await admin.query<{ count: string }>(
+    `SELECT count(*)::text AS count FROM oauth.revocation_outbox
+     WHERE tenant_id = $1 AND key_id = 'kms_published_test' AND reason = 'key_revoked'`,
+    [tenant]
+  );
+  assert.equal(keyEvents.rows[0]?.count, '1');
 });

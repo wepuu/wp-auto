@@ -4,6 +4,9 @@
 
 https://platform.example.test {
 	tls internal
+	handle /jwks {
+		reverse_proxy authorization:3001
+	}
 	handle_path /conformance/* {
 		root * /srv/conformance
 		header Cache-Control "no-store"

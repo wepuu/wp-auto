@@ -9,6 +9,7 @@
     "@wepuu/database": "workspace:*",
     "@wepuu/key-custody": "workspace:*",
     "@wepuu/oauth-provider": "workspace:*",
+    "@wepuu/pairing": "workspace:*",
     "zod": "4.6.5"
   }
 }

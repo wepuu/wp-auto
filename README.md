@@ -24,7 +24,12 @@ explicit fragment-safe Connect handoff, site-ID-bound Ed25519 pairing proof,
 and local opaque grant storage. The signing runtime is pinned to Node 26.7+
 and uses `jose` with an AWS KMS-backed `KeyObject`; real wp-admin pairing,
 consent, domain migration/re-pair, cleanup, and hosted GitHub OIDC/KMS
-acceptance all pass. No production deployment or Phase 2.0.4 work has begun.
+acceptance all pass. Phase 2.0.4A/2.0.4B implementation is now in progress on
+local-only branches. It adds real authorization interactions, opaque
+code/refresh lookup, atomic refresh replay revocation, database-backed endpoint
+limits, managed signing-key lifecycle/JWKS overlap, durable signed revocation
+delivery, and connector-local deny state. Bearer authentication is deliberately
+not connected to MCP tools until Phase 2.0.5.
 
 ## Architecture
 
@@ -68,10 +73,19 @@ pnpm test:database
 docker compose -f compose.test.yaml down
 ```
 
-The authorization service requires an existing AWS KMS asymmetric RSA
-`SIGN_VERIFY` key through `AWS_REGION`, `WEPUU_KMS_KEY_ID`, and
-`WEPUU_KMS_KID`. Missing or invalid custody configuration prevents startup;
-there is no file-key fallback.
+The authorization service requires exactly one active AWS KMS asymmetric RSA
+`SIGN_VERIFY` key in `oauth.signing_key_metadata`; published and retiring keys
+are verification-only. Every database public JWK is compared with KMS at
+startup, and every signature rechecks that the active `kid` remains active.
+There is no file-key fallback. The control API's pairing consent signer still
+receives `AWS_REGION`, `WEPUU_KMS_KEY_ID`, and `WEPUU_KMS_KID` from its runtime
+secret/configuration injection.
+
+Authorization startup also requires two rotating cookie keys plus one or two
+32-byte versioned OAuth-artifact HMAC keys in
+`WEPUU_OAUTH_ARTIFACT_KEYS_JSON`, and an independent 32-byte
+`WEPUU_RATE_LIMIT_HMAC_KEY`. These values are process/secret-manager inputs;
+they must not be stored in `.env`, fixtures, logs, evidence, or Git.
 
 Any process that creates KMS-backed JOSE signatures must be launched through
 `pnpm start:control` (or the equivalent `keyobject-aws-kms exec -- node ...`)

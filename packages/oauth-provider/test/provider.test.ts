@@ -4,11 +4,20 @@ import { generateKeyPairSync, sign } from 'node:crypto';
 import test from 'node:test';
 import type { KeyCustody, SigningKeyDescriptor } from '@wepuu/key-custody';
 import {
+  DenyAllAccountRegistry,
   DenyAllGrantClaimsResolver,
   DenyAllResourceRegistry,
   createAuthorizationProvider,
+  refreshTokenTtl,
   type OidcAdapterShape
 } from '../src/index.js';
+
+test('refresh TTL enforces 30-day inactivity and 90-day absolute family life', () => {
+  const day = 24 * 60 * 60;
+  assert.equal(refreshTokenTtl({}, 1_000), 30 * day);
+  assert.equal(refreshTokenTtl({ iiat: 1_000 }, 1_000 + 70 * day), 20 * day);
+  assert.equal(refreshTokenTtl({ iiat: 1_000 }, 1_000 + 90 * day), 1);
+});
 
 function memoryAdapter(): new (model: string) => OidcAdapterShape {
   return class MemoryAdapter implements OidcAdapterShape {
@@ -29,13 +38,13 @@ function memoryAdapter(): new (model: string) => OidcAdapterShape {
   };
 }
 
-function fakeCustody(): KeyCustody {
+function fakeCustody(kid = 'kms-key-0001'): KeyCustody {
   const pair = generateKeyPairSync('rsa', { modulusLength: 2048 });
   const descriptor: SigningKeyDescriptor = {
-    kid: 'kms-key-0001',
+    kid,
     algorithm: 'RS256',
     publicKey: pair.publicKey,
-    publicJwk: { ...pair.publicKey.export({ format: 'jwk' }), kid: 'kms-key-0001', alg: 'RS256', use: 'sig' }
+    publicJwk: { ...pair.publicKey.export({ format: 'jwk' }), kid, alg: 'RS256', use: 'sig' }
   };
   return {
     async describeSigningKey() { return descriptor; },
@@ -50,7 +59,8 @@ test('authorization provider publishes metadata and public-only JWKS through ext
     keyCustody: fakeCustody(),
     adapter: memoryAdapter(),
     resourceRegistry: new DenyAllResourceRegistry(),
-    grantClaimsResolver: new DenyAllGrantClaimsResolver()
+    grantClaimsResolver: new DenyAllGrantClaimsResolver(),
+    accountRegistry: new DenyAllAccountRegistry()
   });
   const server = createServer(provider.callback());
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -61,7 +71,31 @@ test('authorization provider publishes metadata and public-only JWKS through ext
   const metadata = await (await fetch(`${base}/.well-known/openid-configuration`)).json() as Record<string, unknown>;
   assert.equal(metadata['issuer'], 'https://auth.example.test');
   assert.deepEqual(metadata['code_challenge_methods_supported'], ['S256']);
+  assert.equal(metadata['authorization_response_iss_parameter_supported'], true);
   const jwks = await (await fetch(`${base}/jwks`)).json() as { keys: Array<Record<string, unknown>> };
   assert.equal(jwks.keys[0]?.['kid'], 'kms-key-0001');
   assert.equal(jwks.keys[0]?.['d'], undefined);
+});
+
+test('JWKS publishes active then overlap keys without private material', async (t) => {
+  const active = fakeCustody();
+  const previous = fakeCustody('kms-key-previous');
+  const provider = await createAuthorizationProvider({
+    issuer: 'https://auth.example.test',
+    cookieKeys: ['a'.repeat(32), 'b'.repeat(32)],
+    keyCustody: active,
+    verificationKeys: [{ custody: previous, status: 'retiring' }],
+    adapter: memoryAdapter(),
+    resourceRegistry: new DenyAllResourceRegistry(),
+    grantClaimsResolver: new DenyAllGrantClaimsResolver(),
+    accountRegistry: new DenyAllAccountRegistry()
+  });
+  const server = createServer(provider.callback());
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise<void>((resolve, reject) => server.close((error) => error === undefined ? resolve() : reject(error))));
+  const address = server.address();
+  assert.ok(address !== null && typeof address === 'object');
+  const jwks = await (await fetch(`http://127.0.0.1:${address.port}/jwks`)).json() as { keys: Array<Record<string, unknown>> };
+  assert.equal(jwks.keys.length, 2);
+  assert.ok(jwks.keys.every((key) => key['d'] === undefined && key['alg'] === 'RS256'));
 });

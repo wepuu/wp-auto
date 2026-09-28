@@ -28,7 +28,15 @@ export interface GrantClaims {
 }
 
 export interface GrantClaimsResolver {
-  resolve(accountId: string): Promise<GrantClaims | undefined>;
+  resolve(accountId: string, binding?: Readonly<{
+    grantId?: string;
+    clientId?: string;
+    resource?: string;
+  }>): Promise<GrantClaims | undefined>;
+}
+
+export interface AccountRegistry {
+  isActive(accountId: string): Promise<boolean>;
 }
 
 export interface OidcAdapterShape {
@@ -52,9 +60,14 @@ export interface AuthorizationProviderOptions {
   readonly issuer: string;
   readonly cookieKeys: readonly string[];
   readonly keyCustody: KeyCustody;
+  readonly verificationKeys?: readonly Readonly<{
+    custody: KeyCustody;
+    status: 'published' | 'retiring';
+  }>[];
   readonly adapter: OidcAdapterConstructor;
   readonly resourceRegistry: ResourceRegistry;
   readonly grantClaimsResolver: GrantClaimsResolver;
+  readonly accountRegistry: AccountRegistry;
   readonly clients?: readonly PublicClientDefinition[];
 }
 
@@ -79,6 +92,18 @@ function assertExactResource(value: string): string {
     throw new errors.InvalidTarget();
   }
   return parsed.href;
+}
+
+const refreshInactivitySeconds = 30 * 24 * 60 * 60;
+const refreshAbsoluteSeconds = 90 * 24 * 60 * 60;
+
+export function refreshTokenTtl(token: Readonly<{ iiat?: unknown }>, nowSeconds = Math.floor(Date.now() / 1_000)): number {
+  const initialIssuedAt = typeof token.iiat === 'number' && Number.isSafeInteger(token.iiat)
+    ? token.iiat
+    : nowSeconds;
+  const absoluteRemaining = initialIssuedAt + refreshAbsoluteSeconds - nowSeconds;
+  if (absoluteRemaining <= 0) return 1;
+  return Math.min(refreshInactivitySeconds, absoluteRemaining);
 }
 
 class CustodyExternalSigningKey extends ExternalSigningKey {
@@ -115,6 +140,10 @@ export async function createAuthorizationProvider(options: AuthorizationProvider
   }
   const descriptor = await options.keyCustody.describeSigningKey();
   const externalKey = new CustodyExternalSigningKey(options.keyCustody, descriptor);
+  const verificationKeys = await Promise.all((options.verificationKeys ?? []).map(async ({ custody }) =>
+    new CustodyExternalSigningKey(custody, await custody.describeSigningKey())));
+  const keyIds = [externalKey, ...verificationKeys].map((key) => key.kid);
+  if (new Set(keyIds).size !== keyIds.length) throw new Error('duplicate_signing_kid');
   const clients: ClientMetadata[] = (options.clients ?? []).map((client) => ({
     client_id: client.clientId,
     redirect_uris: [...client.redirectUris],
@@ -125,10 +154,14 @@ export async function createAuthorizationProvider(options: AuthorizationProvider
 
   return new Provider(issuer, {
     adapter: options.adapter,
-    jwks: { keys: [externalKey] },
+    // oidc-provider selects the first compatible key for signing. The sole
+    // active custody is first; published/retiring keys are verification-only.
+    jwks: { keys: [externalKey, ...verificationKeys] },
     clients,
     scopes: OAuthScopeSchema.options,
     pkce: { required: () => true },
+    rotateRefreshToken: true,
+    clockTolerance: 60,
     features: {
       externalSigningSupport: { enabled: true, ack: 'experimental-01' },
       devInteractions: { enabled: false },
@@ -151,7 +184,7 @@ export async function createAuthorizationProvider(options: AuthorizationProvider
     ttl: {
       AccessToken: 300,
       AuthorizationCode: 90,
-      RefreshToken: 7_776_000,
+      RefreshToken: (_context, token) => refreshTokenTtl(token),
       Interaction: 300,
       Session: 600,
       Grant: 7_776_000,
@@ -162,18 +195,24 @@ export async function createAuthorizationProvider(options: AuthorizationProvider
       if (token.kind !== 'AccessToken') return undefined;
       const accountId = token.accountId;
       if (typeof accountId !== 'string') throw new errors.AccessDenied();
-      const claims = await options.grantClaimsResolver.resolve(accountId);
+      const tokenRecord = token as unknown as Record<string, unknown>;
+      const binding: { grantId?: string; clientId?: string; resource?: string } = {};
+      if (typeof token.grantId === 'string') binding.grantId = token.grantId;
+      if (typeof token.clientId === 'string') binding.clientId = token.clientId;
+      if (typeof tokenRecord['resource'] === 'string') binding.resource = tokenRecord['resource'];
+      const claims = await options.grantClaimsResolver.resolve(accountId, binding);
       if (claims === undefined) throw new errors.AccessDenied();
       return {
         nbf: Math.floor(Date.now() / 1_000),
+        client_id: token.clientId,
+        scope: token.scope,
         tenant_id: claims.tenantId,
         site_id: claims.siteId,
         grant_id: claims.grantId
       };
     },
     async findAccount(_context, accountId) {
-      const claims = await options.grantClaimsResolver.resolve(accountId);
-      if (claims === undefined) return undefined;
+      if (!await options.accountRegistry.isActive(accountId)) return undefined;
       return { accountId, claims: () => Promise.resolve({ sub: accountId }) };
     },
     interactions: {
@@ -194,5 +233,11 @@ export class DenyAllResourceRegistry implements ResourceRegistry {
 export class DenyAllGrantClaimsResolver implements GrantClaimsResolver {
   resolve(): Promise<undefined> {
     return Promise.resolve(undefined);
+  }
+}
+
+export class DenyAllAccountRegistry implements AccountRegistry {
+  isActive(): Promise<false> {
+    return Promise.resolve(false);
   }
 }

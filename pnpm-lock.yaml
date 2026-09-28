@@ -44,6 +44,9 @@ importers:
       '@wepuu/oauth-provider':
         specifier: workspace:*
         version: link:../../packages/oauth-provider
+      '@wepuu/pairing':
+        specifier: workspace:*
+        version: link:../../packages/pairing
       zod:
         specifier: 4.6.5
         version: 4.6.5
