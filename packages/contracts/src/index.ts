@@ -14,6 +14,33 @@ export const McpScopeSchema = z.enum([
 ]);
 export type McpScope = z.infer<typeof McpScopeSchema>;
 export const MCP_SCOPE_ORDER: readonly McpScope[] = McpScopeSchema.options;
+
+/** Frozen Phase 2.0.5 ceiling for the connector's ordered 23-tool catalog. */
+export const MCP_ABILITY_SCOPE_POLICY = [
+  ['wp-auto/site-health', 'mcp:read'],
+  ['wp-auto/site-info', 'mcp:read'],
+  ['wp-auto/posts-search', 'mcp:read'],
+  ['wp-auto/post-get', 'mcp:read'],
+  ['wp-auto/pages-search', 'mcp:read'],
+  ['wp-auto/page-get', 'mcp:read'],
+  ['wp-auto/categories-list', 'mcp:read'],
+  ['wp-auto/tags-list', 'mcp:read'],
+  ['wp-auto/post-create-draft', 'mcp:content.write'],
+  ['wp-auto/page-create-draft', 'mcp:content.write'],
+  ['wp-auto/post-update', 'mcp:content.write'],
+  ['wp-auto/page-update', 'mcp:content.write'],
+  ['wp-auto/media-search', 'mcp:read'],
+  ['wp-auto/media-get', 'mcp:read'],
+  ['wp-auto/media-upload', 'mcp:media.write'],
+  ['wp-auto/media-update', 'mcp:media.write'],
+  ['wp-auto/media-set-featured', 'mcp:media.write'],
+  ['wp-auto/media-import-url', 'mcp:media.write'],
+  ['wp-auto/category-create', 'mcp:taxonomy.write'],
+  ['wp-auto/tag-create', 'mcp:taxonomy.write'],
+  ['wp-auto/taxonomy-assign', 'mcp:taxonomy.write'],
+  ['wp-auto/seo-get', 'mcp:read'],
+  ['wp-auto/seo-update', 'mcp:seo.write']
+] as const satisfies readonly (readonly [string, McpScope])[];
 export const McpScopeSetSchema = z.array(McpScopeSchema).min(1).max(MCP_SCOPE_ORDER.length)
   .refine((scopes) => new Set(scopes).size === scopes.length, 'duplicate_scope')
   .refine((scopes) => scopes.every((scope, index) => {

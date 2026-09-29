@@ -21,7 +21,7 @@ import {
   createAwsKmsRevocationEventSigner,
   type KeyCustody
 } from '@wepuu/key-custody';
-import { createAuthorizationProvider } from '@wepuu/oauth-provider';
+import { allowRegisteredNativeLoopbackPort, createAuthorizationProvider } from '@wepuu/oauth-provider';
 import { HttpsRevocationDelivery, RevocationWorker } from './revocation-worker.js';
 
 const SESSION_COOKIE = '__Host-wepuu_session';
@@ -77,9 +77,28 @@ function interactionScopes(params: Record<string, unknown>): readonly string[] |
   return scopes.length === 0 ? undefined : scopes;
 }
 
-function interactionResource(params: Record<string, unknown>): string | undefined {
+export function interactionResource(params: Record<string, unknown>): string | undefined {
   const resource = params['resource'];
-  return typeof resource === 'string' ? resource : undefined;
+  if (typeof resource === 'string') return resource;
+  if (!Array.isArray(resource) || resource.length === 0 || resource.length > 4) return undefined;
+  const first: unknown = resource[0];
+  return typeof first === 'string'
+    && resource.every((candidate) => typeof candidate === 'string' && candidate === first)
+    ? first
+    : undefined;
+}
+
+export function normalizeAuthorizationResources(authorizationUrl: URL): boolean {
+  const resources = authorizationUrl.searchParams.getAll('resource');
+  if (resources.length <= 1) return resources.every((resource) => resource.length > 0);
+  const [first] = resources;
+  if (first === undefined || first.length === 0 || resources.length > 4
+      || !resources.every((resource) => resource === first)) {
+    return false;
+  }
+  authorizationUrl.searchParams.delete('resource');
+  authorizationUrl.searchParams.append('resource', first);
+  return true;
 }
 
 function signCsrf(payload: z.infer<typeof CsrfPayloadSchema>, key: string): string {
@@ -340,6 +359,15 @@ export async function startAuthorizationService(
           consent: { grantId: binding.grantId }
         }, { mergeWithLastSubmission: true });
         return;
+      }
+      if (request.method === 'GET' && path === '/auth') {
+        const authorizationUrl = new URL(request.url ?? '/', config.issuer);
+        if (!normalizeAuthorizationResources(authorizationUrl)) {
+          writeInteractionError(response);
+          return;
+        }
+        request.url = `${authorizationUrl.pathname}${authorizationUrl.search}`;
+        await allowRegisteredNativeLoopbackPort(provider, authorizationUrl);
       }
       try {
         await callback(request, response);

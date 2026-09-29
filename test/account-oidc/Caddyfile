@@ -4,7 +4,8 @@
 
 https://platform.example.test {
 	tls internal
-	handle /jwks {
+	@authorization path /.well-known/openid-configuration /.well-known/oauth-authorization-server /auth /auth/* /token /token/revocation /jwks /interaction/*
+	handle @authorization {
 		reverse_proxy authorization:3001
 	}
 	handle_path /conformance/* {

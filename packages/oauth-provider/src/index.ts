@@ -12,6 +12,12 @@ export const OAuthScopeSchema = z.enum([
   'mcp:seo.write'
 ]);
 
+// oidc-provider treats every top-level configured scope as an OIDC scope when
+// evaluating consent. Resource-specific MCP scopes are supplied exclusively by
+// getResourceServerInfo below so a grant does not have to duplicate them as
+// both OIDC and RFC 8707 resource scopes.
+const oidcScopes = ['openid', 'offline_access'] as const;
+
 export interface ResourceServerPolicy {
   readonly resource: string;
   readonly scopes: readonly string[];
@@ -54,6 +60,56 @@ export type OidcAdapterConstructor = new (model: string) => OidcAdapterShape;
 export interface PublicClientDefinition {
   readonly clientId: string;
   readonly redirectUris: readonly string[];
+}
+
+function nativeLoopbackRedirectMatches(registered: string, candidate: string): boolean {
+  let expected: URL;
+  let observed: URL;
+  try {
+    expected = new URL(registered);
+    observed = new URL(candidate);
+  } catch {
+    return false;
+  }
+  return expected.protocol === 'http:'
+    && expected.hostname === '127.0.0.1'
+    && expected.port === ''
+    && expected.username === ''
+    && expected.password === ''
+    && observed.protocol === expected.protocol
+    && observed.hostname === expected.hostname
+    && observed.port !== ''
+    && observed.username === ''
+    && observed.password === ''
+    && observed.pathname === expected.pathname
+    && observed.search === expected.search
+    && observed.hash === ''
+    && expected.hash === '';
+}
+
+export async function allowRegisteredNativeLoopbackPort(
+  provider: Provider,
+  authorizationUrl: URL
+): Promise<boolean> {
+  const clientId = authorizationUrl.searchParams.get('client_id');
+  const redirectUri = authorizationUrl.searchParams.get('redirect_uri');
+  if (clientId === null || redirectUri === null) return false;
+  const client = await provider.Client.find(clientId);
+  if (client === undefined) return false;
+  const redirectUris = client.redirectUris as string[] | undefined;
+  if (redirectUris === undefined) return false;
+  if (redirectUris.includes(redirectUri)) return true;
+  if (!redirectUris.some((registered) => nativeLoopbackRedirectMatches(registered, redirectUri))) {
+    return false;
+  }
+  redirectUris.push(redirectUri);
+  const dynamicVariants = redirectUris.filter((current) =>
+    redirectUris.some((registered) => nativeLoopbackRedirectMatches(registered, current)));
+  if (dynamicVariants.length > 8) {
+    const oldest = dynamicVariants[0];
+    if (oldest !== undefined) redirectUris.splice(redirectUris.indexOf(oldest), 1);
+  }
+  return true;
 }
 
 export interface AuthorizationProviderOptions {
@@ -158,7 +214,7 @@ export async function createAuthorizationProvider(options: AuthorizationProvider
     // active custody is first; published/retiring keys are verification-only.
     jwks: { keys: [externalKey, ...verificationKeys] },
     clients,
-    scopes: OAuthScopeSchema.options,
+    scopes: oidcScopes,
     pkce: { required: () => true },
     rotateRefreshToken: true,
     clockTolerance: 60,

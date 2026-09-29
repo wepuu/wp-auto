@@ -88,10 +88,21 @@ completed validation record; fixture-only key rotation cannot close the phase.
 
 ## Phase 2.0.5 - scoped connector integration
 
+Status: accepted and closed on 2026-09-29 after every implementation, live,
+privacy, package, security-review and cleanup gate passed. Platform work is isolated on
+`codex/phase-2-0-5-scoped-connector`; connector work is isolated on
+`codex/phase-2-0-5-bearer-auth`. Production deployment and Phase 2.0.6 are not
+authorized.
+
 - Add Bearer authentication alongside Application Passwords.
 - Map `grant_id` to a current local WordPress user for each request.
 - Enforce scope as a ceiling before existing local permission checks.
 - Preserve the exact 23-tool catalog and input/output semantics.
+
+Exit gate: deterministic platform and connector suites, real HTTPS WordPress
+PRM/challenge/Bearer probes, real two-key KMS token verification, direct Codex
+MCP acceptance, content-free control-plane review, release-package checks and
+complete temporary-state cleanup must pass.
 
 ## Phase 2.0.6 - security and resilience qualification
 
