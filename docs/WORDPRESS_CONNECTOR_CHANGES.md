@@ -1,6 +1,8 @@
-# Future WordPress Connector Changes
+# WordPress Connector OAuth Change Contract
 
-This document is a change contract for a later, separately approved task. Phase 2.0.0 does not modify `D:\Codex\wp-auto-connector`.
+This document originated as the Phase 2.0.0 future-change contract. Phase 2.0.5
+implementation was accepted and closed on 2026-09-29 on
+`codex/phase-2-0-5-bearer-auth`; the frozen boundaries below remain normative.
 
 Reference baseline: Phase 1.7.5, commit `1dd26511c792c0bcf82539f3ba674139a567facd`.
 
@@ -52,7 +54,7 @@ The unconditional `wp_is_application_passwords_supported()` requirement applies 
 
 Bearer authentication must run early enough to establish the request-local WordPress user before the existing MCP permission and ability callbacks, but it must not persist a global user session, set a browser cookie, or create a WordPress Application Password.
 
-## Proposed internal boundaries
+## Approved internal boundaries
 
 Names are illustrative, not approved code:
 

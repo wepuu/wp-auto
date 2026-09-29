@@ -11,6 +11,7 @@ $ComposePath = Join-Path $Root 'compose.account-oidc-test.yaml'
 $Temp = Join-Path $Root '.tmp\account-oidc-https'
 $StatePath = Join-Path $Temp 'state.json'
 $CertificatePath = Join-Path $Temp 'caddy-root.crt'
+$WordPressHttpPolicyPath = Join-Path $Root 'test\account-oidc\wepuu-local-http-policy.php'
 $HostsPath = Join-Path $env:SystemRoot 'System32\drivers\etc\hosts'
 $MarkerStart = '# WePuu account OIDC fixture - begin'
 $MarkerEnd = '# WePuu account OIDC fixture - end'
@@ -112,6 +113,31 @@ if ($Action -eq 'Install') {
     $Certificate = [Security.Cryptography.X509Certificates.X509Certificate2]::new($CertificatePath)
     $Sha256 = Get-CertificateSha256 $Certificate
     Import-Certificate -FilePath $CertificatePath -CertStoreLocation Cert:\CurrentUser\Root | Out-Null
+    $ExitCode = Invoke-DockerCommand -Arguments @(
+      'compose', '-f', $ComposePath,
+      'cp', $CertificatePath,
+      'wordpress:/tmp/wepuu-caddy-root.crt'
+    ) -Quiet
+    if ($ExitCode -ne 0) { throw 'Unable to stage the disposable Caddy CA inside WordPress.' }
+    $ExitCode = Invoke-DockerCommand -Arguments @(
+      'compose', '-f', $ComposePath,
+      'exec', '-T', '--user', 'root', 'wordpress',
+      'sh', '-ec',
+      'cat /tmp/wepuu-caddy-root.crt >> /var/www/html/wp-includes/certificates/ca-bundle.crt; rm -f /tmp/wepuu-caddy-root.crt'
+    ) -Quiet
+    if ($ExitCode -ne 0) { throw 'Unable to trust the disposable Caddy CA inside WordPress.' }
+    $ExitCode = Invoke-DockerCommand -Arguments @(
+      'compose', '-f', $ComposePath,
+      'exec', '-T', '--user', 'root', 'wordpress',
+      'mkdir', '-p', '/var/www/html/wp-content/mu-plugins'
+    ) -Quiet
+    if ($ExitCode -ne 0) { throw 'Unable to prepare the disposable WordPress MU-plugin directory.' }
+    $ExitCode = Invoke-DockerCommand -Arguments @(
+      'compose', '-f', $ComposePath,
+      'cp', $WordPressHttpPolicyPath,
+      'wordpress:/var/www/html/wp-content/mu-plugins/wepuu-local-http-policy.php'
+    ) -Quiet
+    if ($ExitCode -ne 0) { throw 'Unable to install the disposable WordPress HTTP policy.' }
     $HostLines = ($Domains | ForEach-Object { "127.0.0.1 $_" }) -join "`r`n"
     Add-Content -LiteralPath $HostsPath -Value "`r`n$MarkerStart`r`n$HostLines`r`n$MarkerEnd" -Encoding utf8
     $ExitCode = Invoke-DockerCommand -Arguments @(
@@ -155,7 +181,7 @@ if ($Action -eq 'Install') {
     if ($Sha256) { Find-TestCertificate $Sha256 | Remove-Item -Force }
     Invoke-DockerCommand -Arguments @(
       'compose', '-f', $ComposePath,
-      '--profile', 'control',
+      '--profile', 'control', '--profile', 'revocation',
       'down', '--volumes', '--remove-orphans'
     ) -Quiet | Out-Null
     Remove-Item -LiteralPath $CertificatePath, $StatePath -Force -ErrorAction SilentlyContinue
@@ -199,7 +225,7 @@ if ($Action -eq 'Remove') {
   if ($State -and $State.caSha256) { Find-TestCertificate $State.caSha256 | Remove-Item -Force }
   Invoke-DockerCommand -Arguments @(
     'compose', '-f', $ComposePath,
-    '--profile', 'control',
+    '--profile', 'control', '--profile', 'revocation',
     'down', '--volumes', '--remove-orphans'
   ) -Quiet | Out-Null
   Remove-Item -LiteralPath $CertificatePath, $StatePath -Force -ErrorAction SilentlyContinue

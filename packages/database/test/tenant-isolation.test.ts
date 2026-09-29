@@ -34,6 +34,28 @@ test('PostgreSQL RLS denies cross-tenant and missing-membership access', { skip:
   await database.migrate();
   await database.migrate();
   const admin = database.poolForMigrationsAndTests;
+  const maximumClientId = 'c'.repeat(256);
+  await admin.query(
+    `INSERT INTO oauth.clients (client_id, registration_mode, redirect_uris, metadata_digest, status)
+     VALUES ($1, 'pre-registered', '[]'::jsonb, 'boundary-client', 'active')`,
+    [maximumClientId]
+  );
+  await admin.query('DELETE FROM oauth.clients WHERE client_id = $1', [maximumClientId]);
+  await assert.rejects(
+    admin.query(
+      `INSERT INTO oauth.clients (client_id, registration_mode, redirect_uris, metadata_digest, status)
+       VALUES ($1, 'pre-registered', '[]'::jsonb, 'too-long-client', 'active')`,
+      ['c'.repeat(257)]
+    ),
+    (error: unknown) => typeof error === 'object' && error !== null && 'code' in error && error.code === '23514'
+  );
+  await assert.rejects(
+    admin.query(
+      `INSERT INTO oauth.clients (client_id, registration_mode, redirect_uris, metadata_digest, status)
+       VALUES ('invalid/client', 'pre-registered', '[]'::jsonb, 'invalid-character-client', 'active')`
+    ),
+    (error: unknown) => typeof error === 'object' && error !== null && 'code' in error && error.code === '23514'
+  );
   await admin.query('TRUNCATE audit.security_events, platform.tenant_memberships, platform.tenants, platform.accounts CASCADE');
   await admin.query(
     `INSERT INTO platform.accounts (id, status, identity_issuer, identity_subject_hash)

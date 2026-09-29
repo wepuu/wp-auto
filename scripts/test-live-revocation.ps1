@@ -76,10 +76,6 @@ try {
   )
   if ($ExitCode -ne 0) { throw 'Connector revocation fixture configuration failed.' }
 
-  $WordPressContainer = (docker compose -f $ComposePath ps -q wordpress).Trim()
-  docker exec --user root $WordPressContainer sh -ec 'cat /caddy-data/caddy/pki/authorities/local/root.crt >> /var/www/html/wp-includes/certificates/ca-bundle.crt'
-  if ($LASTEXITCODE -ne 0) { throw 'Unable to trust the disposable Caddy CA inside WordPress.' }
-
   $ExitCode = Invoke-DockerCommand -Arguments @(
     'compose', '-f', $ComposePath, '--profile', 'revocation',
     'up', '-d', '--build', '--wait', 'authorization'

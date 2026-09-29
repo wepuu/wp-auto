@@ -24,12 +24,13 @@ explicit fragment-safe Connect handoff, site-ID-bound Ed25519 pairing proof,
 and local opaque grant storage. The signing runtime is pinned to Node 26.7+
 and uses `jose` with an AWS KMS-backed `KeyObject`; real wp-admin pairing,
 consent, domain migration/re-pair, cleanup, and hosted GitHub OIDC/KMS
-acceptance all pass. Phase 2.0.4A/2.0.4B implementation is now in progress on
-local-only branches. It adds real authorization interactions, opaque
+acceptance all pass. Phase 2.0.4A/2.0.4B are accepted and closed. They add real authorization interactions, opaque
 code/refresh lookup, atomic refresh replay revocation, database-backed endpoint
 limits, managed signing-key lifecycle/JWKS overlap, durable signed revocation
-delivery, and connector-local deny state. Bearer authentication is deliberately
-not connected to MCP tools until Phase 2.0.5.
+delivery, and connector-local deny state. Phase 2.0.5 scoped Bearer integration
+has completed implementation and exit validation on its isolated platform and
+connector branches; every exit gate passed, and it was accepted and closed on
+2026-09-29. It is not deployed, and Phase 2.0.6 is not authorized.
 
 ## Architecture
 
@@ -124,10 +125,10 @@ only; they must not be placed in `.env`, logs, or Git.
 
 ## Authority and compatibility
 
-The reference connector is the sealed Phase 1.7.5 repository at
-`D:\Codex\wp-auto-connector`. This repository does not modify or release that
-plugin. Codex CLI 0.154.0 and WorkBuddy 5.5.2 / codebuddy 2.137.1 are tested as
-version-specific clients; documentation claims alone do not establish support.
+The connector integration candidate is isolated at `D:\Codex\wp-auto-connector`
+on `codex/phase-2-0-5-bearer-auth`; it has not been released. Codex CLI 0.154.0
+and WorkBuddy 5.5.2 / codebuddy 2.137.1 are tested as version-specific clients;
+documentation claims alone do not establish support.
 
 ## Standards baseline
 

@@ -2,11 +2,13 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { generateKeyPairSync, sign } from 'node:crypto';
 import test from 'node:test';
+import type { Provider } from 'oidc-provider';
 import type { KeyCustody, SigningKeyDescriptor } from '@wepuu/key-custody';
 import {
   DenyAllAccountRegistry,
   DenyAllGrantClaimsResolver,
   DenyAllResourceRegistry,
+  allowRegisteredNativeLoopbackPort,
   createAuthorizationProvider,
   refreshTokenTtl,
   type OidcAdapterShape
@@ -17,6 +19,38 @@ test('refresh TTL enforces 30-day inactivity and 90-day absolute family life', (
   assert.equal(refreshTokenTtl({}, 1_000), 30 * day);
   assert.equal(refreshTokenTtl({ iiat: 1_000 }, 1_000 + 70 * day), 20 * day);
   assert.equal(refreshTokenTtl({ iiat: 1_000 }, 1_000 + 90 * day), 1);
+});
+
+test('native loopback redirect permits only a registered 127.0.0.1 path with a dynamic port', async () => {
+  const client = { redirectUris: ['http://127.0.0.1/callback'] };
+  const provider = {
+    Client: { find: async (clientId: string) => clientId === 'codex-client' ? client : undefined }
+  } as unknown as Provider;
+  const allowed = new URL('https://auth.example.test/auth?client_id=codex-client&redirect_uri=http%3A%2F%2F127.0.0.1%3A53123%2Fcallback');
+  assert.equal(await allowRegisteredNativeLoopbackPort(provider, allowed), true);
+  assert.equal(client.redirectUris.includes('http://127.0.0.1:53123/callback'), true);
+
+  for (let port = 53124; port < 53134; port += 1) {
+    const bounded = new URL(`https://auth.example.test/auth?client_id=codex-client&redirect_uri=${encodeURIComponent(`http://127.0.0.1:${port}/callback`)}`);
+    assert.equal(await allowRegisteredNativeLoopbackPort(provider, bounded), true);
+  }
+  assert.equal(client.redirectUris.length, 9);
+  assert.equal(client.redirectUris[0], 'http://127.0.0.1/callback');
+  assert.equal(client.redirectUris.includes('http://127.0.0.1:53123/callback'), false);
+
+  for (const redirect of [
+    'http://localhost:53123/callback',
+    'http://127.0.0.1:53123/other',
+    'http://127.0.0.1:53123/callback?next=1',
+    'http://user@127.0.0.1:53123/callback',
+    'https://127.0.0.1:53123/callback',
+    'http://127.0.0.2:53123/callback'
+  ]) {
+    const rejected = new URL(`https://auth.example.test/auth?client_id=codex-client&redirect_uri=${encodeURIComponent(redirect)}`);
+    assert.equal(await allowRegisteredNativeLoopbackPort(provider, rejected), false, redirect);
+  }
+  const unknown = new URL('https://auth.example.test/auth?client_id=unknown&redirect_uri=http%3A%2F%2F127.0.0.1%3A53123%2Fcallback');
+  assert.equal(await allowRegisteredNativeLoopbackPort(provider, unknown), false);
 });
 
 function memoryAdapter(): new (model: string) => OidcAdapterShape {
@@ -72,6 +106,7 @@ test('authorization provider publishes metadata and public-only JWKS through ext
   assert.equal(metadata['issuer'], 'https://auth.example.test');
   assert.deepEqual(metadata['code_challenge_methods_supported'], ['S256']);
   assert.equal(metadata['authorization_response_iss_parameter_supported'], true);
+  assert.deepEqual(metadata['scopes_supported'], ['openid', 'offline_access']);
   const jwks = await (await fetch(`${base}/jwks`)).json() as { keys: Array<Record<string, unknown>> };
   assert.equal(jwks.keys[0]?.['kid'], 'kms-key-0001');
   assert.equal(jwks.keys[0]?.['d'], undefined);
