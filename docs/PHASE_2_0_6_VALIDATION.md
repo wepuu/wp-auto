@@ -1,9 +1,9 @@
 # Phase 2.0.6 Security and Resilience Validation
 
-Status: local implementation, deterministic validation, real local KMS/HTTPS,
-Codex interoperability and temporary-state cleanup complete; hosted KMS and
-final available-capability review gates remain open. No production deployment
-or Phase 2.0.7 work is authorized.
+Status: all Phase 2.0.6 implementation, deterministic/live validation, hosted
+dual-KMS validation, immutable available-capability review and temporary-state
+cleanup gates pass; merge is the remaining landing operation. No production
+deployment or Phase 2.0.7 work is authorized.
 
 ## Candidate branches
 
@@ -25,13 +25,26 @@ or Phase 2.0.7 work is authorized.
 | Connector Composer manifest | pass | `composer validate --strict --no-check-all` |
 | Connector Composer audit | pass | no security vulnerability advisories |
 | Connector release package | pass | 789 archive entries; temporary package removed after verification |
-| Real two-key KMS | local pass; hosted pending | `LIVE_KMS_ROTATION_PASS=True`; the sequential wrapper had already passed the single-key contract and returned `AWS_CREDENTIALS_CLEARED=True`; hosted GitHub OIDC dispatch remains pending |
+| Real two-key KMS | pass | `LIVE_KMS_ROTATION_PASS=True`; hosted GitHub OIDC run [37261732925](https://github.com/wepuu/wp-auto/actions/runs/37261732925) passed `live-kms`, `live-kms-rotation` and validation; no credential value is stored |
 | Real HTTPS WordPress/Bearer regression | pass | OAuth fixture seeded; Node 26.7 services healthy; PRM, 401 challenge, two-KMS Bearer read, scope denial and control-plane content boundary passed |
 | Codex OAuth/direct MCP regression | pass | isolated OAuth login, direct `wp-auto-site-health`, content-free control logs/database and Codex user-auth hash restoration passed |
 | Temporary-state cleanup | pass | `HOSTS_RESTORED=True`, `TRUST_RESTORED=True`; fixture state/certificate, pending URL, result and isolated Codex homes absent; compose project has no running containers |
-| Available-capability working-tree diff review | pass (pre-immutable baseline) | Platform and connector Codex Security diff scans completed with complete coverage and no reportable findings; immutable SHA review remains required |
+| Available-capability working-tree diff review | pass | Platform and connector Codex Security diff scans completed with complete coverage and no reportable findings; immutable SHA reviews below also pass |
 | Restricted TAC/Daybreak review | waived/not executed | ADR-013; service access is unavailable, project owner accepts the residual risk, and no scan result is represented as a pass |
-| Final available-capability review | pending | immutable candidate diff, threat-model and data-flow review; executed Critical/High/Medium findings remain blocking |
+| Final available-capability review | pass | Immutable platform scan `1870ffd3-6e0b-43f6-a943-aac43771d4f5` and connector scan `50e529ea-0436-41c3-a7ae-21b6b141d547` completed with complete coverage and zero findings |
+
+## Immutable candidate review
+
+- Platform candidate `06bf78b37b8b9bb867402b95d61c00df839e7d30` was reviewed
+  against `origin/main` by Codex Security scan
+  `1870ffd3-6e0b-43f6-a943-aac43771d4f5`; the sealed report is at
+  `C:\Users\admin\.codex\state\plugins\codex-security\scans\wp-platform\06bf78b37b8b9bb867402b95d61c00df839e7d30_20261005T040310Z_xs84akje\report.md`.
+- Connector candidate `0cc71911b86cd7eb6466ca36dadeebe126af807d` was reviewed
+  against `origin/main` by Codex Security scan
+  `50e529ea-0436-41c3-a7ae-21b6b141d547`; the sealed report is at
+  `C:\Users\admin\.codex\state\plugins\codex-security\scans\wp-auto-connector\0cc71911b86cd7eb6466ca36dadeebe126af807d_20261005T040311Z_1nk7z_m9\report.md`.
+- Both reviews had complete coverage, no reportable findings, and no retained
+  token, cookie, identity subject, WordPress content, or MCP body.
 
 ## 2026-09-30 local revalidation
 
@@ -85,8 +98,8 @@ or Phase 2.0.7 work is authorized.
   with complete coverage and no reportable findings. The platform report is
   retained at the Codex Security scan artifact `dae86fe5-a829-46ad-a3c1-c68774c9c05b`;
   the connector report is retained at `d99f226c-931e-4cac-aa45-ea36fb06d46c`.
-  These are pre-commit working-tree snapshots and do not replace immutable
-  candidate reviews.
+  These are pre-commit working-tree snapshots; the immutable candidate reviews
+  above are the final available-capability gate.
 
 ## Scope and privacy checks
 
@@ -97,8 +110,8 @@ MCP request bodies, tokens, cookies, or upstream identity subjects.
 
 Phase closure requires all cases in `PHASE_2_0_6_TEST_PLAN.md`, the final
 available-capability review, the retained Phase 2.0.5 live gates, and
-temporary-state cleanup. This document must be updated with immutable commit
-IDs and final evidence before requesting Git landing approval.
+temporary-state cleanup. All are satisfied for the candidate commits above;
+the remaining action is the approved PR landing sequence.
 
 ADR-013 removes only the unavailable TAC/Daybreak service from the exit gate.
 It does not waive any runtime security control or executed finding. Unresolved
