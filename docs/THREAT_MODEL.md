@@ -53,6 +53,14 @@ WordPress content is deliberately outside the platform boundary. Its appearance 
 | T22 | Platform outage | cached JWKS safety window, short token lifetime, local revoke, AP independence, fail-closed unsafe cache | outage/failover exercises |
 | T23 | Platform session theft or fixation | 256-bit opaque value, digest-only storage, `__Host-` Secure HttpOnly SameSite cookie, 12-hour absolute expiry, rotation on login, exact-origin logout | plaintext absence, malformed/expired/revoked cookie, fixation and logout-CSRF tests |
 
+Phase 2.0.6 adds an internal content-free deletion lifecycle. It revokes
+sessions, grants, refresh families, and site trust immediately, waits through
+the maximum access-token safety window before purging dependent artifacts, and
+retains only opaque tombstones and aggregate reports. Restoring a pre-deletion
+backup requires replaying the external tombstone manifest before the tenant is
+considered restored. A sole active tenant owner cannot be deleted without a
+prior ownership transfer or tenant deletion.
+
 ## Abuse cases
 
 ### A platform account attempts to pair a victim site
@@ -86,6 +94,10 @@ Scope and token validity do not preserve old privileges. The connector maps the 
 
 ## Residual risks and deferred controls
 
+- Codex Security TAC/Daybreak is unavailable to the project and is recorded as
+  `waived/not executed` under ADR-013. The project owner accepts the residual
+  risk; all deterministic, live KMS/HTTPS, dependency, immutable-diff, and
+  data-flow gates remain mandatory.
 - A valid bearer access token can be replayed until expiry if stolen; 2–5 minute lifetime bounds this risk. DPoP may be evaluated later after client support is proven.
 - Platform-originated revocation is not globally instantaneous during site outage; local revoke is immediate and central exposure is bounded by access-token lifetime.
 - Client registration ecosystems are evolving. CIMD and WorkBuddy behavior require continuous compatibility tests.

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { HttpsRevocationDelivery, revocationEndpoint, RevocationWorker } from './revocation-worker.js';
+import { FailureInjector, ManualFaultClock, assertContentFreeEvidence } from './phase-2-0-6-fixtures.js';
 
 test('revocation endpoint is fixed to the paired resource origin', () => {
   assert.equal(
@@ -109,4 +110,40 @@ test('worker defers a failed delivery without acknowledging the event', async ()
   assert.deepEqual(await worker.runOnce(), { delivered: 0, deferred: 1 });
   assert.deepEqual(acknowledged, []);
   assert.deepEqual(deferred, [{ id: '8', code: 'delivery_failed', delay: 8 }]);
+});
+
+test('fault injection retries a transient delivery without changing the content-free event contract', async () => {
+  const faults = new FailureInjector();
+  const clock = new ManualFaultClock(new Date('2026-09-29T00:00:00.000Z'));
+  faults.fail('delivery.timeout');
+  let attempts = 0;
+  const deferred: number[] = [];
+  const acknowledged: string[] = [];
+  const record = {
+    id: '9', tenantId: '11111111-1111-4111-8111-111111111111', siteId: 'site_00000001',
+    resource: 'https://site.example.test/wp-json/wp-auto/mcp', sequence: 6,
+    eventType: 'site' as const, reason: 'site_disconnected', attempts: 0
+  };
+  const worker = new RevocationWorker({
+    outbox: {
+      claim: async () => attempts < 2 ? [record] : [],
+      markDelivered: async (id: string) => { acknowledged.push(id); },
+      reschedule: async (_id: string, _code: string, delay: number) => { deferred.push(delay); }
+    } as never,
+    signer: { sign: async () => 'header.payload.signature' } as never,
+    delivery: {
+      send: async (_resource, event) => {
+        attempts += 1;
+        assertContentFreeEvidence({ event, resource: _resource, at: clock.now().toISOString() });
+        if (faults.trip('delivery.timeout')) throw new Error('timeout');
+      }
+    },
+    issuer: 'https://auth.example.test',
+    now: () => clock.now()
+  });
+  assert.deepEqual(await worker.runOnce(), { delivered: 0, deferred: 1 });
+  clock.advance(8_000);
+  assert.deepEqual(await worker.runOnce(), { delivered: 1, deferred: 0 });
+  assert.deepEqual(deferred, [1]);
+  assert.deepEqual(acknowledged, ['9']);
 });

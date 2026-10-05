@@ -169,3 +169,10 @@ Exact durations are a Phase 2.0.7 policy decision. The implementation must never
 - deletion tombstones that do not contain original secrets/content;
 - backup expiry and restoration procedures that reapply tombstones;
 - export and deletion reports that never expose secret hashes as reusable identifiers.
+
+Phase 2.0.6 implements these properties through internal `DataLifecycleService`
+scopes for `account`, `tenant`, and `site`. `platform.deletion_jobs` records
+only lifecycle status, safe-after time, failure category, and aggregate counts;
+`platform.deletion_tombstones` records opaque object references needed to replay
+deletions after restoring a pre-deletion backup. Neither table stores tokens,
+secret hashes, WordPress content, MCP bodies, or upstream identity subjects.

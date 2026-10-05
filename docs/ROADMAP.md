@@ -106,11 +106,19 @@ complete temporary-state cleanup must pass.
 
 ## Phase 2.0.6 - security and resilience qualification
 
+Status: local implementation and deterministic validation complete on the two
+isolated Phase 2.0.6 branches. Local real two-key KMS, HTTPS WordPress and
+Codex direct-MCP regressions and final temporary-state cleanup pass; hosted KMS
+and immutable candidate review remain open. The restricted TAC/Daybreak
+review is waived as unavailable under ADR-013 and is not represented as a
+pass. Production deployment and Phase 2.0.7 remain separately gated.
+
 - Authentication, replay, confused-deputy, SSRF, tenant-isolation, key-compromise,
   and refresh-reuse tests.
 - Platform, database, JWKS, webhook, DNS, and clock-skew failure exercises.
 - Backup restoration and verified deletion exercises.
-- Independent security review before public production use.
+- Final immutable-candidate security and data-flow review using capabilities
+  available to the project before public production use.
 
 ## Phase 2.0.7 - disclosure and release gate
 

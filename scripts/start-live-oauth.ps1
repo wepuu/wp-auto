@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-  [switch]$SkipBuild
+  [switch]$SkipBuild,
+  [switch]$RunBearer
 )
 
 $ErrorActionPreference = 'Stop'
@@ -40,13 +41,26 @@ function Invoke-DockerCommand {
   }
 }
 
+function Invoke-AwsJson {
+  param([Parameter(Mandatory = $true)][string[]]$Arguments)
+  $Output = @(& aws @Arguments)
+  if ($LASTEXITCODE -ne 0) {
+    throw "AWS CLI command failed: aws $($Arguments[0..1] -join ' ')"
+  }
+  return (($Output -join "`n") | ConvertFrom-Json)
+}
+
 $Auth0Secret = Read-Host 'Paste Auth0 Client Secret' -AsSecureString
 $AccessKeyId = (Read-Host 'Paste AWS test Access Key ID').Trim()
 $AwsSecret = Read-Host 'Paste AWS test Secret Access Key' -AsSecureString
 
 New-Item -ItemType Directory -Path $PublicFixtureDirectory -Force | Out-Null
 try {
+  if ($AccessKeyId -notmatch '^AKIA[A-Z0-9]{16}$') {
+    throw 'The bootstrap Access Key ID does not match the IAM user key format.'
+  }
   $env:WEPUU_ACCOUNT_OIDC_CLIENT_SECRET = ConvertFrom-SecureValue $Auth0Secret
+  Remove-Item Env:AWS_PROFILE, Env:AWS_SESSION_TOKEN -ErrorAction SilentlyContinue
   $env:AWS_ACCESS_KEY_ID = $AccessKeyId
   $env:AWS_SECRET_ACCESS_KEY = ConvertFrom-SecureValue $AwsSecret
   $env:AWS_REGION = 'us-east-1'
@@ -61,8 +75,28 @@ try {
   $env:WEPUU_OAUTH_ARTIFACT_KEYS_JSON = (@(New-WePuuKey; New-WePuuKey) | ConvertTo-Json -Compress)
   $env:WEPUU_RATE_LIMIT_HMAC_KEY = New-WePuuKey
 
-  aws sts get-caller-identity --query '{Account:Account,Arn:Arn}' --no-cli-pager
-  if ($LASTEXITCODE -ne 0) { throw 'AWS credentials could not be validated.' }
+  $Session = Invoke-AwsJson @(
+    'sts', 'get-session-token',
+    '--duration-seconds', '3600',
+    '--output', 'json',
+    '--no-cli-pager'
+  )
+  $Credentials = $Session.Credentials
+  if ([string]::IsNullOrWhiteSpace([string]$Credentials.AccessKeyId) -or
+      [string]::IsNullOrWhiteSpace([string]$Credentials.SecretAccessKey) -or
+      [string]::IsNullOrWhiteSpace([string]$Credentials.SessionToken)) {
+    throw 'AWS returned an incomplete STS session.'
+  }
+  $env:AWS_ACCESS_KEY_ID = [string]$Credentials.AccessKeyId
+  $env:AWS_SECRET_ACCESS_KEY = [string]$Credentials.SecretAccessKey
+  $env:AWS_SESSION_TOKEN = [string]$Credentials.SessionToken
+  Remove-Variable AccessKeyId, Session, Credentials -ErrorAction SilentlyContinue
+
+  $Caller = Invoke-AwsJson @('sts', 'get-caller-identity', '--output', 'json', '--no-cli-pager')
+  if ([string]$Caller.Account -ne '453168420598') {
+    throw 'The temporary session belongs to an unexpected AWS account.'
+  }
+  Write-Output 'AWS_STS_SESSION_ACTIVE=True'
 
   Set-Location $Root
   if (-not $SkipBuild) {
@@ -118,6 +152,10 @@ try {
   Write-Output 'LIVE_OAUTH_SERVICES_STARTED=True'
   Write-Output 'AUTHORIZATION_ISSUER=https://platform.example.test'
   Write-Output 'MCP_RESOURCE=https://site.example.test/wp-json/wp-auto/mcp'
+  if ($RunBearer) {
+    & (Join-Path $PSScriptRoot 'test-live-bearer.ps1')
+    if ($LASTEXITCODE -ne 0) { throw 'Retained live Bearer regression failed.' }
+  }
 } finally {
   Remove-Item -LiteralPath $PublicFixturePath -Force -ErrorAction SilentlyContinue
   Remove-Item Env:WEPUU_ACCOUNT_OIDC_CLIENT_SECRET, Env:AWS_ACCESS_KEY_ID, `
@@ -127,7 +165,7 @@ try {
     Env:WEPUU_IDENTITY_SUBJECT_HMAC_KEY, Env:WEPUU_GRANT_IDEMPOTENCY_HMAC_KEY, `
     Env:WEPUU_COOKIE_KEYS_JSON, Env:WEPUU_OAUTH_ARTIFACT_KEYS_JSON, `
     Env:WEPUU_RATE_LIMIT_HMAC_KEY -ErrorAction SilentlyContinue
-  Remove-Variable AccessKeyId, PublicFixture, PublicFixtureB64 -ErrorAction SilentlyContinue
+  Remove-Variable AccessKeyId, Session, Credentials, Caller, PublicFixture, PublicFixtureB64 -ErrorAction SilentlyContinue
   $Auth0Secret.Dispose()
   $AwsSecret.Dispose()
 }
