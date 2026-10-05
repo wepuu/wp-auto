@@ -88,6 +88,27 @@ Run the same script, then remove the temporary credentials immediately:
 Remove-Item Env:AWS_ACCESS_KEY_ID, Env:AWS_SECRET_ACCESS_KEY, Env:AWS_SESSION_TOKEN -ErrorAction SilentlyContinue
 ```
 
+For the disposable `wp-mcp-test` IAM user, a long-lived access key may be used
+only to bootstrap a one-hour STS session in the current PowerShell process.
+Prompt for the secret, call `aws sts get-session-token --duration-seconds 3600`,
+immediately replace the bootstrap values with the returned access key, secret,
+and session token, and clear all credential variables after the test. Do not
+use `aws configure`, `.env`, `setx`, the clipboard, or a repository/GitHub
+secret for this path. If the secret access key is no longer available, AWS
+cannot recover it; create a replacement test key and deactivate the old one.
+
+The repository wrapper performs that complete bootstrap, both live KMS tests,
+and unconditional cleanup without printing credentials:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File scripts/test-live-kms-session.ps1
+```
+
+The safe success markers are `AWS_CALLER_ACCOUNT_VERIFIED=True`,
+`AWS_STS_SESSION_ACTIVE=True`, `LIVE_KMS_SINGLE_PASS=True`,
+`LIVE_KMS_ROTATION_PASS=True`, and `AWS_CREDENTIALS_CLEARED=True`.
+
 Successful output contains one passing live KMS test and never prints the key
 contents or credentials. `KeyCustodyUnavailableError` means the key profile,
 region, key/key-IAM policy, credential source, or network path failed closed.
@@ -97,7 +118,7 @@ region, key/key-IAM policy, credential source, or network path failed closed.
 Use GitHub OIDC; do not create GitHub secrets containing AWS access keys.
 
 The exact role policy, immutable GitHub subject, environment automation, and
-current Phase 2.0.3 branch restriction are maintained in
+current Phase 2.0.6 branch restriction are maintained in
 [`AWS_KMS_GITHUB_OIDC_SETUP.md`](AWS_KMS_GITHUB_OIDC_SETUP.md).
 
 1. Create or reuse the AWS IAM OIDC provider for
@@ -125,7 +146,7 @@ repo:wepuu@254826526/wp-auto@1370748793:environment:kms-conformance
 ```
 
 Use the following trust condition and additionally restrict the GitHub
-environment to `codex/phase-2-0-3`:
+environment to `codex/phase-2-0-6-security-resilience`:
 
 ```json
 {

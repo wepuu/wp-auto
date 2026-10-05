@@ -1,4 +1,4 @@
-import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -186,6 +186,93 @@ export class Database {
 
   get poolForMigrationsAndTests(): Pool {
     return this.#pool;
+  }
+}
+
+export type DeletionScope =
+  | Readonly<{ kind: 'account'; accountId: string }>
+  | Readonly<{ kind: 'tenant'; tenantId: string }>
+  | Readonly<{ kind: 'site'; tenantId: string; siteId: string }>;
+
+export interface DeletionJob {
+  readonly jobId: string;
+  readonly scope: DeletionScope;
+  readonly status: 'pending';
+}
+
+export interface DeletionReport {
+  readonly jobId: string;
+  readonly scopeKind: DeletionScope['kind'];
+  readonly scopeId: string;
+  readonly status: 'waiting' | 'complete' | 'failed';
+  readonly safeAfter?: string;
+  readonly completedAt?: string;
+  readonly failureCode?: string;
+  readonly counts: Readonly<Record<string, unknown>>;
+}
+
+function deletionScopeArgs(scope: DeletionScope): readonly [DeletionScope['kind'], string, string | null] {
+  if (scope.kind === 'account') return [scope.kind, scope.accountId, null];
+  if (scope.kind === 'tenant') return [scope.kind, scope.tenantId, scope.tenantId];
+  return [scope.kind, scope.siteId, scope.tenantId];
+}
+
+function parseDeletionReport(value: unknown): DeletionReport {
+  if (typeof value !== 'object' || value === null) throw new Error('deletion_report_invalid');
+  const record = value as Record<string, unknown>;
+  const jobId = record['jobId'];
+  const scopeKind = record['scopeKind'];
+  const scopeId = record['scopeId'];
+  const status = record['status'];
+  if (typeof jobId !== 'string' || typeof scopeKind !== 'string' || typeof scopeId !== 'string'
+    || (scopeKind !== 'account' && scopeKind !== 'tenant' && scopeKind !== 'site')
+    || (status !== 'waiting' && status !== 'complete' && status !== 'failed')) {
+    throw new Error('deletion_report_invalid');
+  }
+  const counts = record['counts'];
+  if (typeof counts !== 'object' || counts === null || Array.isArray(counts)) throw new Error('deletion_report_invalid');
+  const result: DeletionReport = {
+    jobId,
+    scopeKind,
+    scopeId,
+    status,
+    counts: { ...(counts as Record<string, unknown>) }
+  };
+  if (typeof record['safeAfter'] === 'string') (result as { safeAfter?: string }).safeAfter = record['safeAfter'];
+  if (typeof record['completedAt'] === 'string') (result as { completedAt?: string }).completedAt = record['completedAt'];
+  if (typeof record['failureCode'] === 'string') (result as { failureCode?: string }).failureCode = record['failureCode'];
+  return result;
+}
+
+/** Internal, content-free deletion workflow used by the recovery qualification harness. */
+export class DataLifecycleService {
+  readonly #database: Database;
+  readonly #now: () => Date;
+
+  constructor(options: Readonly<{ database: Database; now?: () => Date }>) {
+    this.#database = options.database;
+    this.#now = options.now ?? (() => new Date());
+  }
+
+  async begin(scope: DeletionScope, requestedBy: string): Promise<DeletionJob> {
+    const [scopeKind, scopeId, tenantId] = deletionScopeArgs(scope);
+    const jobId = `deletion_${randomUUID().replaceAll('-', '')}`;
+    await this.#database.withAuthorizationService((client) => client.query(
+      'SELECT platform.begin_deletion_job($1, $2, $3, $4::uuid, $5)',
+      [jobId, scopeKind, scopeId, tenantId, requestedBy]
+    ).then(() => undefined));
+    return { jobId, scope, status: 'pending' };
+  }
+
+  async advance(jobId: string, observedAt = this.#now()): Promise<DeletionReport> {
+    if (!/^[A-Za-z0-9_-]{16,128}$/u.test(jobId)) throw new Error('deletion_job_invalid');
+    return this.#database.withAuthorizationService(async (client) => {
+      const result = await client.query<{ report: unknown }>(
+        'SELECT platform.advance_deletion_job($1, $2) AS report', [jobId, observedAt]
+      );
+      const report = result.rows[0]?.report;
+      return parseDeletionReport(report);
+    });
   }
 }
 

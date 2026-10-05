@@ -9,13 +9,13 @@ on:
         type: boolean
         default: false
       live_kms_rotation:
-        description: Run the Phase 2.0.4 two-key AWS KMS lifecycle gate
+        description: Run the Phase 2.0.6 two-key AWS KMS lifecycle gate
         required: false
         type: boolean
         default: false
   pull_request:
   push:
-    branches: [main, codex/phase-2-0-2, codex/phase-2-0-3, codex/phase-2-0-4-token-lifecycle]
+    branches: [main, codex/phase-2-0-6-security-resilience]
 
 permissions:
   contents: read
@@ -55,6 +55,10 @@ jobs:
         run: pnpm check
       - name: PostgreSQL migration and isolation tests
         run: pnpm test:database
+      - name: PostgreSQL backup, restore, and tombstone replay
+        run: >-
+          WEPUU_POSTGRES_CONTAINER=$(docker ps --filter "ancestor=postgres:16.10-alpine" --format "{{.ID}}" | head -n 1)
+          pnpm test:backup
       - name: PHP 8.1 site-proof interoperability
         run: >-
           pnpm build &&
@@ -64,6 +68,10 @@ jobs:
           node scripts/verify-site-proof-stdin.mjs
       - name: Dependency audit
         run: pnpm audit --audit-level high
+      - name: SBOM and license metadata
+        env:
+          NODE_PATH: ''
+        run: pnpm sbom:check
       - name: Install retained conformance dependencies
         working-directory: spikes/oauth-conformance
         run: npm ci

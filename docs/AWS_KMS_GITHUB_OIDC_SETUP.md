@@ -45,7 +45,10 @@ Attach only this inline permission policy:
       "Sid": "AllowWePuuKmsSigningContract",
       "Effect": "Allow",
       "Action": ["kms:DescribeKey", "kms:GetPublicKey", "kms:Sign"],
-      "Resource": "arn:aws:kms:us-east-1:453168420598:key/40426a27-701e-4fd3-b17b-4345ed26e2c3"
+      "Resource": [
+        "arn:aws:kms:us-east-1:453168420598:key/40426a27-701e-4fd3-b17b-4345ed26e2c3",
+        "arn:aws:kms:us-east-1:453168420598:key/3762ff1b-3974-4b37-8569-a68b906dee2a"
+      ]
     }
   ]
 }
@@ -79,9 +82,14 @@ powershell -NoProfile -ExecutionPolicy Bypass `
   -RoleArn 'arn:aws:iam::453168420598:role/wepuu-github-kms-conformance'
 ```
 
-The script permits only `codex/phase-2-0-3` to use `kms-conformance` and sets
-the five non-secret environment variables consumed by the pinned workflow.
+The script permits only `codex/phase-2-0-6-security-resilience` to use
+`kms-conformance`, deletes obsolete environment branch policies, and sets the
+seven non-secret environment variables consumed by the pinned single-key and
+two-key workflows.
 The workflow receives a short-lived role session only after GitHub issues the
 environment-bound OIDC token.
 
-Pushing Phase 2.0.3 and dispatching `live_kms=true` remain separately gated.
+Pushing Phase 2.0.6 and dispatching `live_kms=true` or
+`live_kms_rotation=true` remain separately gated. After Phase 2.0.6 is accepted,
+rerun the script with `-AllowedBranch main` to remove the temporary branch
+policy and leave only `main`.
