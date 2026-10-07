@@ -25,6 +25,19 @@ WordPress content is deliberately outside the platform boundary. Its appearance 
 6. Tenant ↔ tenant and site ↔ site data partitions.
 7. WordPress OAuth transport identity ↔ existing WordPress ability/service authorization.
 
+## Phase 2.0.7A browser and portable-runtime boundaries
+
+The browser-rendered product shell is an injection and cross-site request
+boundary. Dynamic values are escaped, assets are self-hosted under a
+deny-by-default CSP, state-changing forms require exact Origin plus CSRF, and
+authorization is rechecked server-side rather than inferred from hidden UI.
+
+A non-AWS workload reaches AWS STS and KMS through short-lived workload
+identity. Production startup rejects static AWS Access Keys. Compromise of a
+host credential is bounded by the exact IAM role, key ARNs and
+`DescribeKey/GetPublicKey/Sign` actions; KMS uncertainty still prevents
+signing.
+
 ## Threat register
 
 | ID | Threat | Required control | Validation evidence |

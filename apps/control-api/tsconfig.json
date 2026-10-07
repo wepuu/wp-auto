@@ -8,6 +8,7 @@
     { "path": "../../packages/database" },
     { "path": "../../packages/key-custody" },
     { "path": "../../packages/pairing" },
+    { "path": "../../packages/platform-ui" },
     { "path": "../../packages/security-audit" }
   ]
 }

@@ -10,6 +10,7 @@ import {
   type GrantView,
   type SiteView,
   type TenantContext,
+  type TenantMembershipView,
   type TenantView
 } from '@wepuu/contracts';
 import type {
@@ -176,6 +177,24 @@ export class Database {
     }
   }
 
+  async withAccountWorkspace<T>(accountId: string, operation: (client: PoolClient) => Promise<T>): Promise<T> {
+    if (!/^[A-Za-z0-9_-]{8,128}$/u.test(accountId)) throw new Error('account_context_invalid');
+    const client = await this.#pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SET LOCAL ROLE wepuu_account_workspace');
+      await client.query("SELECT set_config('app.account_id', $1, true)", [accountId]);
+      const result = await operation(client);
+      await client.query('COMMIT');
+      return result;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async close(): Promise<void> {
     await this.#pool.end();
   }
@@ -285,6 +304,50 @@ export class TenantRepository {
     const row = result.rows[0];
     if (row === undefined) return undefined;
     return { id: row.id, status: row.status, createdAt: row.created_at.toISOString() };
+  }
+}
+
+type WorkspaceRow = {
+  tenant_id: string;
+  membership_role: TenantMembershipView['role'];
+  membership_status: 'active';
+  membership_created_at: Date;
+  is_home: boolean;
+};
+
+function workspaceView(row: WorkspaceRow): TenantMembershipView {
+  return {
+    tenantId: row.tenant_id,
+    role: row.membership_role,
+    status: row.membership_status,
+    createdAt: row.membership_created_at.toISOString(),
+    isHome: row.is_home
+  };
+}
+
+export class PostgresAccountWorkspaceStore {
+  readonly #database: Database;
+
+  constructor(database: Database) {
+    this.#database = database;
+  }
+
+  async ensurePersonalWorkspace(accountId: string): Promise<TenantMembershipView> {
+    return this.#database.withAccountWorkspace(accountId, async (client) => {
+      const result = await client.query<WorkspaceRow>(
+        'SELECT * FROM platform.ensure_personal_workspace($1::uuid)', [randomUUID()]
+      );
+      const row = result.rows[0];
+      if (row === undefined || result.rowCount !== 1) throw new Error('workspace_bootstrap_failed');
+      return workspaceView(row);
+    });
+  }
+
+  async listMemberships(accountId: string): Promise<readonly TenantMembershipView[]> {
+    return this.#database.withAccountWorkspace(accountId, async (client) => {
+      const result = await client.query<WorkspaceRow>('SELECT * FROM platform.list_current_account_tenants()');
+      return result.rows.map(workspaceView);
+    });
   }
 }
 

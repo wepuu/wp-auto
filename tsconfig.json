@@ -8,6 +8,7 @@
     { "path": "packages/account-identity" },
     { "path": "packages/pairing" },
     { "path": "packages/oauth-provider" },
+    { "path": "packages/platform-ui" },
     { "path": "apps/authorization-service" },
     { "path": "apps/control-api" }
   ]

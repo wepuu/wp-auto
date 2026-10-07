@@ -1,5 +1,5 @@
-import { createHash, randomBytes } from 'node:crypto';
-import Fastify, { LogController, type FastifyInstance, type FastifyRequest } from 'fastify';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import Fastify, { LogController, type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { AccountLoginError, type AccountLoginCompletion, type AccountLoginStart } from '@wepuu/account-identity';
 import {
@@ -14,6 +14,7 @@ import {
   type McpScope,
   type SiteView,
   type TenantContext,
+  type TenantMembershipView,
   type TenantView
 } from '@wepuu/contracts';
 import {
@@ -25,6 +26,14 @@ import {
   type SecurityEventView
 } from '@wepuu/database';
 import type { SecurityAuditEvent, SecurityAuditSink } from '@wepuu/security-audit';
+import {
+  loadPublicDeploymentConfig,
+  renderInteractionPage,
+  UI_CSP,
+  UI_STYLES,
+  type PublicDeploymentConfig
+} from '@wepuu/platform-ui';
+import { renderAccount, renderActivity, renderGrants, renderOverview, renderSites, type TenantPageModel } from './ui.js';
 
 const TenantParamsSchema = z.object({ tenantId: z.uuid() });
 const ObjectParamsSchema = TenantParamsSchema.extend({ objectId: OpaqueIdSchema });
@@ -47,6 +56,11 @@ const GrantCompletionBodySchema = z.object({
 }).strict();
 const SESSION_COOKIE = '__Host-wepuu_session';
 const TRANSACTION_COOKIE = '__Host-wepuu_oidc_tx';
+const CSRF_COOKIE = '__Host-wepuu_csrf';
+const UiFormSchema = z.object({
+  csrf: z.string().regex(/^[A-Za-z0-9_-]{43}$/u),
+  idempotency_key: IdempotencyKeySchema
+}).strict();
 
 export interface AccountIdentityProvider {
   authenticate(request: FastifyRequest): Promise<AccountPrincipal | undefined>;
@@ -82,6 +96,16 @@ function secureCookie(name: string, value: string, maxAgeSeconds: number): strin
 
 function clearCookie(name: string): string {
   return secureCookie(name, '', 0);
+}
+
+function csrfCookie(value: string): string {
+  return `${CSRF_COOKIE}=${value}; Max-Age=43200; Path=/; Secure; SameSite=Lax`;
+}
+
+function sameSecret(first: string, second: string): boolean {
+  const left = Buffer.from(first, 'utf8');
+  const right = Buffer.from(second, 'utf8');
+  return left.byteLength === right.byteLength && timingSafeEqual(left, right);
 }
 
 export class SessionAccountIdentityProvider implements AccountIdentityProvider {
@@ -166,6 +190,13 @@ export interface ControlApiOptions {
   readonly publicOrigin?: string;
   readonly pairing?: PairingOperations;
   readonly grants?: GrantOperations;
+  readonly workspace?: AccountWorkspaceOperations;
+  readonly deployment?: PublicDeploymentConfig;
+}
+
+export interface AccountWorkspaceOperations {
+  ensurePersonalWorkspace(accountId: string): Promise<TenantMembershipView>;
+  listMemberships(accountId: string): Promise<readonly TenantMembershipView[]>;
 }
 
 export interface PairingOperations {
@@ -253,10 +284,22 @@ function correlationId(): string {
 }
 
 export function buildControlApi(options: ControlApiOptions): FastifyInstance {
+  const deployment = options.deployment ?? loadPublicDeploymentConfig({
+    WEPUU_DEPLOYMENT_MODE: 'test',
+    WEPUU_CONTROL_PUBLIC_ORIGIN: options.publicOrigin ?? 'https://platform.example.test'
+  }, options.publicOrigin);
   const app = Fastify({
     logger: false,
     bodyLimit: 16 * 1024,
+    trustProxy: deployment.trustedProxyCidrs.length === 0 ? false : [...deployment.trustedProxyCidrs],
     logController: new LogController({ disableRequestLogging: true })
+  });
+  app.addContentTypeParser('application/x-www-form-urlencoded', { parseAs: 'string' }, (_request, body, done) => {
+    try {
+      done(null, Object.fromEntries(new URLSearchParams(typeof body === 'string' ? body : body.toString('utf8'))));
+    } catch (error) {
+      done(error as Error);
+    }
   });
 
   async function safeAudit(event: SecurityAuditEvent): Promise<void> {
@@ -280,7 +323,7 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
         correlationId: requestCorrelationId,
         ...(parsed.success ? { tenantId: parsed.data.tenantId } : {}),
         service: 'control-api',
-        serviceVersion: '0.3.0'
+        serviceVersion: '0.4.0'
       });
       throw new PlatformError('unauthenticated', 401);
     }
@@ -292,6 +335,107 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
       correlationId: requestCorrelationId
     });
   }
+
+  async function authenticatedPrincipal(request: FastifyRequest): Promise<AccountPrincipal> {
+    const principal = await options.identityProvider.authenticate(request);
+    if (principal === undefined) throw new PlatformError('unauthenticated', 401);
+    return AccountPrincipalSchema.parse(principal);
+  }
+
+  function uiCsrf(request: FastifyRequest): { readonly value: string; readonly setCookie?: string } {
+    const existing = requestCookie(request, CSRF_COOKIE);
+    if (existing !== undefined && /^[A-Za-z0-9_-]{43}$/u.test(existing)) return { value: existing };
+    const value = randomBytes(32).toString('base64url');
+    return { value, setCookie: csrfCookie(value) };
+  }
+
+  function validateUiMutation(request: FastifyRequest): z.infer<typeof UiFormSchema> {
+    if (options.publicOrigin === undefined || request.headers.origin !== options.publicOrigin) {
+      throw new PlatformError('forbidden', 403);
+    }
+    const form = UiFormSchema.safeParse(request.body);
+    const cookie = requestCookie(request, CSRF_COOKIE);
+    if (!form.success || cookie === undefined || !sameSecret(cookie, form.data.csrf)) {
+      throw new PlatformError('forbidden', 403);
+    }
+    return form.data;
+  }
+
+  async function membershipsFor(request: FastifyRequest): Promise<{
+    readonly principal: AccountPrincipal;
+    readonly memberships: readonly TenantMembershipView[];
+  }> {
+    const principal = await authenticatedPrincipal(request);
+    if (options.workspace === undefined) throw new PlatformError('temporarily_unavailable', 503);
+    return { principal, memberships: await options.workspace.listMemberships(principal.accountId) };
+  }
+
+  async function uiMembershipsFor(request: FastifyRequest, reply: FastifyReply): Promise<{
+    readonly principal: AccountPrincipal;
+    readonly memberships: readonly TenantMembershipView[];
+  } | undefined> {
+    try {
+      return await membershipsFor(request);
+    } catch (error) {
+      if (error instanceof PlatformError && error.code === 'unauthenticated') {
+        const returnTo = new URL(request.raw.url ?? '/app', deployment.publicOrigin).pathname;
+        await reply.status(303).header('cache-control', 'no-store')
+          .header('location', `/v1/account/oidc/login?return_to=${encodeURIComponent(returnTo)}`).send();
+        return undefined;
+      }
+      throw error;
+    }
+  }
+
+  async function tenantPageModel(request: FastifyRequest): Promise<TenantPageModel> {
+    const { principal, memberships } = await membershipsFor(request);
+    const params = TenantParamsSchema.safeParse(request.params);
+    if (!params.success) throw new PlatformError('invalid_request', 400);
+    const membership = memberships.find((candidate) => candidate.tenantId === params.data.tenantId);
+    if (membership === undefined) throw new PlatformError('not_found', 404);
+    const context = TenantContextSchema.parse({
+      tenantId: membership.tenantId,
+      accountId: principal.accountId,
+      correlationId: correlationId()
+    });
+    if (await options.store.findTenant(context) === undefined) throw new PlatformError('not_found', 404);
+    const [sites, grants, events] = await Promise.all([
+      options.store.listSites(context), options.store.listGrants(context), options.store.listSecurityEvents(context, 50)
+    ]);
+    const csrf = uiCsrf(request);
+    if (csrf.setCookie !== undefined) {
+      (request as FastifyRequest & { wepuuCsrfCookie?: string }).wepuuCsrfCookie = csrf.setCookie;
+    }
+    return { deployment, membership, sites, grants, events, csrfToken: csrf.value };
+  }
+
+  function htmlHeaders(reply: FastifyReply, setCookie?: string): FastifyReply {
+    reply.header('cache-control', 'no-store')
+      .header('referrer-policy', 'no-referrer')
+      .header('content-security-policy', UI_CSP)
+      .header('x-content-type-options', 'nosniff')
+      .header('x-frame-options', 'DENY');
+    if (setCookie !== undefined) reply.header('set-cookie', setCookie);
+    return reply;
+  }
+
+  app.get('/assets/wepuu-v1.css', async (_request, reply) => reply
+    .header('cache-control', 'public, max-age=31536000, immutable')
+    .header('x-content-type-options', 'nosniff')
+    .type('text/css; charset=utf-8')
+    .send(UI_STYLES));
+
+  app.get('/assets/pairing-v1.js', async (_request, reply) => reply
+    .header('cache-control', 'public, max-age=31536000, immutable')
+    .header('x-content-type-options', 'nosniff')
+    .type('text/javascript; charset=utf-8')
+    .send(pairingStartScript));
+
+  app.get('/assets/consent-complete-v1.js', async (_request, reply) => reply
+    .header('cache-control', 'public, max-age=31536000, immutable')
+    .header('x-content-type-options', 'nosniff')
+    .type('text/javascript; charset=utf-8')
+    .send(consentCompleteScript));
 
   app.get('/health/live', async (_request, reply) => reply.header('cache-control', 'no-store').send({ status: 'live' }));
 
@@ -306,23 +450,25 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
   });
 
   app.get('/v1/pairing/start', async (_request, reply) => {
-    const scriptHash = createHash('sha256').update(pairingStartScript, 'utf8').digest('base64');
-    return reply
-      .header('cache-control', 'no-store')
-      .header('referrer-policy', 'no-referrer')
-      .header('content-security-policy', `default-src 'none'; script-src 'sha256-${scriptHash}'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`)
+    return htmlHeaders(reply)
       .type('text/html; charset=utf-8')
-      .send(`<!doctype html><html lang="en"><meta charset="utf-8"><title>WePuu pairing</title><body><main><h1>WePuu site pairing</h1><p id="status">Verifying the site...</p></main><script>${pairingStartScript}</script></body></html>`);
+      .send(renderInteractionPage({
+        title: 'WePuu site pairing',
+        heading: 'Connect this WordPress site.',
+        message: 'Verifying the site proof. WordPress content does not pass through WePuu.',
+        content: '<p id="status" role="status">Verifying the site…</p><script src="/assets/pairing-v1.js" defer></script>'
+      }));
   });
 
   app.get('/v1/consent/complete', async (_request, reply) => {
-    const scriptHash = createHash('sha256').update(consentCompleteScript, 'utf8').digest('base64');
-    return reply
-      .header('cache-control', 'no-store')
-      .header('referrer-policy', 'no-referrer')
-      .header('content-security-policy', `default-src 'none'; script-src 'sha256-${scriptHash}'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`)
+    return htmlHeaders(reply)
       .type('text/html; charset=utf-8')
-      .send(`<!doctype html><html lang="en"><meta charset="utf-8"><title>WePuu consent</title><body><main><h1>WePuu consent</h1><p id="status">Completing consent...</p></main><script>${consentCompleteScript}</script></body></html>`);
+      .send(renderInteractionPage({
+        title: 'WePuu consent',
+        heading: 'Finish WordPress consent.',
+        message: 'The site is confirming the local user and approved scope ceiling.',
+        content: '<p id="status" role="status">Completing consent…</p><script src="/assets/consent-complete-v1.js" defer></script>'
+      }));
   });
 
   app.get('/v1/account/oidc/login', async (request, reply) => {
@@ -365,6 +511,13 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
     try {
       const currentUrl = new URL(request.raw.url ?? '/v1/account/oidc/callback', options.publicOrigin);
       const result = await options.accountLogin.complete(currentUrl, transactionCookie);
+      try {
+        if (options.workspace === undefined) throw new Error('workspace_not_configured');
+        await options.workspace.ensurePersonalWorkspace(result.accountId);
+      } catch {
+        await options.accountLogin.logout(result.sessionToken);
+        throw new AccountLoginError('temporarily_unavailable');
+      }
       const maxAge = Math.max(0, Math.floor((result.expiresAt.getTime() - Date.now()) / 1_000));
       return await reply
         .status(303)
@@ -386,7 +539,7 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
         reason: code === 'temporarily_unavailable' ? 'identity_missing' : 'invalid_input',
         correlationId: correlationId(),
         service: 'control-api',
-        serviceVersion: '0.3.0'
+        serviceVersion: '0.4.0'
       });
       return reply
         .status(code === 'temporarily_unavailable' ? 503 : 401)
@@ -405,6 +558,11 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
     return reply.header('cache-control', 'no-store').send({ authenticated: true });
   });
 
+  app.get('/v1/account/tenants', async (request, reply) => {
+    const { memberships } = await membershipsFor(request);
+    return reply.header('cache-control', 'no-store').send({ tenants: memberships });
+  });
+
   app.post('/v1/account/logout', async (request, reply) => {
     if (options.accountLogin === undefined || options.publicOrigin === undefined) {
       throw new PlatformError('temporarily_unavailable', 503);
@@ -413,6 +571,77 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
     const token = sessionCookie(request);
     if (token !== undefined) await options.accountLogin.logout(token);
     return reply.status(204).header('cache-control', 'no-store').header('set-cookie', clearCookie(SESSION_COOKIE)).send();
+  });
+
+  app.get('/', async (_request, reply) => reply.status(303).header('cache-control', 'no-store').header('location', '/app').send());
+
+  app.get('/app', async (request, reply) => {
+    const account = await uiMembershipsFor(request, reply);
+    if (account === undefined) return;
+    let memberships = account.memberships;
+    if (memberships.length === 0) {
+      if (options.workspace === undefined) throw new PlatformError('temporarily_unavailable', 503);
+      await options.workspace.ensurePersonalWorkspace(account.principal.accountId);
+      memberships = await options.workspace.listMemberships(account.principal.accountId);
+    }
+    const target = memberships.find((membership) => membership.isHome) ?? memberships[0];
+    if (target === undefined) throw new PlatformError('temporarily_unavailable', 503);
+    return reply.status(303).header('cache-control', 'no-store')
+      .header('location', `/app/tenants/${encodeURIComponent(target.tenantId)}`).send();
+  });
+
+  const tenantPage = async (
+    request: FastifyRequest,
+    reply: FastifyReply,
+    renderer: (model: TenantPageModel) => string
+  ): Promise<unknown> => {
+    if (await uiMembershipsFor(request, reply) === undefined) return undefined;
+    const model = await tenantPageModel(request);
+    const setCookie = (request as FastifyRequest & { wepuuCsrfCookie?: string }).wepuuCsrfCookie;
+    return htmlHeaders(reply, setCookie).type('text/html; charset=utf-8').send(renderer(model));
+  };
+
+  app.get('/app/tenants/:tenantId', async (request, reply) => tenantPage(request, reply, renderOverview));
+  app.get('/app/tenants/:tenantId/sites', async (request, reply) => tenantPage(request, reply, renderSites));
+  app.get('/app/tenants/:tenantId/grants', async (request, reply) => tenantPage(request, reply, renderGrants));
+  app.get('/app/tenants/:tenantId/activity', async (request, reply) => tenantPage(request, reply, renderActivity));
+
+  app.get('/app/account', async (request, reply) => {
+    const account = await uiMembershipsFor(request, reply);
+    if (account === undefined) return;
+    const csrf = uiCsrf(request);
+    return htmlHeaders(reply, csrf.setCookie).type('text/html; charset=utf-8').send(renderAccount({
+      deployment, memberships: account.memberships, csrfToken: csrf.value
+    }));
+  });
+
+  app.post('/app/logout', async (request, reply) => {
+    validateUiMutation(request);
+    const token = sessionCookie(request);
+    if (token !== undefined && options.accountLogin !== undefined) await options.accountLogin.logout(token);
+    return reply.status(303).header('cache-control', 'no-store')
+      .header('set-cookie', [clearCookie(SESSION_COOKIE), clearCookie(CSRF_COOKIE)])
+      .header('location', '/app').send();
+  });
+
+  app.post('/app/tenants/:tenantId/grants/:objectId/revoke', async (request, reply) => {
+    validateUiMutation(request);
+    const context = await requestContext(request);
+    const params = ObjectParamsSchema.safeParse(request.params);
+    if (!params.success) throw new PlatformError('invalid_request', 400);
+    await options.store.revokeGrant(context, params.data.objectId);
+    return reply.status(303).header('cache-control', 'no-store')
+      .header('location', `/app/tenants/${encodeURIComponent(context.tenantId)}/grants`).send();
+  });
+
+  app.post('/app/tenants/:tenantId/sites/:objectId/disconnect', async (request, reply) => {
+    validateUiMutation(request);
+    const context = await requestContext(request);
+    const params = ObjectParamsSchema.safeParse(request.params);
+    if (!params.success) throw new PlatformError('invalid_request', 400);
+    await options.store.disconnectSite(context, params.data.objectId);
+    return reply.status(303).header('cache-control', 'no-store')
+      .header('location', `/app/tenants/${encodeURIComponent(context.tenantId)}/sites`).send();
   });
 
   app.get('/v1/tenants/:tenantId', async (request, reply) => {
@@ -428,7 +657,7 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
         tenantId: context.tenantId,
         actorId: context.accountId,
         service: 'control-api',
-        serviceVersion: '0.3.0'
+        serviceVersion: '0.4.0'
       });
       throw new PlatformError('not_found', 404);
     }
@@ -448,14 +677,14 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
       await safeAudit({
         occurredAt: new Date().toISOString(), eventName: 'pairing.verified', outcome: 'success', reason: 'none',
         correlationId: context.correlationId, tenantId: context.tenantId, actorId: context.accountId,
-        siteId: result.siteId, service: 'control-api', serviceVersion: '0.3.0'
+        siteId: result.siteId, service: 'control-api', serviceVersion: '0.4.0'
       });
       return await reply.header('cache-control', 'no-store').send({ site_id: result.siteId, status: 'active' });
     } catch {
       await safeAudit({
         occurredAt: new Date().toISOString(), eventName: 'pairing.denied', outcome: 'denied', reason: 'proof_invalid',
         correlationId: context.correlationId, tenantId: context.tenantId, actorId: context.accountId,
-        service: 'control-api', serviceVersion: '0.3.0'
+        service: 'control-api', serviceVersion: '0.4.0'
       });
       throw new PlatformError('invalid_request', 400);
     }
@@ -498,7 +727,7 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
         occurredAt: new Date().toISOString(), eventName: 'grant.created', outcome: 'success', reason: 'none',
         correlationId: context.correlationId, tenantId: context.tenantId, actorId: context.accountId,
         siteId: params.data.siteId, clientId: body.data.client_id, grantId: result.grantId,
-        service: 'control-api', serviceVersion: '0.3.0'
+        service: 'control-api', serviceVersion: '0.4.0'
       });
       return await reply.status(201).header('cache-control', 'no-store').send({
         grant_id: result.grantId,
@@ -534,7 +763,7 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
         outcome: body.data.decision === 'approved' ? 'success' : 'denied',
         reason: body.data.decision === 'approved' ? 'none' : 'consent_denied',
         correlationId: context.correlationId, tenantId: context.tenantId, actorId: context.accountId,
-        grantId: params.data.grantId, service: 'control-api', serviceVersion: '0.3.0'
+        grantId: params.data.grantId, service: 'control-api', serviceVersion: '0.4.0'
       });
       return await reply.status(204).header('cache-control', 'no-store').send();
     } catch {
@@ -543,21 +772,27 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
   });
 
   app.post('/v1/tenants/:tenantId/grants/:objectId/revoke', async (request, reply) => {
+    if (options.publicOrigin === undefined || request.headers.origin !== options.publicOrigin) {
+      throw new PlatformError('forbidden', 403);
+    }
     const context = await requestContext(request);
     const params = ObjectParamsSchema.safeParse(request.params);
     const idempotencyKey = IdempotencyKeySchema.safeParse(request.headers['idempotency-key']);
     if (!params.success || !idempotencyKey.success) throw new PlatformError('invalid_request', 400);
     await options.store.revokeGrant(context, params.data.objectId);
-    return reply.status(204).send();
+    return reply.status(204).header('cache-control', 'no-store').send();
   });
 
   app.post('/v1/tenants/:tenantId/sites/:objectId/disconnect', async (request, reply) => {
+    if (options.publicOrigin === undefined || request.headers.origin !== options.publicOrigin) {
+      throw new PlatformError('forbidden', 403);
+    }
     const context = await requestContext(request);
     const params = ObjectParamsSchema.safeParse(request.params);
     const idempotencyKey = IdempotencyKeySchema.safeParse(request.headers['idempotency-key']);
     if (!params.success || !idempotencyKey.success) throw new PlatformError('invalid_request', 400);
     await options.store.disconnectSite(context, params.data.objectId);
-    return reply.status(204).send();
+    return reply.status(204).header('cache-control', 'no-store').send();
   });
 
   app.setErrorHandler((error, _request, reply) => {

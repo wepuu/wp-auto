@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { AccountPrincipal, GrantView, SiteView, TenantContext, TenantView } from '@wepuu/contracts';
+import type { AccountPrincipal, GrantView, SiteView, TenantContext, TenantMembershipView, TenantView } from '@wepuu/contracts';
 import type { SecurityEventView } from '@wepuu/database';
 import type { SecurityAuditEvent, SecurityAuditSink } from '@wepuu/security-audit';
 import { AccountLoginError } from '@wepuu/account-identity';
@@ -27,15 +27,18 @@ class StaticIdentity implements AccountIdentityProvider {
 
 class StaticStore implements ControlStore {
   readonly contexts: TenantContext[] = [];
+  readonly sites: SiteView[] = [];
+  readonly grants: GrantView[] = [];
+  readonly events: SecurityEventView[] = [];
   revokedGrant: string | undefined;
   findTenant(context: TenantContext): Promise<TenantView> {
     this.contexts.push(context);
     return Promise.resolve({ id: context.tenantId, status: 'active', createdAt: '2026-09-16T00:00:00.000Z' });
   }
-  listSecurityEvents(): Promise<readonly SecurityEventView[]> { return Promise.resolve([]); }
-  listSites(): Promise<readonly SiteView[]> { return Promise.resolve([]); }
+  listSecurityEvents(): Promise<readonly SecurityEventView[]> { return Promise.resolve(this.events); }
+  listSites(): Promise<readonly SiteView[]> { return Promise.resolve(this.sites); }
   findActiveSite(): Promise<SiteView | undefined> { return Promise.resolve(undefined); }
-  listGrants(): Promise<readonly GrantView[]> { return Promise.resolve([]); }
+  listGrants(): Promise<readonly GrantView[]> { return Promise.resolve(this.grants); }
   revokeGrant(_context: TenantContext, grantId: string): Promise<boolean> {
     this.revokedGrant = grantId;
     return Promise.resolve(true);
@@ -63,6 +66,18 @@ class StaticAccountLogin {
     });
   }
   logout(token: string) { this.loggedOutToken = token; return Promise.resolve(); }
+}
+
+class StaticWorkspace {
+  ensuredAccount: string | undefined;
+  readonly membership: TenantMembershipView = {
+    tenantId, role: 'owner', status: 'active', createdAt: '2026-09-16T00:00:00.000Z', isHome: true
+  };
+  ensurePersonalWorkspace(accountId: string): Promise<TenantMembershipView> {
+    this.ensuredAccount = accountId;
+    return Promise.resolve(this.membership);
+  }
+  listMemberships(): Promise<readonly TenantMembershipView[]> { return Promise.resolve([this.membership]); }
 }
 
 class StaticPairing implements PairingOperations {
@@ -107,9 +122,10 @@ void test('consent completion bootstrap consumes only a fragment and never refle
   const app = buildControlApi({ identityProvider: new StaticIdentity(), store: new StaticStore(), audit: new MemoryAudit() });
   const response = await app.inject({ method: 'GET', url: '/v1/consent/complete' });
   assert.equal(response.statusCode, 200);
-  assert.match(response.headers['content-security-policy'] ?? '', /sha256-/u);
+  assert.match(response.headers['content-security-policy'] ?? '', /script-src 'self'/u);
   assert.equal(response.headers['cache-control'], 'no-store');
-  assert.equal(response.body.includes('location.hash'), true);
+  const script = await app.inject({ method: 'GET', url: '/assets/consent-complete-v1.js' });
+  assert.equal(script.body.includes('location.hash'), true);
   assert.equal(response.body.includes('MCP_TOOL_INPUT'), false);
   await app.close();
 });
@@ -175,14 +191,16 @@ void test('hashed server-side session authenticates mutations and idempotency ke
       return Promise.resolve({ accountId: 'account_12345678', authenticationTime: 1 });
     }
   });
-  const app = buildControlApi({ identityProvider: identity, store, audit: new MemoryAudit() });
+  const app = buildControlApi({
+    identityProvider: identity, store, audit: new MemoryAudit(), publicOrigin: 'https://platform.example.test'
+  });
   const url = `/v1/tenants/${tenantId}/grants/grant_00000001/revoke`;
   const cookie = `__Host-wepuu_session=${'s'.repeat(43)}`;
-  assert.equal((await app.inject({ method: 'POST', url, headers: { cookie } })).statusCode, 400);
+  assert.equal((await app.inject({ method: 'POST', url, headers: { cookie, origin: 'https://platform.example.test' } })).statusCode, 400);
   const response = await app.inject({
     method: 'POST',
     url,
-    headers: { cookie, 'idempotency-key': 'idempotency_0000000001' }
+    headers: { cookie, origin: 'https://platform.example.test', 'idempotency-key': 'idempotency_0000000001' }
   });
   assert.equal(response.statusCode, 204);
   assert.equal(store.revokedGrant, 'grant_00000001');
@@ -191,11 +209,13 @@ void test('hashed server-side session authenticates mutations and idempotency ke
 
 void test('OIDC login and callback use secure host cookies and local redirects', async () => {
   const login = new StaticAccountLogin();
+  const workspace = new StaticWorkspace();
   const app = buildControlApi({
     identityProvider: new StaticIdentity(),
     store: new StaticStore(),
     audit: new MemoryAudit(),
     accountLogin: login,
+    workspace,
     publicOrigin: 'https://platform.example.test'
   });
   const start = await app.inject({ method: 'GET', url: '/v1/account/oidc/login?return_to=%2Fv1%2Faccount%2Fsession' });
@@ -215,6 +235,7 @@ void test('OIDC login and callback use secure host cookies and local redirects',
   assert.match(cookies, /__Host-wepuu_oidc_tx=; Max-Age=0/u);
   assert.match(cookies, /__Host-wepuu_session=s{43}/u);
   assert.equal(callback.body, '');
+  assert.equal(workspace.ensuredAccount, 'account_12345678');
   await app.close();
 });
 
@@ -247,6 +268,69 @@ void test('OIDC callback errors fail closed without reflecting provider detail',
     headers: { cookie: '__Host-wepuu_oidc_tx=a.b.c.d.e' }
   });
   assert.equal(denied.statusCode, 401);
+  await app.close();
+});
+
+void test('SSR workspace redirects unauthenticated users and renders a content-free grant view', async () => {
+  const denied = buildControlApi({ identityProvider: new StaticIdentity(), store: new StaticStore(), audit: new MemoryAudit() });
+  const redirect = await denied.inject({ method: 'GET', url: '/app' });
+  assert.equal(redirect.statusCode, 303);
+  assert.equal(redirect.headers.location, '/v1/account/oidc/login?return_to=%2Fapp');
+  await denied.close();
+
+  const store = new StaticStore();
+  store.grants.push({
+    id: 'grant_00000001', tenantId, siteId: 'site_00000001', subjectId: 'subject_CANARY',
+    clientId: 'client_00000001', scopes: ['mcp:read'], status: 'active', consentVersion: '1',
+    createdAt: '2026-09-16T00:00:00.000Z'
+  });
+  const app = buildControlApi({
+    identityProvider: new StaticIdentity({ accountId: 'account_12345678', authenticationTime: 1, authenticationMethod: 'oidc' }),
+    store, workspace: new StaticWorkspace(), audit: new MemoryAudit(), publicOrigin: 'https://platform.example.test'
+  });
+  const page = await app.inject({ method: 'GET', url: `/app/tenants/${tenantId}/grants` });
+  assert.equal(page.statusCode, 200);
+  assert.match(page.headers['content-security-policy'] ?? '', /default-src 'none'/u);
+  assert.equal(page.body.includes('subject_CANARY'), false);
+  assert.equal(page.body.includes('client_00000001'), true);
+  assert.equal(page.body.includes('MCP data travels direct'), true);
+  const csrf = /name="csrf" value="([A-Za-z0-9_-]{43})"/u.exec(page.body)?.[1];
+  assert.ok(csrf);
+  const cookie = String(page.headers['set-cookie']).split(';')[0];
+  const action = `/app/tenants/${tenantId}/grants/grant_00000001/revoke`;
+  const payload = new URLSearchParams({ csrf, idempotency_key: 'idempotency_00000001' }).toString();
+  const crossOrigin = await app.inject({
+    method: 'POST', url: action,
+    headers: { cookie, origin: 'https://evil.example.test', 'content-type': 'application/x-www-form-urlencoded' }, payload
+  });
+  assert.equal(crossOrigin.statusCode, 403);
+  const revoked = await app.inject({
+    method: 'POST', url: action,
+    headers: { cookie, origin: 'https://platform.example.test', 'content-type': 'application/x-www-form-urlencoded' }, payload
+  });
+  assert.equal(revoked.statusCode, 303);
+  assert.equal(revoked.headers.location, `/app/tenants/${tenantId}/grants`);
+  assert.equal(store.revokedGrant, 'grant_00000001');
+  await app.close();
+});
+
+void test('OIDC callback revokes its new session if personal workspace bootstrap fails', async () => {
+  const login = new StaticAccountLogin();
+  const app = buildControlApi({
+    identityProvider: new StaticIdentity(), store: new StaticStore(), audit: new MemoryAudit(),
+    accountLogin: login, publicOrigin: 'https://platform.example.test',
+    workspace: {
+      ensurePersonalWorkspace: () => Promise.reject(new Error('database unavailable')),
+      listMemberships: () => Promise.resolve([])
+    }
+  });
+  const callback = await app.inject({
+    method: 'GET', url: '/v1/account/oidc/callback?code=redacted&state=redacted',
+    headers: { cookie: '__Host-wepuu_oidc_tx=a.b.c.d.e' }
+  });
+  assert.equal(callback.statusCode, 503);
+  assert.equal(login.loggedOutToken, 's'.repeat(43));
+  assert.equal(callback.body.includes('database unavailable'), false);
   await app.close();
 });
 
@@ -291,8 +375,10 @@ void test('pairing start page consumes fragment client-side without reflecting v
   const response = await app.inject({ method: 'GET', url: '/v1/pairing/start' });
   assert.equal(response.statusCode, 200);
   assert.equal(response.body.includes('PAIRING_VERIFIER_CANARY'), false);
-  assert.match(response.body, /history\.replaceState/u);
-  assert.match(response.headers['content-security-policy'] ?? '', /script-src 'sha256-/u);
+  assert.match(response.body, /pairing-v1\.js/u);
+  assert.match(response.headers['content-security-policy'] ?? '', /script-src 'self'/u);
+  const script = await app.inject({ method: 'GET', url: '/assets/pairing-v1.js' });
+  assert.match(script.body, /history\.replaceState/u);
   assert.equal(response.headers['referrer-policy'], 'no-referrer');
   await app.close();
 });

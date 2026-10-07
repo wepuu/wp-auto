@@ -1,7 +1,7 @@
 {
   "name": "@wepuu/authorization-service",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.4.0",
   "type": "module",
   "exports": { ".": "./dist/server.js" },
   "types": "./dist/server.d.ts",
@@ -10,6 +10,7 @@
     "@wepuu/key-custody": "workspace:*",
     "@wepuu/oauth-provider": "workspace:*",
     "@wepuu/pairing": "workspace:*",
+    "@wepuu/platform-ui": "workspace:*",
     "zod": "4.6.5"
   }
 }

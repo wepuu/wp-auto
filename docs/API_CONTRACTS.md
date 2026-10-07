@@ -55,6 +55,14 @@ Implemented Phase 2.0.3A routes additionally include:
 - `POST /v1/tenants/{tenant_id}/grants/{grant_id}/revoke`;
 - `POST /v1/tenants/{tenant_id}/sites/{site_id}/disconnect`.
 
+Phase 2.0.7A adds `GET /v1/account/tenants`, returning only active tenant
+memberships derived from the authenticated server-side account session. It
+also adds server-rendered `/app` routes over the same repositories. Browser
+mutation forms require the existing session and membership checks plus an
+exact trusted Origin, a double-submit `__Host-wepuu_csrf` value and a bounded
+idempotency key. Existing JSON endpoint payloads remain compatible; revoke and
+disconnect now enforce the same exact-Origin rule as other browser mutations.
+
 Mutations require a bounded `Idempotency-Key`; revoke and disconnect are
 naturally idempotent and return no object-existence signal.
 

@@ -1,7 +1,7 @@
 {
   "name": "@wepuu/platform",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.4.0",
   "packageManager": "pnpm@11.19.0",
   "engines": {
     "node": ">=26.7 <27"
@@ -17,7 +17,7 @@
     "check": "pnpm typecheck && pnpm lint && pnpm test",
     "audit:high": "pnpm audit --audit-level high",
     "sbom:check": "pnpm dlx @cyclonedx/cdxgen@12.8.4 --type js --recurse --spec-version 1.6 --profile license-compliance --output .tmp/phase-2-0-6-sbom.json && node scripts/verify-sbom.mjs .tmp/phase-2-0-6-sbom.json",
-    "test:database": "tsx --test packages/database/test/tenant-isolation.test.ts",
+    "test:database": "tsx --test --test-concurrency=1 \"packages/database/test/*.test.ts\"",
     "test:backup": "pnpm build && node scripts/test-backup-restore.mjs",
     "db:migrate": "tsx packages/database/src/cli.ts migrate",
     "start:control": "node packages/key-custody/node_modules/@keyobject/aws-kms/bin/awskms.js exec -- node apps/control-api/dist/main.js",

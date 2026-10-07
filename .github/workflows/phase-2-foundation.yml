@@ -15,7 +15,7 @@ on:
         default: false
   pull_request:
   push:
-    branches: [main, codex/phase-2-0-6-security-resilience]
+    branches: [main, codex/phase-2-0-7a-product-shell]
 
 permissions:
   contents: read
@@ -55,6 +55,12 @@ jobs:
         run: pnpm check
       - name: PostgreSQL migration and isolation tests
         run: pnpm test:database
+      - name: Build portable non-root OCI images
+        run: |
+          docker build --file deploy/Control.Containerfile --tag wepuu-control:candidate .
+          docker build --file deploy/Authorization.Containerfile --tag wepuu-authorization:candidate .
+          test "$(docker image inspect wepuu-control:candidate --format '{{.Config.User}}')" = "node"
+          test "$(docker image inspect wepuu-authorization:candidate --format '{{.Config.User}}')" = "node"
       - name: PostgreSQL backup, restore, and tombstone replay
         run: >-
           WEPUU_POSTGRES_CONTAINER=$(docker ps --filter "ancestor=postgres:16.10-alpine" --format "{{.ID}}" | head -n 1)

@@ -10,6 +10,7 @@ import type { McpScope, TenantContext } from '@wepuu/contracts';
 import {
   Database,
   PostgresAccountSessionStore,
+  PostgresAccountWorkspaceStore,
   PostgresGrantRepository,
   PostgresPairingRepository,
   PostgresSecurityAuditSink,
@@ -21,6 +22,7 @@ import {
   keyCustodyConfigFromEnvironment
 } from '@wepuu/key-custody';
 import { GrantService, HttpsSiteVerificationClient, PairingService } from '@wepuu/pairing';
+import { loadPublicDeploymentConfig } from '@wepuu/platform-ui';
 import {
   buildControlApi,
   PostgresControlStore,
@@ -32,6 +34,7 @@ if (databaseUrl === undefined || databaseUrl.length === 0) throw new Error('WEPU
 
 const database = new Database({ connectionString: databaseUrl, applicationName: 'wepuu-control-api' });
 const accountOidcConfig = loadAccountOidcConfig(process.env);
+const deployment = loadPublicDeploymentConfig(process.env, accountOidcConfig.publicOrigin.origin);
 const accountSessionStore = new PostgresAccountSessionStore(database);
 const accountLogin = new AccountLoginService({
   provider: await OpenIdClientRelyingParty.create(accountOidcConfig),
@@ -138,6 +141,8 @@ const app = buildControlApi({
   audit: new PostgresSecurityAuditSink(database),
   readiness: () => database.checkReady(),
   accountLogin,
+  workspace: new PostgresAccountWorkspaceStore(database),
+  deployment,
   publicOrigin: accountOidcConfig.publicOrigin.origin,
   ...(pairing === undefined ? {} : { pairing }),
   ...(grants === undefined ? {} : { grants })

@@ -2,8 +2,9 @@
 
 Status: all Phase 2.0.6 implementation, deterministic/live validation, hosted
 dual-KMS validation, immutable available-capability review and temporary-state
-cleanup gates pass; merge is the remaining landing operation. No production
-deployment or Phase 2.0.7 work is authorized.
+cleanup gates pass. The accepted platform candidate was merged to `main` as
+`f11b3f1`; the accepted connector candidate was merged to its `main` as
+`92971ce`. No production deployment was performed.
 
 ## Candidate branches
 
@@ -108,10 +109,10 @@ timestamps, and record counts. Tombstones contain opaque control identifiers
 only. The backup/recovery harness does not inspect or store WordPress content,
 MCP request bodies, tokens, cookies, or upstream identity subjects.
 
-Phase closure requires all cases in `PHASE_2_0_6_TEST_PLAN.md`, the final
+Phase closure required all cases in `PHASE_2_0_6_TEST_PLAN.md`, the final
 available-capability review, the retained Phase 2.0.5 live gates, and
-temporary-state cleanup. All are satisfied for the candidate commits above;
-the remaining action is the approved PR landing sequence.
+temporary-state cleanup. All were satisfied and the approved candidates are
+now on the respective `main` branches.
 
 ADR-013 removes only the unavailable TAC/Daybreak service from the exit gate.
 It does not waive any runtime security control or executed finding. Unresolved

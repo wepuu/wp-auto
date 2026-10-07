@@ -30,7 +30,12 @@ limits, managed signing-key lifecycle/JWKS overlap, durable signed revocation
 delivery, and connector-local deny state. Phase 2.0.5 scoped Bearer integration
 has completed implementation and exit validation on its isolated platform and
 connector branches; every exit gate passed, and it was accepted and closed on
-2026-09-29. It is not deployed, and Phase 2.0.6 is not authorized.
+2026-09-29. Phase 2.0.6 security and resilience qualification is accepted and
+closed after deterministic, live HTTPS/Codex, hosted dual-KMS and immutable
+available-capability review gates passed. Phase 2.0.7A product-shell and
+portable-runtime work is now isolated on
+`codex/phase-2-0-7a-product-shell`; production deployment and Phase 2.0.7B are
+not authorized.
 
 ## Architecture
 

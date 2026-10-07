@@ -106,12 +106,11 @@ complete temporary-state cleanup must pass.
 
 ## Phase 2.0.6 - security and resilience qualification
 
-Status: local implementation and deterministic validation complete on the two
-isolated Phase 2.0.6 branches. Local real two-key KMS, HTTPS WordPress and
-Codex direct-MCP regressions and final temporary-state cleanup pass; hosted KMS
-and immutable candidate review remain open. The restricted TAC/Daybreak
-review is waived as unavailable under ADR-013 and is not represented as a
-pass. Production deployment and Phase 2.0.7 remain separately gated.
+Status: accepted and closed on 2026-10-06. Deterministic and database suites,
+local real two-key KMS, HTTPS WordPress, Codex direct-MCP, hosted GitHub
+OIDC/KMS, immutable available-capability review and cleanup gates passed. The
+restricted TAC/Daybreak review was waived as unavailable under ADR-013 and is
+not represented as a pass. The accepted candidates are present on `main`.
 
 - Authentication, replay, confused-deputy, SSRF, tenant-isolation, key-compromise,
   and refresh-reuse tests.
@@ -121,6 +120,15 @@ pass. Production deployment and Phase 2.0.7 remain separately gated.
   available to the project before public production use.
 
 ## Phase 2.0.7 - disclosure and release gate
+
+Phase 2.0.7A implements the product shell and portable pre-release runtime on
+`codex/phase-2-0-7a-product-shell`. It adds account home workspaces,
+server-rendered tenant/site/grant/activity/account pages, hardened browser
+mutations, fail-closed release configuration and cloud-neutral OCI images.
+Production values and deployment are not required or authorized in 2.0.7A.
+
+Phase 2.0.7B remains gated on the final hosting provider, production domain,
+legal identity, policy URLs, residency/retention decisions and staged release:
 
 - Final Terms of Service and Privacy Policy URLs.
 - WordPress.org disclosure and admin consent copy.
