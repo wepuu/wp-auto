@@ -32,10 +32,11 @@ has completed implementation and exit validation on its isolated platform and
 connector branches; every exit gate passed, and it was accepted and closed on
 2026-09-29. Phase 2.0.6 security and resilience qualification is accepted and
 closed after deterministic, live HTTPS/Codex, hosted dual-KMS and immutable
-available-capability review gates passed. Phase 2.0.7A product-shell and
-portable-runtime work is now isolated on
-`codex/phase-2-0-7a-product-shell`; production deployment and Phase 2.0.7B are
-not authorized.
+available-capability review gates passed. Phase 2.0.7A product shell and
+portable runtime are accepted on `main` after PR, post-merge and hosted
+single/two-key KMS validation. Phase 2.0.7B1 release-readiness work is isolated
+on `codex/phase-2-0-7b-release-readiness`; production deployment, connector
+changes and Phase 2.0.7B2 are not authorized.
 
 ## Architecture
 
@@ -124,6 +125,10 @@ only; they must not be placed in `.env`, logs, or Git.
 - [Phase 2.0.2 validation](docs/PHASE_2_0_2_VALIDATION.md)
 - [Phase 2.0.2 versions](docs/PHASE_2_0_2_VERSION_MATRIX.md)
 - [AWS KMS test setup](docs/AWS_KMS_TEST_SETUP.md)
+- [Phase 2.0.7B1 test plan](docs/PHASE_2_0_7B_TEST_PLAN.md)
+- [Phase 2.0.7B1 validation](docs/PHASE_2_0_7B_VALIDATION.md)
+- [Phase 2.0.7B1 compatibility](docs/PHASE_2_0_7B_COMPATIBILITY_MATRIX.md)
+- [Portable deployment](docs/PORTABLE_DEPLOYMENT.md)
 - [Phase 2.0.1 validation](docs/PHASE_2_0_1_VALIDATION.md)
 - [Phase 2.0.1 compatibility](docs/PHASE_2_0_1_COMPATIBILITY_MATRIX.md)
 - [Phase 2.0.1 evidence](docs/PHASE_2_0_1_EVIDENCE.json)

@@ -35,7 +35,15 @@ class StaticStore implements ControlStore {
     this.contexts.push(context);
     return Promise.resolve({ id: context.tenantId, status: 'active', createdAt: '2026-09-16T00:00:00.000Z' });
   }
-  listSecurityEvents(): Promise<readonly SecurityEventView[]> { return Promise.resolve(this.events); }
+  listSecurityEvents(
+    _context: TenantContext,
+    limit: number,
+    offset = 0,
+    outcome?: SecurityEventView['outcome']
+  ): Promise<readonly SecurityEventView[]> {
+    const filtered = outcome === undefined ? this.events : this.events.filter((event) => event.outcome === outcome);
+    return Promise.resolve(filtered.slice(offset, offset + limit));
+  }
   listSites(): Promise<readonly SiteView[]> { return Promise.resolve(this.sites); }
   findActiveSite(): Promise<SiteView | undefined> { return Promise.resolve(undefined); }
   listGrants(): Promise<readonly GrantView[]> { return Promise.resolve(this.grants); }
@@ -401,5 +409,88 @@ void test('pairing mutation requires exact origin and server-authenticated tenan
   assert.equal(pairing.context?.tenantId, tenantId);
   assert.deepEqual(pairing.input, payload);
   assert.equal(JSON.stringify(audit.events).includes(payload.verifier), false);
+  await app.close();
+});
+
+void test('release-readiness pages expose verified metadata without identity subjects or secrets', async () => {
+  const store = new StaticStore();
+  store.sites.push({
+    id: 'site_00000001', tenantId, resource: 'https://site.example.test/wp-json/wp-auto/mcp',
+    displayHostname: 'site.example.test', status: 'active', protocolVersion: '1',
+    createdAt: '2026-10-07T00:00:00.000Z'
+  });
+  store.grants.push({
+    id: 'grant_00000001', tenantId, siteId: 'site_00000001', subjectId: 'subject_MUST_NOT_RENDER',
+    clientId: 'client_00000001', scopes: ['mcp:read'], status: 'active', consentVersion: '1',
+    createdAt: '2026-10-07T00:00:00.000Z'
+  });
+  const app = buildControlApi({
+    identityProvider: new StaticIdentity({ accountId: 'account_12345678', authenticationTime: 1, authenticationMethod: 'oidc' }),
+    store, workspace: new StaticWorkspace(), audit: new MemoryAudit(), publicOrigin: 'https://platform.example.test',
+    deploymentReadiness: {
+      ready: false,
+      checks: [{ id: 'kms', label: 'Temporary KMS identity', status: 'pending', detail: 'Configure workload identity.' }]
+    }
+  });
+  const site = await app.inject({ method: 'GET', url: `/app/tenants/${tenantId}/sites/site_00000001` });
+  assert.equal(site.statusCode, 200);
+  assert.match(site.body, /Changing the origin requires a new pairing/u);
+  const grant = await app.inject({ method: 'GET', url: `/app/tenants/${tenantId}/grants/grant_00000001` });
+  assert.equal(grant.statusCode, 200);
+  assert.equal(grant.body.includes('subject_MUST_NOT_RENDER'), false);
+  assert.match(grant.body, /WordPress still evaluates its local user/u);
+  const compatibility = await app.inject({ method: 'GET', url: '/app/compatibility' });
+  assert.equal(compatibility.statusCode, 200);
+  assert.match(compatibility.body, /WorkBuddy \/ codebuddy/u);
+  assert.match(compatibility.body, /No standards-compliant path verified/u);
+  const readiness = await app.inject({ method: 'GET', url: '/app/readiness' });
+  assert.equal(readiness.statusCode, 200);
+  assert.match(readiness.body, /Public release stays locked/u);
+  assert.equal(readiness.body.includes('AWS_ROLE_ARN'), false);
+  await app.close();
+});
+
+void test('activity filtering and pagination use bounded content-free records', async () => {
+  const store = new StaticStore();
+  for (let index = 0; index < 25; index += 1) {
+    store.events.push({
+      id: String(index + 1), occurredAt: `2026-10-07T00:${String(index).padStart(2, '0')}:00.000Z`,
+      eventName: 'account.authentication_denied', outcome: 'denied', reason: 'identity_missing',
+      correlationId: `correlation_${String(index).padStart(2, '0')}`, service: 'control-api'
+    });
+  }
+  const app = buildControlApi({
+    identityProvider: new StaticIdentity({ accountId: 'account_12345678', authenticationTime: 1, authenticationMethod: 'oidc' }),
+    store, workspace: new StaticWorkspace(), audit: new MemoryAudit(), publicOrigin: 'https://platform.example.test'
+  });
+  const first = await app.inject({ method: 'GET', url: `/app/tenants/${tenantId}/activity?outcome=denied&page=1` });
+  assert.equal(first.statusCode, 200);
+  assert.match(first.body, /Page 1/u);
+  assert.match(first.body, />Next</u);
+  const second = await app.inject({ method: 'GET', url: `/app/tenants/${tenantId}/activity?outcome=denied&page=2` });
+  assert.equal(second.statusCode, 200);
+  assert.match(second.body, />Previous</u);
+  assert.doesNotMatch(second.body, />Next</u);
+  assert.equal((await app.inject({ method: 'GET', url: `/app/tenants/${tenantId}/activity?outcome=unknown` })).statusCode, 400);
+  await app.close();
+});
+
+void test('operations metrics require a dedicated token and contain no request content', async () => {
+  const token = 'operations-token-that-is-at-least-32-characters';
+  const app = buildControlApi({
+    identityProvider: new StaticIdentity(), store: new StaticStore(), audit: new MemoryAudit(),
+    operationsMetricsToken: token, readiness: () => Promise.resolve()
+  });
+  assert.equal((await app.inject({ method: 'GET', url: '/livez?content=WORDPRESS_CANARY' })).statusCode, 200);
+  assert.equal((await app.inject({ method: 'GET', url: '/readyz' })).statusCode, 200);
+  assert.equal((await app.inject({ method: 'GET', url: '/internal/metrics' })).statusCode, 404);
+  assert.equal((await app.inject({ method: 'GET', url: '/internal/metrics', headers: { authorization: 'Bearer wrong' } })).statusCode, 404);
+  const metrics = await app.inject({
+    method: 'GET', url: '/internal/metrics', headers: { authorization: `Bearer ${token}` }
+  });
+  assert.equal(metrics.statusCode, 200);
+  assert.match(metrics.body, /wepuu_control_requests_total/u);
+  assert.equal(metrics.body.includes(token), false);
+  assert.equal(metrics.body.includes('WORDPRESS_CANARY'), false);
   await app.close();
 });

@@ -127,6 +127,15 @@ server-rendered tenant/site/grant/activity/account pages, hardened browser
 mutations, fail-closed release configuration and cloud-neutral OCI images.
 Production values and deployment are not required or authorized in 2.0.7A.
 
+Status: accepted and closed on 2026-10-07. PR #3, post-merge CI and hosted
+GitHub OIDC single/two-key AWS KMS gates passed. The accepted candidate is on
+`main` at merge commit `8e6257a`.
+
+Phase 2.0.7B1 is the provider-neutral release-readiness tranche. It may add
+typed release metadata, configuration readiness reporting, content-free
+operations metrics, product detail/compatibility pages and release evidence
+without selecting a production host or publishing the service.
+
 Phase 2.0.7B remains gated on the final hosting provider, production domain,
 legal identity, policy URLs, residency/retention decisions and staged release:
 

@@ -65,6 +65,9 @@ signing.
 | T21 | Supply-chain compromise | pinned packages, lockfile review, provenance/SBOM, vulnerability response, no remote executable code | CI policy and release evidence |
 | T22 | Platform outage | cached JWKS safety window, short token lifetime, local revoke, AP independence, fail-closed unsafe cache | outage/failover exercises |
 | T23 | Platform session theft or fixation | 256-bit opaque value, digest-only storage, `__Host-` Secure HttpOnly SameSite cookie, 12-hour absolute expiry, rotation on login, exact-origin logout | plaintext absence, malformed/expired/revoked cookie, fixation and logout-CSRF tests |
+| T24 | Release placeholder presented as production fact | public-mode schema rejects placeholders, mutable revisions and missing policy metadata | staging/production configuration tests |
+| T25 | Operations endpoint leaks tenant/content data | dedicated secret, generic denial, aggregate fixed-label metrics only | token denial and content-canary tests |
+| T26 | Metrics token reused as OAuth authority | separate environment value and endpoint-only comparison; never enters session/token code | route and secret-absence review |
 
 Phase 2.0.6 adds an internal content-free deletion lifecycle. It revokes
 sessions, grants, refresh families, and site trust immediately, waits through

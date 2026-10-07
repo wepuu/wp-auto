@@ -6,20 +6,23 @@ This repository defines and will eventually implement the WePuu OAuth 2.1 contro
 
 ## Current phase
 
-Phase 2.0.1 through Phase 2.0.6 are accepted and closed. Phase 2.0.7A product
-shell and portable runtime implementation is isolated on
-`codex/phase-2-0-7a-product-shell`. The restricted TAC/Daybreak review remains
-waived under ADR-013 and is not represented as a pass. This phase may:
+Phase 2.0.1 through Phase 2.0.7A are accepted and closed. Phase 2.0.7B1
+release-readiness implementation is isolated on
+`codex/phase-2-0-7b-release-readiness`. The restricted TAC/Daybreak review
+remains waived under ADR-013 and is not represented as a pass. This phase may:
 
 - preserve the accepted Phase 2.0.2 foundation and its validation evidence;
 - preserve the accepted pairing/grant platform and connector contracts,
   migrations, fixtures, tests, and validation evidence;
 - preserve the accepted Phase 2.0.4 token, refresh, key-rotation, revocation,
   abuse-control, connector fail-closed, and data-boundary contracts;
-- add the approved server-rendered platform UI, personal home workspace and
-  portable OCI runtime without changing the direct MCP data plane;
+- extend the approved server-rendered platform UI with control-metadata-only
+  detail, compatibility, activity and release-readiness views;
+- add content-free operations probes and metrics without tenant, content or
+  credential labels;
 - retain placeholder release metadata only in local/test mode;
-- keep production deployment and Phase 2.0.7B separately gated;
+- keep production deployment, connector changes and Phase 2.0.7B2 separately
+  gated;
 - do not reopen or materially change the closed Phase 2.0.3 contract without
   an ADR and explicit approval;
 - keep all architecture decisions consistent with the documents under `docs/`.

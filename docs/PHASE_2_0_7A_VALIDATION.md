@@ -1,9 +1,8 @@
 # Phase 2.0.7A Product Shell and Portable Runtime Validation
 
-Status: implementation and local deterministic validation complete on
-`codex/phase-2-0-7a-product-shell`. Production deployment, public release and
-Phase 2.0.7B are not authorized. Hosted dual-KMS and immutable-candidate review
-remain pending until Git landing is separately approved.
+Status: accepted and closed on 2026-10-07. PR #3 merged immutable candidate
+`4f53a08` to `main` as `8e6257a`; PR and post-merge CI passed. Production
+deployment and public release remain separately gated.
 
 ## Implemented candidate
 
@@ -28,6 +27,7 @@ remain pending until Git landing is separately approved.
 | OCI build/runtime | pass; both images use `USER=node`, health checks and read-only imports; migration/KMS/app entrypoints are retained |
 | Dependency audit | pass; no known vulnerabilities at the high threshold |
 | SBOM/license verification | pass; CycloneDX 1.6 license profile, 293 components |
+| Hosted AWS KMS | pass; GitHub OIDC single-key and two-key lifecycle jobs in run `37584349687` |
 
 The cdxgen secure-mode environment audit repeats the accepted managed-runner
 `NODE_PATH` High and outbound proxy Low advisories documented in Phase 2.0.6;

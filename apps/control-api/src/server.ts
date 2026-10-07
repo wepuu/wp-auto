@@ -31,14 +31,31 @@ import {
   renderInteractionPage,
   UI_CSP,
   UI_STYLES,
+  type DeploymentReadinessReport,
   type PublicDeploymentConfig
 } from '@wepuu/platform-ui';
-import { renderAccount, renderActivity, renderGrants, renderOverview, renderSites, type TenantPageModel } from './ui.js';
+import { ContentFreeMetrics } from './operations.js';
+import {
+  renderAccount,
+  renderActivity,
+  renderCompatibility,
+  renderGrantDetail,
+  renderGrants,
+  renderOverview,
+  renderReadiness,
+  renderSiteDetail,
+  renderSites,
+  type TenantPageModel
+} from './ui.js';
 
 const TenantParamsSchema = z.object({ tenantId: z.uuid() });
 const ObjectParamsSchema = TenantParamsSchema.extend({ objectId: OpaqueIdSchema });
 const SiteParamsSchema = TenantParamsSchema.extend({ siteId: OpaqueIdSchema });
 const GrantParamsSchema = TenantParamsSchema.extend({ grantId: OpaqueIdSchema });
+const ActivityQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).max(500).default(1),
+  outcome: z.enum(['success', 'denied', 'error']).optional()
+}).strict();
 const IdempotencyKeySchema = z.string().regex(/^[A-Za-z0-9_-]{16,128}$/u);
 const AccountLoginQuerySchema = z.object({ return_to: z.string().max(2_048).optional() }).strict();
 const PairingBodySchema = z.object({
@@ -129,7 +146,12 @@ export class SessionAccountIdentityProvider implements AccountIdentityProvider {
 
 export interface ControlStore {
   findTenant(context: TenantContext): Promise<TenantView | undefined>;
-  listSecurityEvents(context: TenantContext, limit: number): Promise<readonly SecurityEventView[]>;
+  listSecurityEvents(
+    context: TenantContext,
+    limit: number,
+    offset?: number,
+    outcome?: SecurityEventView['outcome']
+  ): Promise<readonly SecurityEventView[]>;
   listSites(context: TenantContext): Promise<readonly SiteView[]>;
   findActiveSite(context: TenantContext, siteId: string): Promise<SiteView | undefined>;
   listGrants(context: TenantContext): Promise<readonly GrantView[]>;
@@ -152,8 +174,13 @@ export class PostgresControlStore implements ControlStore {
     return this.#database.withTenant(context, (client) => this.#tenants.findById(client, context.tenantId));
   }
 
-  async listSecurityEvents(context: TenantContext, limit: number): Promise<readonly SecurityEventView[]> {
-    return this.#database.withTenant(context, (client) => this.#events.list(client, limit));
+  async listSecurityEvents(
+    context: TenantContext,
+    limit: number,
+    offset = 0,
+    outcome?: SecurityEventView['outcome']
+  ): Promise<readonly SecurityEventView[]> {
+    return this.#database.withTenant(context, (client) => this.#events.list(client, limit, offset, outcome));
   }
 
   async listSites(context: TenantContext): Promise<readonly SiteView[]> {
@@ -192,6 +219,9 @@ export interface ControlApiOptions {
   readonly grants?: GrantOperations;
   readonly workspace?: AccountWorkspaceOperations;
   readonly deployment?: PublicDeploymentConfig;
+  readonly deploymentReadiness?: DeploymentReadinessReport;
+  readonly operationsMetricsToken?: string;
+  readonly metrics?: ContentFreeMetrics;
 }
 
 export interface AccountWorkspaceOperations {
@@ -294,6 +324,18 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
     trustProxy: deployment.trustedProxyCidrs.length === 0 ? false : [...deployment.trustedProxyCidrs],
     logController: new LogController({ disableRequestLogging: true })
   });
+  const metrics = options.metrics ?? new ContentFreeMetrics();
+  const requestStarts = new WeakMap<object, bigint>();
+  app.addHook('onRequest', (request, _reply, done) => {
+    requestStarts.set(request, process.hrtime.bigint());
+    done();
+  });
+  app.addHook('onResponse', (request, reply, done) => {
+    const startedAt = requestStarts.get(request);
+    const elapsed = startedAt === undefined ? 0 : Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+    metrics.record(reply.statusCode, elapsed);
+    done();
+  });
   app.addContentTypeParser('application/x-www-form-urlencoded', { parseAs: 'string' }, (_request, body, done) => {
     try {
       done(null, Object.fromEntries(new URLSearchParams(typeof body === 'string' ? body : body.toString('utf8'))));
@@ -323,7 +365,7 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
         correlationId: requestCorrelationId,
         ...(parsed.success ? { tenantId: parsed.data.tenantId } : {}),
         service: 'control-api',
-        serviceVersion: '0.4.0'
+        serviceVersion: '0.5.0'
       });
       throw new PlatformError('unauthenticated', 401);
     }
@@ -361,6 +403,15 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
     return form.data;
   }
 
+  function hasOperationsAccess(request: FastifyRequest): boolean {
+    const token = options.operationsMetricsToken;
+    const authorization = request.headers.authorization;
+    if (token === undefined || token.length < 32 || authorization === undefined || !authorization.startsWith('Bearer ')) {
+      return false;
+    }
+    return sameSecret(token, authorization.slice('Bearer '.length));
+  }
+
   async function membershipsFor(request: FastifyRequest): Promise<{
     readonly principal: AccountPrincipal;
     readonly memberships: readonly TenantMembershipView[];
@@ -387,7 +438,10 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
     }
   }
 
-  async function tenantPageModel(request: FastifyRequest): Promise<TenantPageModel> {
+  async function tenantPageModel(
+    request: FastifyRequest,
+    activity?: { readonly page: number; readonly outcome?: SecurityEventView['outcome'] }
+  ): Promise<TenantPageModel> {
     const { principal, memberships } = await membershipsFor(request);
     const params = TenantParamsSchema.safeParse(request.params);
     if (!params.success) throw new PlatformError('invalid_request', 400);
@@ -399,14 +453,24 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
       correlationId: correlationId()
     });
     if (await options.store.findTenant(context) === undefined) throw new PlatformError('not_found', 404);
-    const [sites, grants, events] = await Promise.all([
-      options.store.listSites(context), options.store.listGrants(context), options.store.listSecurityEvents(context, 50)
+    const pageSize = 20;
+    const eventLimit = activity === undefined ? 50 : pageSize + 1;
+    const eventOffset = activity === undefined ? 0 : (activity.page - 1) * pageSize;
+    const [sites, grants, eventRows] = await Promise.all([
+      options.store.listSites(context), options.store.listGrants(context),
+      options.store.listSecurityEvents(context, eventLimit, eventOffset, activity?.outcome)
     ]);
     const csrf = uiCsrf(request);
     if (csrf.setCookie !== undefined) {
       (request as FastifyRequest & { wepuuCsrfCookie?: string }).wepuuCsrfCookie = csrf.setCookie;
     }
-    return { deployment, membership, sites, grants, events, csrfToken: csrf.value };
+    const events = activity === undefined ? eventRows : eventRows.slice(0, pageSize);
+    return {
+      deployment, membership, sites, grants, events, csrfToken: csrf.value,
+      ...(activity === undefined ? {} : {
+        activity: { ...activity, hasNext: eventRows.length > pageSize }
+      })
+    };
   }
 
   function htmlHeaders(reply: FastifyReply, setCookie?: string): FastifyReply {
@@ -437,16 +501,27 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
     .type('text/javascript; charset=utf-8')
     .send(consentCompleteScript));
 
-  app.get('/health/live', async (_request, reply) => reply.header('cache-control', 'no-store').send({ status: 'live' }));
-
-  app.get('/health/ready', async (_request, reply) => {
+  const live = async (_request: FastifyRequest, reply: FastifyReply): Promise<unknown> =>
+    reply.header('cache-control', 'no-store').send({ status: 'live' });
+  const ready = async (_request: FastifyRequest, reply: FastifyReply): Promise<unknown> => {
     try {
       if (options.readiness === undefined) throw new Error('readiness_not_configured');
       await options.readiness();
-      await reply.header('cache-control', 'no-store').send({ status: 'ready' });
+      return await reply.header('cache-control', 'no-store').send({ status: 'ready' });
     } catch {
-      await reply.status(503).header('cache-control', 'no-store').send({ error: 'temporarily_unavailable' });
+      return await reply.status(503).header('cache-control', 'no-store').send({ error: 'temporarily_unavailable' });
     }
+  };
+  app.get('/health/live', live);
+  app.get('/health/ready', ready);
+  app.get('/livez', live);
+  app.get('/readyz', ready);
+
+  app.get('/internal/metrics', async (request, reply) => {
+    if (!hasOperationsAccess(request)) throw new PlatformError('not_found', 404);
+    return reply.header('cache-control', 'no-store')
+      .type('text/plain; version=0.0.4; charset=utf-8')
+      .send(metrics.render());
   });
 
   app.get('/v1/pairing/start', async (_request, reply) => {
@@ -539,7 +614,7 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
         reason: code === 'temporarily_unavailable' ? 'identity_missing' : 'invalid_input',
         correlationId: correlationId(),
         service: 'control-api',
-        serviceVersion: '0.4.0'
+        serviceVersion: '0.5.0'
       });
       return reply
         .status(code === 'temporarily_unavailable' ? 503 : 401)
@@ -604,7 +679,37 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
   app.get('/app/tenants/:tenantId', async (request, reply) => tenantPage(request, reply, renderOverview));
   app.get('/app/tenants/:tenantId/sites', async (request, reply) => tenantPage(request, reply, renderSites));
   app.get('/app/tenants/:tenantId/grants', async (request, reply) => tenantPage(request, reply, renderGrants));
-  app.get('/app/tenants/:tenantId/activity', async (request, reply) => tenantPage(request, reply, renderActivity));
+  app.get('/app/tenants/:tenantId/activity', async (request, reply) => {
+    if (await uiMembershipsFor(request, reply) === undefined) return;
+    const query = ActivityQuerySchema.safeParse(request.query);
+    if (!query.success) throw new PlatformError('invalid_request', 400);
+    const activity = query.data.outcome === undefined
+      ? { page: query.data.page }
+      : { page: query.data.page, outcome: query.data.outcome };
+    const model = await tenantPageModel(request, activity);
+    const setCookie = (request as FastifyRequest & { wepuuCsrfCookie?: string }).wepuuCsrfCookie;
+    return htmlHeaders(reply, setCookie).type('text/html; charset=utf-8').send(renderActivity(model));
+  });
+  app.get('/app/tenants/:tenantId/sites/:objectId', async (request, reply) => {
+    if (await uiMembershipsFor(request, reply) === undefined) return;
+    const params = ObjectParamsSchema.safeParse(request.params);
+    if (!params.success) throw new PlatformError('invalid_request', 400);
+    const model = await tenantPageModel(request);
+    if (!model.sites.some((site) => site.id === params.data.objectId)) throw new PlatformError('not_found', 404);
+    const setCookie = (request as FastifyRequest & { wepuuCsrfCookie?: string }).wepuuCsrfCookie;
+    return htmlHeaders(reply, setCookie).type('text/html; charset=utf-8')
+      .send(renderSiteDetail(model, params.data.objectId));
+  });
+  app.get('/app/tenants/:tenantId/grants/:objectId', async (request, reply) => {
+    if (await uiMembershipsFor(request, reply) === undefined) return;
+    const params = ObjectParamsSchema.safeParse(request.params);
+    if (!params.success) throw new PlatformError('invalid_request', 400);
+    const model = await tenantPageModel(request);
+    if (!model.grants.some((grant) => grant.id === params.data.objectId)) throw new PlatformError('not_found', 404);
+    const setCookie = (request as FastifyRequest & { wepuuCsrfCookie?: string }).wepuuCsrfCookie;
+    return htmlHeaders(reply, setCookie).type('text/html; charset=utf-8')
+      .send(renderGrantDetail(model, params.data.objectId));
+  });
 
   app.get('/app/account', async (request, reply) => {
     const account = await uiMembershipsFor(request, reply);
@@ -613,6 +718,22 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
     return htmlHeaders(reply, csrf.setCookie).type('text/html; charset=utf-8').send(renderAccount({
       deployment, memberships: account.memberships, csrfToken: csrf.value
     }));
+  });
+
+  app.get('/app/compatibility', async (request, reply) => {
+    if (await uiMembershipsFor(request, reply) === undefined) return;
+    return htmlHeaders(reply).type('text/html; charset=utf-8').send(renderCompatibility({ deployment }));
+  });
+
+  app.get('/app/readiness', async (request, reply) => {
+    if (await uiMembershipsFor(request, reply) === undefined) return;
+    const report = options.deploymentReadiness ?? { ready: false, checks: [] };
+    return htmlHeaders(reply).type('text/html; charset=utf-8').send(renderReadiness({ deployment, report }));
+  });
+
+  app.get('/v1/account/deployment-readiness', async (request, reply) => {
+    await authenticatedPrincipal(request);
+    return reply.header('cache-control', 'no-store').send(options.deploymentReadiness ?? { ready: false, checks: [] });
   });
 
   app.post('/app/logout', async (request, reply) => {
@@ -657,7 +778,7 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
         tenantId: context.tenantId,
         actorId: context.accountId,
         service: 'control-api',
-        serviceVersion: '0.4.0'
+        serviceVersion: '0.5.0'
       });
       throw new PlatformError('not_found', 404);
     }
@@ -677,14 +798,14 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
       await safeAudit({
         occurredAt: new Date().toISOString(), eventName: 'pairing.verified', outcome: 'success', reason: 'none',
         correlationId: context.correlationId, tenantId: context.tenantId, actorId: context.accountId,
-        siteId: result.siteId, service: 'control-api', serviceVersion: '0.4.0'
+        siteId: result.siteId, service: 'control-api', serviceVersion: '0.5.0'
       });
       return await reply.header('cache-control', 'no-store').send({ site_id: result.siteId, status: 'active' });
     } catch {
       await safeAudit({
         occurredAt: new Date().toISOString(), eventName: 'pairing.denied', outcome: 'denied', reason: 'proof_invalid',
         correlationId: context.correlationId, tenantId: context.tenantId, actorId: context.accountId,
-        service: 'control-api', serviceVersion: '0.4.0'
+        service: 'control-api', serviceVersion: '0.5.0'
       });
       throw new PlatformError('invalid_request', 400);
     }
@@ -727,7 +848,7 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
         occurredAt: new Date().toISOString(), eventName: 'grant.created', outcome: 'success', reason: 'none',
         correlationId: context.correlationId, tenantId: context.tenantId, actorId: context.accountId,
         siteId: params.data.siteId, clientId: body.data.client_id, grantId: result.grantId,
-        service: 'control-api', serviceVersion: '0.4.0'
+        service: 'control-api', serviceVersion: '0.5.0'
       });
       return await reply.status(201).header('cache-control', 'no-store').send({
         grant_id: result.grantId,
@@ -763,7 +884,7 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
         outcome: body.data.decision === 'approved' ? 'success' : 'denied',
         reason: body.data.decision === 'approved' ? 'none' : 'consent_denied',
         correlationId: context.correlationId, tenantId: context.tenantId, actorId: context.accountId,
-        grantId: params.data.grantId, service: 'control-api', serviceVersion: '0.4.0'
+        grantId: params.data.grantId, service: 'control-api', serviceVersion: '0.5.0'
       });
       return await reply.status(204).header('cache-control', 'no-store').send();
     } catch {
@@ -795,9 +916,28 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
     return reply.status(204).header('cache-control', 'no-store').send();
   });
 
-  app.setErrorHandler((error, _request, reply) => {
+  app.setErrorHandler((error, request, reply) => {
+    const uiRequest = request.raw.url?.startsWith('/app') === true;
     if (error instanceof PlatformError) {
+      if (uiRequest) {
+        const heading = error.status === 404 ? 'That record is not available.'
+          : error.status === 403 ? 'This action is not allowed.' : 'The control plane could not complete this request.';
+        void htmlHeaders(reply.status(error.status)).type('text/html; charset=utf-8').send(renderInteractionPage({
+          title: 'WePuu control plane', heading,
+          message: error.status >= 500 ? 'The service is temporarily unavailable. No authorization state was changed.' : 'Return to the workspace and try a valid action.',
+          content: '<p><a class="button" href="/app">Return to workspace</a></p>'
+        }));
+        return;
+      }
       void reply.status(error.status).header('cache-control', 'no-store').send({ error: error.code });
+      return;
+    }
+    if (uiRequest) {
+      void htmlHeaders(reply.status(500)).type('text/html; charset=utf-8').send(renderInteractionPage({
+        title: 'WePuu control plane', heading: 'The control plane is temporarily unavailable.',
+        message: 'No authorization state was changed. Return to the workspace and retry.',
+        content: '<p><a class="button" href="/app">Return to workspace</a></p>'
+      }));
       return;
     }
     void reply.status(500).header('cache-control', 'no-store').send({ error: 'temporarily_unavailable' });
