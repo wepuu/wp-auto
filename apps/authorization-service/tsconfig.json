@@ -5,6 +5,7 @@
   "references": [
     { "path": "../../packages/database" },
     { "path": "../../packages/key-custody" },
-    { "path": "../../packages/oauth-provider" }
+    { "path": "../../packages/oauth-provider" },
+    { "path": "../../packages/platform-ui" }
   ]
 }

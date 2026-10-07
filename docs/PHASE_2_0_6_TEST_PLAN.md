@@ -1,7 +1,8 @@
 # Phase 2.0.6 Security and Resilience Test Plan
 
-Status: deterministic implementation validated on `codex/phase-2-0-6-security-resilience`;
-live KMS/HTTPS/Codex and final available-capability review remain open.
+Status: completed. Deterministic, database, live KMS/HTTPS/Codex, hosted
+dual-KMS and final available-capability review gates passed before the accepted
+candidates were merged to `main`.
 
 Codex Security TAC/Daybreak is waived as unavailable and must be recorded as
 `not executed`, never as a passing scan. ADR-013 defines the compensating gates

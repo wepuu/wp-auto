@@ -41,6 +41,17 @@ This is platform identity only; it must not be conflated with WordPress identity
 
 All authorization derives tenant context server-side. Composite tenant foreign keys or equivalent RLS protections are required.
 
+### account_home_tenants
+
+- one `account_id` to one home `tenant_id` mapping;
+- created atomically with the personal tenant and owner membership;
+- used only to choose the initial product workspace, never as authorization;
+- cascades with verified account or tenant deletion.
+
+Account-wide membership discovery executes through a dedicated least-privilege
+role and account-context security function. Tenant data still requires the
+normal tenant/account RLS context; a home mapping never grants access by itself.
+
 ### sites
 
 - `tenant_id`, `id` (`site_id`)

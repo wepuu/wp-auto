@@ -23,6 +23,13 @@ import {
 } from '@wepuu/key-custody';
 import { allowRegisteredNativeLoopbackPort, createAuthorizationProvider } from '@wepuu/oauth-provider';
 import { HttpsRevocationDelivery, RevocationWorker } from './revocation-worker.js';
+import {
+  escapeHtml,
+  loadPublicDeploymentConfig,
+  renderInteractionPage,
+  UI_CSP,
+  UI_STYLES
+} from '@wepuu/platform-ui';
 
 const SESSION_COOKIE = '__Host-wepuu_session';
 const mcpScopes = new Set([
@@ -121,11 +128,6 @@ function verifyCsrf(value: string, key: string): z.infer<typeof CsrfPayloadSchem
   }
 }
 
-function htmlEscape(value: string): string {
-  return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;').replaceAll("'", '&#39;');
-}
-
 async function readForm(request: IncomingMessage): Promise<URLSearchParams> {
   let body = '';
   for await (const chunk of request) {
@@ -155,6 +157,7 @@ export async function startAuthorizationService(
   environment: NodeJS.ProcessEnv = process.env
 ): Promise<RunningAuthorizationService> {
   const config = ServiceConfigSchema.parse(configInput);
+  const deployment = loadPublicDeploymentConfig(environment, new URL(config.issuer).origin);
   const database = new Database({ connectionString: config.databaseUrl, applicationName: 'wepuu-authorization-service' });
   try {
     const signingKeys = new PostgresSigningKeyRepository(database);
@@ -230,6 +233,15 @@ export async function startAuthorizationService(
     const server = createServer((request, response) => {
       void (async () => {
       const path = new URL(request.url ?? '/', config.issuer).pathname;
+      if (request.method === 'GET' && path === '/assets/wepuu-v1.css') {
+        response.writeHead(200, {
+          'content-type': 'text/css; charset=utf-8',
+          'cache-control': 'public, max-age=31536000, immutable',
+          'x-content-type-options': 'nosniff'
+        });
+        response.end(UI_STYLES);
+        return;
+      }
       if (request.method === 'GET' && path === '/health/live') {
         response.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
         response.end('{"status":"live"}');
@@ -319,18 +331,29 @@ export async function startAuthorizationService(
             expiresAt: Math.floor(Date.now() / 1_000) + 300,
             nonce: randomBytes(24).toString('base64url')
           }, config.cookieKeys[0] ?? '');
-          const displayResource = htmlEscape(new URL(resource).hostname);
+          const displayResource = escapeHtml(new URL(resource).hostname);
+          const scopeItems = scopes.map((scope) => `<li>${escapeHtml(scope)}</li>`).join('');
           response.writeHead(200, {
             'content-type': 'text/html; charset=utf-8',
             'cache-control': 'no-store',
-            'content-security-policy': "default-src 'none'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+            'referrer-policy': 'no-referrer',
+            'content-security-policy': UI_CSP,
             'x-content-type-options': 'nosniff'
           });
-          response.end(`<!doctype html><html lang="en"><meta charset="utf-8"><title>WePuu authorization</title><body><main><h1>Authorize MCP access</h1><p>Site: ${displayResource}</p><p>Scopes: ${htmlEscape(scopes.join(' '))}</p><form method="post"><input type="hidden" name="csrf" value="${htmlEscape(csrf)}"><button name="decision" value="approve" type="submit">Approve</button><button name="decision" value="deny" type="submit">Deny</button></form></main></body></html>`);
+          response.end(renderInteractionPage({
+            title: `${deployment.productName} authorization`,
+            heading: 'Authorize direct MCP access.',
+            message: `The client will connect directly to ${displayResource}. WePuu will not receive its tool inputs or results.`,
+            content: `<h2>Approved ceiling</h2><ul class="scope-list">${scopeItems}</ul><form method="post"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><div class="actions"><button name="decision" value="approve" type="submit">Approve access</button><button class="danger" name="decision" value="deny" type="submit">Deny</button></div></form>`
+          }));
           return;
         }
         if (request.method !== 'POST' || request.headers['content-type']?.split(';')[0] !== 'application/x-www-form-urlencoded') {
           writeInteractionError(response, 405);
+          return;
+        }
+        if (request.headers.origin !== new URL(config.issuer).origin) {
+          writeInteractionError(response, 403);
           return;
         }
         const form = await readForm(request);

@@ -95,6 +95,18 @@ export const TenantViewSchema = z.object({
 }).strict();
 export type TenantView = z.infer<typeof TenantViewSchema>;
 
+export const TenantMembershipRoleSchema = z.enum(['owner', 'administrator', 'member']);
+export type TenantMembershipRole = z.infer<typeof TenantMembershipRoleSchema>;
+
+export const TenantMembershipViewSchema = z.object({
+  tenantId: z.uuid(),
+  role: TenantMembershipRoleSchema,
+  status: z.literal('active'),
+  createdAt: z.iso.datetime(),
+  isHome: z.boolean()
+}).strict();
+export type TenantMembershipView = z.infer<typeof TenantMembershipViewSchema>;
+
 export const CanonicalResourceSchema = z.url().superRefine((value, context) => {
   const url = new URL(value);
   if (url.protocol !== 'https:' || url.username !== '' || url.password !== '' || url.hash !== '' || url.search !== '') {

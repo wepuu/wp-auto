@@ -1,7 +1,7 @@
 {
   "name": "@wepuu/control-api",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.4.0",
   "type": "module",
   "exports": { ".": "./dist/server.js" },
   "types": "./dist/server.d.ts",
@@ -11,6 +11,7 @@
     "@wepuu/database": "workspace:*",
     "@wepuu/key-custody": "workspace:*",
     "@wepuu/pairing": "workspace:*",
+    "@wepuu/platform-ui": "workspace:*",
     "@wepuu/security-audit": "workspace:*",
     "fastify": "5.12.5",
     "zod": "4.6.5"

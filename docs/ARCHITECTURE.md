@@ -103,9 +103,18 @@ Unknown algorithms, issuers, audiences, keys, grant states, malformed claims, ca
 
 Per-request introspection is not part of the default architecture because it would insert the platform into the request path, reduce availability, and reveal request timing. A future requirement for immediate central revocation must be handled as a new ADR.
 
-## Deployment direction, not authorization
+## Portable deployment boundary
 
-Future implementation is expected to use TypeScript, an isolated OAuth service, a small control API, a web consent UI, PostgreSQL, optional Redis for ephemeral coordination, a managed KMS/HSM, a load balancer/WAF, and structured security logs. Phase 2.0.0 selects no cloud vendor and creates no deployment artifacts.
+The TypeScript control API and isolated authorization service are packaged as
+provider-neutral OCI images backed by PostgreSQL. TLS termination, DNS,
+database hosting and ingress remain external deployment choices. Runtime
+containers are non-root and read-only with a bounded temporary filesystem.
+
+The application server may run outside AWS. AWS is used only for the accepted
+KMS asymmetric signing adapter. Non-AWS workloads use standard short-lived AWS
+credential providers (workload OIDC/STS or IAM Roles Anywhere), never a static
+production Access Key. Selecting a hosting vendor, production domain, WAF and
+operational policy remains a Phase 2.0.7B decision and deployment gate.
 
 ## Source baseline
 
