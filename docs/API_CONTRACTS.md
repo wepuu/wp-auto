@@ -173,3 +173,26 @@ Allowed fields include timestamp, stable event name, result/reason code, correla
 Forbidden fields include Authorization/Cookie headers, codes, token plaintext or reusable token hashes, pairing secrets, request/response bodies, tool names paired with arguments/results, posts/pages/media/SEO/email content, WordPress user identifiers, and unreviewed URLs/query strings.
 
 Metrics are operational/security measurements, not product content telemetry. Any future analytics requires a separate consent and data contract.
+
+## Phase 2.0.7B1 release-readiness surfaces
+
+- `GET /app/tenants/{tenant_id}/sites/{site_id}` renders one tenant-scoped site
+  binding and its control actions.
+- `GET /app/tenants/{tenant_id}/grants/{grant_id}` renders one tenant-scoped
+  grant without its upstream subject identifier.
+- `GET /app/tenants/{tenant_id}/activity?page={n}&outcome={value}` provides
+  bounded, content-free pagination. `outcome` is limited to `success`, `denied`
+  or `error`.
+- `GET /app/compatibility` publishes evidence-backed client support only.
+- `GET /app/readiness` and authenticated
+  `GET /v1/account/deployment-readiness` return release categories and status;
+  they never return environment values, secrets, credential paths or KMS ARNs.
+- `GET /livez` proves process liveness. `GET /readyz` performs the existing
+  fail-closed dependency check. The `/health/*` paths remain compatible aliases.
+- `GET /internal/metrics` requires a separate bounded Bearer credential and
+  emits only aggregate response counts/status classes and accumulated duration.
+  Missing or invalid credentials return generic `not_found`.
+
+The metrics credential is an operations secret, not an OAuth access token and
+not a user session. It must be injected by the host secret facility and must
+never be reused for another purpose.

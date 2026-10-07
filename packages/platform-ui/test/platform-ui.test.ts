@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { escapeHtml, loadPublicDeploymentConfig, renderInteractionPage, renderShell, UI_STYLES } from '../src/index.js';
+import {
+  escapeHtml,
+  evaluateDeploymentReadiness,
+  loadPublicDeploymentConfig,
+  renderInteractionPage,
+  renderShell,
+  UI_STYLES
+} from '../src/index.js';
 
 test('local deployment accepts placeholders while public modes require final release data', () => {
   const local = loadPublicDeploymentConfig({
@@ -23,7 +30,16 @@ test('production rejects static AWS credentials and accepts temporary-credential
     WEPUU_SUPPORT_URL: 'https://support.wepuu.dev/',
     WEPUU_STATUS_URL: 'https://status.wepuu.dev/',
     WEPUU_DATA_REGION_LABEL: 'Provider region pending final selection',
-    WEPUU_TRUSTED_PROXY_CIDRS_JSON: '["10.0.0.0/24"]'
+    WEPUU_TRUSTED_PROXY_CIDRS_JSON: '["10.0.0.0/24"]',
+    WEPUU_RELEASE_VERSION: '0.5.0',
+    WEPUU_RELEASE_REVISION: 'a'.repeat(40),
+    WEPUU_IDENTITY_PROVIDER_LABEL: 'Production OIDC',
+    WEPUU_RETENTION_POLICY_VERSION: '2026-10-07',
+    WEPUU_COMPATIBILITY_MATRIX_VERSION: '2026-10',
+    WEPUU_AWS_CREDENTIAL_MODE: 'web_identity',
+    AWS_ROLE_ARN: 'arn:aws:iam::123456789012:role/wepuu-production-kms',
+    AWS_WEB_IDENTITY_TOKEN_FILE: '/run/secrets/aws-token',
+    WEPUU_OPERATIONS_METRICS_TOKEN: 'm'.repeat(32)
   };
   assert.equal(loadPublicDeploymentConfig(release).deploymentMode, 'production');
   assert.throws(() => loadPublicDeploymentConfig({
@@ -32,6 +48,29 @@ test('production rejects static AWS credentials and accepts temporary-credential
   assert.throws(() => loadPublicDeploymentConfig({
     WEPUU_CONTROL_PUBLIC_ORIGIN: 'https://other.wepuu.dev'
   }, 'https://platform.wepuu.dev'), /public_origin_mismatch/u);
+});
+
+test('readiness reports categories without exposing secret values or paths', () => {
+  const environment = {
+    WEPUU_DEPLOYMENT_MODE: 'test',
+    WEPUU_CONTROL_PUBLIC_ORIGIN: 'https://platform.example.test',
+    WEPUU_RELEASE_VERSION: '0.5.0',
+    WEPUU_RELEASE_REVISION: 'b'.repeat(40),
+    WEPUU_IDENTITY_PROVIDER_LABEL: 'Test OIDC',
+    WEPUU_RETENTION_POLICY_VERSION: '2026-10-07',
+    WEPUU_COMPATIBILITY_MATRIX_VERSION: '2026-10',
+    WEPUU_AWS_CREDENTIAL_MODE: 'web_identity',
+    WEPUU_ACCOUNT_OIDC_ISSUER: 'https://identity.example.test/',
+    WEPUU_ACCOUNT_OIDC_CLIENT_ID: 'client',
+    AWS_ROLE_ARN: 'arn:aws:iam::123456789012:role/wepuu',
+    AWS_WEB_IDENTITY_TOKEN_FILE: '/secret/token'
+  };
+  const report = evaluateDeploymentReadiness(loadPublicDeploymentConfig(environment), environment);
+  assert.equal(report.ready, false);
+  const serialized = JSON.stringify(report);
+  assert.equal(serialized.includes('/secret/token'), false);
+  assert.equal(serialized.includes('arn:aws'), false);
+  assert.deepEqual(report.checks.map((check) => check.id), ['release', 'legal', 'identity', 'residency', 'proxy', 'kms']);
 });
 
 test('rendering escapes untrusted values and uses only self-hosted assets', () => {

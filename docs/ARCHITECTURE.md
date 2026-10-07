@@ -114,7 +114,15 @@ The application server may run outside AWS. AWS is used only for the accepted
 KMS asymmetric signing adapter. Non-AWS workloads use standard short-lived AWS
 credential providers (workload OIDC/STS or IAM Roles Anywhere), never a static
 production Access Key. Selecting a hosting vendor, production domain, WAF and
-operational policy remains a Phase 2.0.7B decision and deployment gate.
+operational policy remains a Phase 2.0.7B2 decision and deployment gate.
+
+Phase 2.0.7B1 adds a configuration-only release-readiness layer. It validates
+immutable release identity, policy links, region/retention labels, trusted
+proxy boundaries and the selected temporary AWS credential provider before a
+public-mode process starts. The authenticated product shell reports only the
+status of these categories. A dedicated operations endpoint exports
+low-cardinality process metrics without tenant, site, user, URL or content
+labels. These surfaces do not enter the MCP data path.
 
 ## Source baseline
 

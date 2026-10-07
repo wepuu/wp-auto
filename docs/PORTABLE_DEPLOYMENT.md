@@ -34,9 +34,20 @@ The role may use only `kms:DescribeKey`, `kms:GetPublicKey` and `kms:Sign` for
 the explicitly approved key ARNs. Production mode refuses static
 `AWS_ACCESS_KEY_ID` or `AWS_SECRET_ACCESS_KEY` values.
 
+Set `WEPUU_AWS_CREDENTIAL_MODE=web_identity` with `AWS_ROLE_ARN` and
+`AWS_WEB_IDENTITY_TOKEN_FILE`, or set it to `credential_process` with an
+explicit `AWS_PROFILE` and `AWS_CONFIG_FILE`. Public modes also require an
+independent `WEPUU_OPERATIONS_METRICS_TOKEN` of at least 32 characters. The
+token belongs in the host secret facility and protects only
+`/internal/metrics`; it is not an OAuth credential.
+
+Liveness is available at `/livez`. Readiness at `/readyz` fails closed when the
+database check is uncertain. The product-shell readiness page reports category
+status only and is not a substitute for these probes.
+
 ## Deferred values
 
 The production origin, DNS, certificate automation, provider-specific OIDC
 claims, database vendor, legal identity, policy URLs, data region and recovery
-objectives are intentionally deferred to Phase 2.0.7B. `staging` and
+objectives are intentionally deferred to Phase 2.0.7B2. `staging` and
 `production` startup reject placeholders until those values are supplied.

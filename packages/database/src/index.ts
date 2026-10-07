@@ -448,8 +448,14 @@ export interface SecurityEventView {
 }
 
 export class SecurityEventRepository {
-  async list(client: PoolClient, limit = 50): Promise<readonly SecurityEventView[]> {
+  async list(
+    client: PoolClient,
+    limit = 50,
+    offset = 0,
+    outcome?: SecurityAuditEvent['outcome']
+  ): Promise<readonly SecurityEventView[]> {
     const safeLimit = Math.max(1, Math.min(100, Math.trunc(limit)));
+    const safeOffset = Math.max(0, Math.min(10_000, Math.trunc(offset)));
     const result = await client.query<{
       id: string;
       occurred_at: Date;
@@ -460,8 +466,10 @@ export class SecurityEventRepository {
       service: SecurityAuditEvent['service'];
     }>(
       `SELECT id::text, occurred_at, event_name, outcome, reason, correlation_id, service
-       FROM audit.security_events ORDER BY occurred_at DESC, id DESC LIMIT $1`,
-      [safeLimit]
+       FROM audit.security_events
+       WHERE ($3::text IS NULL OR outcome = $3)
+       ORDER BY occurred_at DESC, id DESC LIMIT $1 OFFSET $2`,
+      [safeLimit, safeOffset, outcome ?? null]
     );
     return result.rows.map((row) => ({
       id: row.id,

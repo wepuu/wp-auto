@@ -22,7 +22,7 @@ import {
   keyCustodyConfigFromEnvironment
 } from '@wepuu/key-custody';
 import { GrantService, HttpsSiteVerificationClient, PairingService } from '@wepuu/pairing';
-import { loadPublicDeploymentConfig } from '@wepuu/platform-ui';
+import { evaluateDeploymentReadiness, loadPublicDeploymentConfig } from '@wepuu/platform-ui';
 import {
   buildControlApi,
   PostgresControlStore,
@@ -143,6 +143,9 @@ const app = buildControlApi({
   accountLogin,
   workspace: new PostgresAccountWorkspaceStore(database),
   deployment,
+  deploymentReadiness: evaluateDeploymentReadiness(deployment, process.env),
+  ...(process.env['WEPUU_OPERATIONS_METRICS_TOKEN'] === undefined
+    ? {} : { operationsMetricsToken: process.env['WEPUU_OPERATIONS_METRICS_TOKEN'] }),
   publicOrigin: accountOidcConfig.publicOrigin.origin,
   ...(pairing === undefined ? {} : { pairing }),
   ...(grants === undefined ? {} : { grants })

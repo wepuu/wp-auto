@@ -15,7 +15,7 @@ on:
         default: false
   pull_request:
   push:
-    branches: [main, codex/phase-2-0-7a-product-shell]
+    branches: [main]
 
 permissions:
   contents: read
