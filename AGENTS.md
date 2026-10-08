@@ -6,10 +6,12 @@ This repository defines and will eventually implement the WePuu OAuth 2.1 contro
 
 ## Current phase
 
-Phase 2.0.1 through Phase 2.0.7A are accepted and closed. Phase 2.0.7B1
-release-readiness implementation is isolated on
-`codex/phase-2-0-7b-release-readiness`. The restricted TAC/Daybreak review
-remains waived under ADR-013 and is not represented as a pass. This phase may:
+Phase 2.0.1 through Phase 2.0.7B1 are accepted and closed. The accepted
+Phase 2.0.7B1 candidate is on `main` at merge commit `a57b422`; PR #4 and the
+post-merge hosted CI passed. The restricted TAC/Daybreak review remains waived
+under ADR-013 and is not represented as a pass. Production deployment,
+connector changes and Phase 2.0.7B2 remain separately gated. Until another
+phase is explicitly approved, work may:
 
 - preserve the accepted Phase 2.0.2 foundation and its validation evidence;
 - preserve the accepted pairing/grant platform and connector contracts,
