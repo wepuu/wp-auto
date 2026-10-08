@@ -3,8 +3,8 @@
   "references": [
     { "path": "packages/contracts" },
     { "path": "packages/security-audit" },
-    { "path": "packages/database" },
     { "path": "packages/key-custody" },
+    { "path": "packages/database" },
     { "path": "packages/account-identity" },
     { "path": "packages/pairing" },
     { "path": "packages/oauth-provider" },

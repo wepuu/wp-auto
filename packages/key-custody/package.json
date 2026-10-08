@@ -8,9 +8,7 @@
   },
   "types": "./dist/index.d.ts",
   "dependencies": {
-    "@aws-sdk/client-kms": "3.1133.0",
-    "@keyobject/aws-kms": "0.0.2",
-    "jose": "6.1.0",
+    "jose": "6.2.12",
     "zod": "4.6.5"
   }
 }

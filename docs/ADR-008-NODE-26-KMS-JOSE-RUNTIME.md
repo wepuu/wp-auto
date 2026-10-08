@@ -1,5 +1,8 @@
 # ADR-008: Node 26.7 KMS-backed JOSE signing runtime
 
+> Superseded by ADR-016 for the current signing runtime. Retained as accepted
+> historical evidence for the earlier KMS-backed candidate.
+
 - Status: accepted
 - Date: 2026-09-23
 

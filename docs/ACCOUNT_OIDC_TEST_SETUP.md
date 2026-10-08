@@ -28,11 +28,13 @@ connector in a disposable WordPress site:
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\account-oidc-https.ps1 Install
 ```
 
-Then use a normal PowerShell. The launcher prompts securely for the Auth0
-client secret and the existing test-only AWS access key. Neither secret is
-written to `.env`, Git, or the fixture state file. The control plane is built
-and started in the pinned Linux Node 26.7 container because the AWS OpenSSL
-provider is not published for Windows:
+Then use a normal PowerShell. The launcher prompts securely only for the Auth0
+client secret. It creates a fresh disposable RSA-3072 key and separate
+passphrase under ignored `.tmp`, publishes and activates its public metadata in
+the disposable database, and mounts both files read-only into the pinned Linux
+Node container. No AWS credential, KMS identifier or signing secret is written
+to `.env` or Git. Remove the printed temporary key directory after bringing the
+fixture down:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\account-oidc-control.ps1

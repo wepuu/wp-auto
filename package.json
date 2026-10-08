@@ -12,7 +12,11 @@
     "typecheck": "tsc -b --pretty false",
     "lint": "eslint apps packages",
     "test": "tsx --test --test-concurrency=1 \"packages/*/test/*.test.ts\" \"apps/*/src/*.test.ts\"",
-    "test:kms:live": "node packages/key-custody/node_modules/@keyobject/aws-kms/bin/awskms.js exec -- node --import tsx --test --test-name-pattern=\"live AWS KMS contract|live AWS KMS JOSE consent\" packages/key-custody/test/aws-kms.test.ts",
+    "keys:generate": "tsx packages/key-custody/src/cli.ts generate",
+    "keys:inspect": "tsx packages/key-custody/src/cli.ts inspect",
+    "keys:publish": "pnpm build && node packages/database/dist/signing-keys-cli.js publish",
+    "keys:activate": "pnpm build && node packages/database/dist/signing-keys-cli.js activate",
+    "keys:retire": "pnpm build && node packages/database/dist/signing-keys-cli.js retire",
     "test:account-oidc:discovery": "tsc -b && node scripts/check-account-oidc-discovery.mjs",
     "check": "pnpm typecheck && pnpm lint && pnpm test",
     "audit:high": "pnpm audit --audit-level high",
@@ -20,8 +24,8 @@
     "test:database": "tsx --test --test-concurrency=1 \"packages/database/test/*.test.ts\"",
     "test:backup": "pnpm build && node scripts/test-backup-restore.mjs",
     "db:migrate": "tsx packages/database/src/cli.ts migrate",
-    "start:control": "node packages/key-custody/node_modules/@keyobject/aws-kms/bin/awskms.js exec -- node apps/control-api/dist/main.js",
-    "start:authorization": "node packages/key-custody/node_modules/@keyobject/aws-kms/bin/awskms.js exec -- node apps/authorization-service/dist/main.js"
+    "start:control": "node apps/control-api/dist/main.js",
+    "start:authorization": "node apps/authorization-service/dist/main.js"
   },
   "devDependencies": {
     "@eslint/js": "9.39.5",

@@ -16,4 +16,4 @@ COPY --from=build --chown=node:node /workspace /workspace
 USER node
 EXPOSE 3001
 HEALTHCHECK --interval=20s --timeout=4s --start-period=15s --retries=3 CMD ["node", "-e", "fetch('http://127.0.0.1:3001/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
-CMD ["sh", "-ec", "node packages/database/dist/cli.js migrate && exec pnpm start:authorization"]
+CMD ["sh", "-ec", "node packages/database/dist/cli.js migrate && exec node apps/authorization-service/dist/main.js"]

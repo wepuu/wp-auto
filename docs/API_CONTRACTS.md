@@ -67,8 +67,8 @@ Mutations require a bounded `Idempotency-Key`; revoke and disconnect are
 naturally idempotent and return no object-existence signal.
 
 Grant creation accepts only the frozen five MCP scopes in canonical order.
-The KMS-signed request uses `alg=RS256`,
-`typ=wepuu-consent-request+jwt`, the pinned KMS `kid`, a single-string audience
+The locally signed request uses `alg=RS256`,
+`typ=wepuu-consent-request+jwt`, the pinned RFC 7638 `kid`, a single-string audience
 equal to the exact resource, and a maximum 120-second lifetime. Consent results
 return in a fragment and are removed from browser history before same-origin
 completion; proofs and challenges are never placed in query strings or audit
@@ -186,7 +186,7 @@ Metrics are operational/security measurements, not product content telemetry. An
 - `GET /app/compatibility` publishes evidence-backed client support only.
 - `GET /app/readiness` and authenticated
   `GET /v1/account/deployment-readiness` return release categories and status;
-  they never return environment values, secrets, credential paths or KMS ARNs.
+  they never return environment values, secrets, credential paths or custody references.
 - `GET /livez` proves process liveness. `GET /readyz` performs the existing
   fail-closed dependency check. The `/health/*` paths remain compatible aliases.
 - `GET /internal/metrics` requires a separate bounded Bearer credential and

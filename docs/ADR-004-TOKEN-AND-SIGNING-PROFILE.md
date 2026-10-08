@@ -1,5 +1,8 @@
 # ADR-004: Token and signing profile gate
 
+> Signing custody is partially superseded by ADR-016. RS256 and all token/JWKS
+> wire contracts remain in force.
+
 - Status: accepted for Phase 2.0.2 implementation; production release remains gated
 - Date: 2026-09-16
 

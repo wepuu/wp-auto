@@ -330,7 +330,7 @@ test('refresh CAS has one winner and replay revokes the exact grant with one out
   const keyRepository = new PostgresSigningKeyRepository(database);
   await keyRepository.publish({
     kid: 'kms_published_test',
-    custodyReference: 'arn:aws:kms:us-east-1:111111111111:key/44444444-4444-4444-8444-444444444444',
+    custodyReference: 'next-local-slot',
     publicJwk: { ...JSON.parse(publicJwk) as Record<string, unknown>, kid: 'kms_published_test' },
     publishedAt: new Date(Date.now() - 21 * 60 * 1_000)
   });

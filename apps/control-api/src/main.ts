@@ -14,12 +14,11 @@ import {
   PostgresGrantRepository,
   PostgresPairingRepository,
   PostgresSecurityAuditSink,
+  PostgresSigningKeyRepository,
   SiteRepository
 } from '@wepuu/database';
 import {
-  AwsKmsKeyCustody,
-  createAwsKmsConsentRequestSigner,
-  keyCustodyConfigFromEnvironment
+  localPkcs8KeyCustodyFromEnvironment
 } from '@wepuu/key-custody';
 import { GrantService, HttpsSiteVerificationClient, PairingService } from '@wepuu/pairing';
 import { evaluateDeploymentReadiness, loadPublicDeploymentConfig } from '@wepuu/platform-ui';
@@ -51,10 +50,19 @@ const accountLogin = new AccountLoginService({
 const platformIssuer = process.env['WEPUU_ISSUER'];
 if (platformIssuer !== undefined && !platformIssuer.startsWith('https://')) throw new Error('WEPUU_ISSUER must use HTTPS');
 const pairingVerifier = new HttpsSiteVerificationClient();
-const custodyConfig = platformIssuer === undefined ? undefined : keyCustodyConfigFromEnvironment(process.env);
-const custody = custodyConfig === undefined ? undefined : new AwsKmsKeyCustody(custodyConfig);
+const signingSlot = process.env['WEPUU_SIGNING_KEY_SLOT'];
+if (platformIssuer !== undefined && signingSlot === undefined) throw new Error('WEPUU_SIGNING_KEY_SLOT is required');
+const signingLifecycle = platformIssuer === undefined ? undefined
+  : await new PostgresSigningKeyRepository(database).loadUsable();
+if (signingLifecycle !== undefined
+    && (signingLifecycle.active.custodyProvider !== 'local-pkcs8'
+      || signingLifecycle.active.custodyReference !== signingSlot)) {
+  throw new Error('control_signing_key_not_active');
+}
+const custody = platformIssuer === undefined || signingSlot === undefined
+  ? undefined : await localPkcs8KeyCustodyFromEnvironment(process.env, signingSlot, signingLifecycle?.active.kid);
 const signingKey = custody === undefined ? undefined : await custody.describeSigningKey();
-const consentSigner = custodyConfig === undefined ? undefined : createAwsKmsConsentRequestSigner(custodyConfig);
+const consentSigner = custody?.consentRequestSigner();
 const grantIdempotencyKey = platformIssuer === undefined ? undefined
   : decodeRuntimeKey(process.env['WEPUU_GRANT_IDEMPOTENCY_HMAC_KEY'], 'WEPUU_GRANT_IDEMPOTENCY_HMAC_KEY');
 const platformSigningKeyPem = signingKey?.publicKey.export({ format: 'pem', type: 'spki' }).toString();

@@ -14,7 +14,7 @@ Phase 2.0.1 executable work remains isolated under `spikes/oauth-conformance/`.
 Phase 2.0.2 Platform Foundation is accepted and closed after local, live AWS
 KMS, and hosted CI validation. It provides:
 strict TypeScript packages, an authorization service, a control API,
-PostgreSQL RLS, content-free audit records, and an AWS KMS asymmetric signing
+PostgreSQL RLS, content-free audit records, and an asymmetric signing
 adapter. It is not deployed and does not modify the WordPress connector.
 Phase 2.0.3 is accepted and closed. Platform tranche 2.0.3A implements tenant-scoped
 site/pairing/grant persistence, SSRF-safe verification, Ed25519 site proofs,
@@ -80,13 +80,13 @@ pnpm test:database
 docker compose -f compose.test.yaml down
 ```
 
-The authorization service requires exactly one active AWS KMS asymmetric RSA
-`SIGN_VERIFY` key in `oauth.signing_key_metadata`; published and retiring keys
-are verification-only. Every database public JWK is compared with KMS at
-startup, and every signature rechecks that the active `kid` remains active.
-There is no file-key fallback. The control API's pairing consent signer still
-receives `AWS_REGION`, `WEPUU_KMS_KEY_ID`, and `WEPUU_KMS_KID` from its runtime
-secret/configuration injection.
+The authorization service requires exactly one active `local-pkcs8` RSA-3072
+key in `oauth.signing_key_metadata`; published and retiring keys are
+verification-only. The encrypted PKCS#8 private key and its passphrase are
+separate protected files referenced by `WEPUU_SIGNING_KEYRING_FILE`. The
+control API selects its logical key with `WEPUU_SIGNING_KEY_SLOT`. Public JWK
+metadata is compared at startup and every signature rechecks that the active
+`kid` remains active.
 
 Authorization startup also requires two rotating cookie keys plus one or two
 32-byte versioned OAuth-artifact HMAC keys in
@@ -94,9 +94,8 @@ Authorization startup also requires two rotating cookie keys plus one or two
 `WEPUU_RATE_LIMIT_HMAC_KEY`. These values are process/secret-manager inputs;
 they must not be stored in `.env`, fixtures, logs, evidence, or Git.
 
-Any process that creates KMS-backed JOSE signatures must be launched through
-`pnpm start:control` (or the equivalent `keyobject-aws-kms exec -- node ...`)
-so the reviewed OpenSSL provider is registered before application crypto code.
+Signing processes start normally through `pnpm start:control` and
+`pnpm start:authorization`; no AWS/OpenSSL provider registration is required.
 
 The control API account login requires the exact external OIDC profile recorded
 in ADR-007: Authorization Code, PKCE S256, `openid` only, RS256 ID tokens, an
@@ -118,6 +117,9 @@ only; they must not be placed in `.env`, logs, or Git.
 - [ADR-006 site pairing proof](docs/ADR-006-SITE-PAIRING-PROOF.md)
 - [ADR-007 external account OIDC](docs/ADR-007-EXTERNAL-ACCOUNT-OIDC.md)
 - [ADR-008 Node 26 KMS JOSE runtime](docs/ADR-008-NODE-26-KMS-JOSE-RUNTIME.md)
+- [ADR-016 local JOSE signing custody](docs/ADR-016-LOCAL-JOSE-SIGNING-CUSTODY.md)
+- [Local signing test plan](docs/PHASE_2_0_LOCAL_SIGNING_TEST_PLAN.md)
+- [Local signing validation](docs/PHASE_2_0_LOCAL_SIGNING_VALIDATION.md)
 - [External account OIDC local acceptance](docs/ACCOUNT_OIDC_TEST_SETUP.md)
 - [Phase 2.0.3 test plan](docs/PHASE_2_0_3_TEST_PLAN.md)
 - [Phase 2.0.3 validation](docs/PHASE_2_0_3_VALIDATION.md)

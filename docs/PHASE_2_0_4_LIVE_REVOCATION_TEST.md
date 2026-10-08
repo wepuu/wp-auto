@@ -1,5 +1,8 @@
 # Phase 2.0.4 Live HTTPS Revocation Gate
 
+> Historical Phase 2.0.4 evidence only. ADR-016 removed the KMS-backed live
+> harness; current revocation signing uses the local PKCS#8 custody adapter.
+
 This gate exercises the real TypeScript outbox worker, AWS KMS event signer,
 Caddy TLS boundary, WordPress REST endpoint, PHP JWKS verifier, and local grant
 deny state. The fixture is disposable and carries only bounded control

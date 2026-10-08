@@ -1,5 +1,8 @@
 # ADR-005: Phase 2.0.2 platform foundation
 
+> AWS KMS custody details are superseded by ADR-016; the provider-neutral
+> custody boundary and all other foundation decisions remain in force.
+
 - Status: accepted, implemented, and validated
 - Date: 2026-09-16
 
