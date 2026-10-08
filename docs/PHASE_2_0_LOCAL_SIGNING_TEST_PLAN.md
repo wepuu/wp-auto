@@ -17,6 +17,10 @@ Date: 2026-10-08
   activation, and never stores private paths or passphrases.
 - The existing PHP/WordPress JOSE fixtures continue to accept the unchanged
   RS256, `kid` and `typ` profiles without connector changes.
+- A disposable `wp-env` WordPress 6.9/PHP 8.1 environment activates a temporary
+  copy of the accepted connector and exposes its fixed control routes. The
+  connector PHPUnit suite runs against that same temporary copy in the pinned
+  WordPress PHP runtime. The source repository stays clean before and after.
 - Repository, OCI image, process configuration and logs contain no generated
   private key or passphrase.
 

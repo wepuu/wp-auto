@@ -1,6 +1,6 @@
 # Local JOSE signing migration validation
 
-Date: 2026-10-08
+Date: 2026-10-09
 Status: implementation candidate; production and staging acceptance remain gated
 
 ## Implemented
@@ -23,12 +23,15 @@ Status: implementation candidate; production and staging acceptance remain gated
 - Node: 26.11.1.
 - TypeScript build: passed.
 - ESLint: passed.
-- Full TypeScript suite: 68 total, 59 passed, 9 environment-gated skips, 0
-  failed. The database tests are also run separately with PostgreSQL below.
+- Full TypeScript/PostgreSQL suite: 68 total, 67 passed, 1 PHP-CLI-gated skip,
+  0 failed on Node 26.11.1 with disposable PostgreSQL.
 - Disposable CLI generation and inspection: passed; both commands emitted the
   same public RFC 7638 `kid`, and the disposable files were removed.
 - Dependency audit: passed with no known high-severity vulnerabilities.
 - SBOM generation and repository policy verification: passed with 262 components.
+  The local scanner also reported the host-provided `NODE_PATH` as high risk and
+  `HTTP_PROXY` as low risk; hosted CI explicitly clears `NODE_PATH`, and neither
+  variable contains signing material or is baked into the candidate images.
 - `git diff --check`: passed.
 - PostgreSQL migration and repository suite: 11 passed, 0 failed. This includes
   two real RSA-3072 keys moving through published, active, retiring and revoked,
@@ -48,6 +51,14 @@ Status: implementation candidate; production and staging acceptance remain gated
   on a read-only root filesystem.
 - The account-OIDC Compose harness now provisions a fresh disposable local key;
   it no longer requests AWS credentials or embeds AWS key identifiers.
+- A repeatable OCI gate now creates an isolated database and Docker Secret
+  volume, generates a disposable RSA-3072 key, starts the authorization image
+  in production/read-only mode, checks public-only JWKS and unsafe-mode
+  rejection, verifies both images lack the AWS KMS SDK, and cleans up in a
+  `finally` path. Hosted CI runs this gate after building both images.
+- The accepted connector source repository remained clean at commit `92971ce`.
+  Its existing verifier suite passed read-only in pinned PHP 8.2: 530 tests,
+  3,621 assertions, 0 failures.
 
 ## Outstanding gates
 
@@ -56,5 +67,10 @@ Status: implementation candidate; production and staging acceptance remain gated
   controlled provider credentials and connector test repository. They remain a
   pre-release/staging gate; this candidate neither modifies the connector nor
   deploys production.
+- Fixed `wp-env` 11.11.0 can build, start and destroy its WordPress 6.9/PHP 8.1
+  environment on this host, but the site returns an empty HTTP response after
+  startup. Therefore the `wp-env` REST-route activation gate remains blocked
+  and is not represented as a pass. The diagnostic script fails closed and
+  leaves the source connector untouched.
 - Historical KMS evidence remains under `docs/` and is explicitly labeled. Its
   obsolete executable harnesses and live-KMS CI configuration are removed.

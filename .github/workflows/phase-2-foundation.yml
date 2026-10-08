@@ -50,6 +50,11 @@ jobs:
           docker build --file deploy/Authorization.Containerfile --tag wepuu-authorization:candidate .
           test "$(docker image inspect wepuu-control:candidate --format '{{.Config.User}}')" = "node"
           test "$(docker image inspect wepuu-authorization:candidate --format '{{.Config.User}}')" = "node"
+      - name: Local signing production-mode OCI gate
+        env:
+          WEPUU_OCI_POSTGRES_ADMIN_URL: postgresql://postgres:conformance@127.0.0.1:5432/wepuu_test
+          WEPUU_OCI_CONTAINER_DATABASE_URL: postgresql://postgres:conformance@host.docker.internal:5432/wepuu_test
+        run: pnpm test:local-signing:oci
       - name: PostgreSQL backup, restore, and tombstone replay
         run: >-
           WEPUU_POSTGRES_CONTAINER=$(docker ps --filter "ancestor=postgres:16.10-alpine" --format "{{.ID}}" | head -n 1)
