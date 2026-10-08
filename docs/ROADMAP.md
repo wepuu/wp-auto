@@ -136,6 +136,12 @@ typed release metadata, configuration readiness reporting, content-free
 operations metrics, product detail/compatibility pages and release evidence
 without selecting a production host or publishing the service.
 
+Status: accepted and closed on 2026-10-07. PR #4 passed its complete hosted
+validation, merged to `main` at `a57b422`, and the post-merge run
+`37589413276` passed. The earlier manual GitHub OIDC single/two-key AWS KMS
+closeout run `37584349687` also passed. No production deployment, connector
+change or Phase 2.0.7B2 work is authorized by this acceptance.
+
 Phase 2.0.7B remains gated on the final hosting provider, production domain,
 legal identity, policy URLs, residency/retention decisions and staged release:
 

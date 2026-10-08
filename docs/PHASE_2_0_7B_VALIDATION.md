@@ -1,8 +1,9 @@
 # Phase 2.0.7B1 Release Readiness Validation
 
-Status: implementation and local validation complete on
-`codex/phase-2-0-7b-release-readiness`. Production deployment, public release,
-connector changes and Phase 2.0.7B2 are not authorized.
+Status: accepted and closed on 2026-10-07. PR #4 merged the immutable
+candidate to `main` at `a57b422` after its hosted validation passed; the
+post-merge hosted validation also passed. Production deployment, public
+release, connector changes and Phase 2.0.7B2 are not authorized.
 
 ## Implemented candidate
 
@@ -19,6 +20,8 @@ connector changes and Phase 2.0.7B2 are not authorized.
 | Gate | Result |
 |---|---|
 | Phase 2.0.7A hosted KMS closeout | pass; run `37584349687`, all three jobs successful |
+| Phase 2.0.7B1 pull request | pass; PR #4, candidate `a4fc20d`, run `37589145710` |
+| Main integration | pass; merge commit `a57b422`, post-merge run `37589413276` |
 | TypeScript, ESLint and deterministic tests | pass; 59 pass, 12 expected external skips |
 | PostgreSQL isolation and lifecycle | pass; 10 tests including workspace concurrency and cross-tenant RLS |
 | Backup/restore and tombstone replay | pass |

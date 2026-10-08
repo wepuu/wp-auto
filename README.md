@@ -34,9 +34,9 @@ connector branches; every exit gate passed, and it was accepted and closed on
 closed after deterministic, live HTTPS/Codex, hosted dual-KMS and immutable
 available-capability review gates passed. Phase 2.0.7A product shell and
 portable runtime are accepted on `main` after PR, post-merge and hosted
-single/two-key KMS validation. Phase 2.0.7B1 release-readiness work is isolated
-on `codex/phase-2-0-7b-release-readiness`; production deployment, connector
-changes and Phase 2.0.7B2 are not authorized.
+single/two-key KMS validation. Phase 2.0.7B1 release-readiness is accepted and
+closed on `main` at merge commit `a57b422` after PR #4 and post-merge CI passed.
+Production deployment, connector changes and Phase 2.0.7B2 are not authorized.
 
 ## Architecture
 
