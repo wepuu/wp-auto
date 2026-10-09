@@ -206,8 +206,11 @@ export function safeOAuthFailure(error: unknown): Readonly<{
   const oauthCandidate = typeof error === 'object' && error !== null && 'error' in error
     ? (error as { error?: unknown }).error
     : undefined;
-  const reason = error instanceof Error && error.name === 'SessionNotFound'
-    ? oauthSessionFailureReasons.get(error.message)
+  const sessionDescription = typeof error === 'object' && error !== null && 'error_description' in error
+    ? (error as { error_description?: unknown }).error_description
+    : undefined;
+  const reason = error instanceof Error && error.name === 'SessionNotFound' && typeof sessionDescription === 'string'
+    ? oauthSessionFailureReasons.get(sessionDescription)
     : undefined;
   return {
     name,
