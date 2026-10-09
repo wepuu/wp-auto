@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
   [string]$ConnectorPath = (Join-Path (Split-Path -Parent $PSScriptRoot) '..\wp-auto-connector'),
-  [string]$WpEnvVersion = '11.11.0'
+  [string]$WpEnvVersion = '11.11.0',
+  [string]$ToolNodePath = $env:WEPUU_WP_ENV_NODE_BIN
 )
 
 $ErrorActionPreference = 'Stop'
@@ -13,9 +14,23 @@ $TemporaryRoot = Join-Path $Root '.tmp\wp-env-local-signing'
 $ConnectorCopy = Join-Path $TemporaryRoot 'wp-env-connector'
 $ConfigPath = Join-Path $TemporaryRoot 'wp-env.local-signing.json'
 $WpEnvHome = Join-Path $TemporaryRoot 'home'
+$ToolRoot = Join-Path $TemporaryRoot 'tool'
 $NpmCache = Join-Path $TemporaryRoot 'npm-cache'
-$Npx = (Get-Command npx.cmd -ErrorAction Stop).Source
+$NpmCommand = (Get-Command npm.cmd -ErrorAction Stop).Source
+$NpmCli = Join-Path (Split-Path -Parent $NpmCommand) 'node_modules\npm\bin\npm-cli.js'
+$WpEnv = Join-Path $ToolRoot 'node_modules\.bin\wp-env.cmd'
 $Curl = (Get-Command curl.exe -ErrorAction Stop).Source
+
+if ([string]::IsNullOrWhiteSpace($ToolNodePath)) {
+  $ToolNodePath = (Get-Command node.exe -ErrorAction Stop).Source
+}
+$ToolNodePath = [IO.Path]::GetFullPath($ToolNodePath)
+if (-not (Test-Path -LiteralPath $ToolNodePath -PathType Leaf)) { throw "Tool Node executable not found: $ToolNodePath" }
+if (-not (Test-Path -LiteralPath $NpmCli -PathType Leaf)) { throw "npm CLI not found: $NpmCli" }
+$ToolNodeMajor = [int](& $ToolNodePath -p 'Number.parseInt(process.versions.node,10)')
+if ($LASTEXITCODE -ne 0 -or $ToolNodeMajor -ne 24) {
+  throw 'wp-env 11.11.0 validation requires an isolated Node 24 tool runtime; set WEPUU_WP_ENV_NODE_BIN to node.exe. The platform remains on Node 26.'
+}
 
 function Assert-TemporaryPath([string]$Path) {
   $Full = [IO.Path]::GetFullPath($Path)
@@ -26,12 +41,22 @@ function Assert-TemporaryPath([string]$Path) {
 }
 
 function Invoke-WpEnv([string[]]$Arguments, [switch]$AllowFailure) {
-  & $Npx --yes "@wordpress/env@$WpEnvVersion" @Arguments
+  & $WpEnv @Arguments
   $ExitCode = $LASTEXITCODE
   if (-not $AllowFailure -and $ExitCode -ne 0) {
     throw "wp-env command failed with exit code ${ExitCode}: $($Arguments -join ' ')"
   }
   return $ExitCode
+}
+
+function Write-WpEnvDiagnostics {
+  Write-Warning 'wp-env validation failed; collecting content-free diagnostics before cleanup.'
+  Invoke-WpEnv @("--config=$ConfigPath", 'logs') -AllowFailure | Out-Null
+  Invoke-WpEnv @("--config=$ConfigPath", 'run', 'cli', 'wp', 'core', 'is-installed') -AllowFailure | Out-Null
+  Invoke-WpEnv @("--config=$ConfigPath", 'run', 'cli', 'wp', 'plugin', 'list', '--fields=name,status,version') -AllowFailure | Out-Null
+  & $DockerCommand ps -a --format '{{.Names}} {{.Status}} {{.Ports}}' |
+    Where-Object { $_ -match 'wordpress|wp-env|mysql' } |
+    ForEach-Object { Write-Warning $_ }
 }
 
 if (-not (Test-Path -LiteralPath (Join-Path $ConnectorPath 'wepuu-auto-connector.php') -PathType Leaf)) {
@@ -59,7 +84,7 @@ Assert-TemporaryPath $TemporaryRoot
 foreach ($Path in @($ConnectorCopy, $ConfigPath)) {
   if (Test-Path -LiteralPath $Path) { Remove-Item -LiteralPath $Path -Recurse -Force }
 }
-New-Item -ItemType Directory -Path $ConnectorCopy, $WpEnvHome, $NpmCache -Force | Out-Null
+New-Item -ItemType Directory -Path $ConnectorCopy, $WpEnvHome, $ToolRoot, $NpmCache -Force | Out-Null
 Get-ChildItem -LiteralPath $ConnectorPath -Force | Where-Object { $_.Name -ne '.git' } |
   Copy-Item -Destination $ConnectorCopy -Recurse -Force
 
@@ -88,11 +113,17 @@ New-Item -ItemType Directory -Path $WpEnvCacheDirectory -Force | Out-Null
 $PreviousWpEnvHome = $env:WP_ENV_HOME
 $PreviousNpmCache = $env:npm_config_cache
 $PreviousCi = $env:CI
+$PreviousPath = $env:PATH
 $env:WP_ENV_HOME = $WpEnvHome
 $env:npm_config_cache = $NpmCache
 $env:CI = 'true'
+$env:PATH = "$(Split-Path -Parent $ToolNodePath)$([IO.Path]::PathSeparator)$env:PATH"
 
 try {
+  & $ToolNodePath $NpmCli install --prefix $ToolRoot --no-save --no-package-lock --audit=false --fund=false "@wordpress/env@$WpEnvVersion"
+  if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $WpEnv -PathType Leaf)) {
+    throw "Unable to install the fixed wp-env CLI version $WpEnvVersion."
+  }
   Invoke-WpEnv @("--config=$ConfigPath", 'start') | Out-Null
   $RestIndex = $null
   for ($Attempt = 0; $Attempt -lt 120; $Attempt++) {
@@ -125,8 +156,13 @@ try {
   Write-Output 'WP_ENV_CONNECTOR_ACTIVE=True'
   Write-Output 'WP_ENV_CONNECTOR_TESTS=True'
   Write-Output "WP_ENV_CONNECTOR_COMMIT=$ConnectorCommit"
+} catch {
+  if (Test-Path -LiteralPath $WpEnv -PathType Leaf) { Write-WpEnvDiagnostics }
+  throw
 } finally {
-  Invoke-WpEnv @("--config=$ConfigPath", 'destroy', '--force') -AllowFailure | Out-Null
+  if (Test-Path -LiteralPath $WpEnv -PathType Leaf) {
+    Invoke-WpEnv @("--config=$ConfigPath", 'destroy', '--force') -AllowFailure | Out-Null
+  }
   $FinalCommit = (& git -c "safe.directory=$SafeConnectorPath" -C $ConnectorPath rev-parse HEAD).Trim()
   $FinalStatus = @(& git -c "safe.directory=$SafeConnectorPath" -C $ConnectorPath status --short)
   if ($FinalCommit -ne $ConnectorCommit -or $FinalStatus.Count -ne 0) {
@@ -135,5 +171,9 @@ try {
   if ($null -eq $PreviousWpEnvHome) { Remove-Item Env:WP_ENV_HOME -ErrorAction SilentlyContinue } else { $env:WP_ENV_HOME = $PreviousWpEnvHome }
   if ($null -eq $PreviousNpmCache) { Remove-Item Env:npm_config_cache -ErrorAction SilentlyContinue } else { $env:npm_config_cache = $PreviousNpmCache }
   if ($null -eq $PreviousCi) { Remove-Item Env:CI -ErrorAction SilentlyContinue } else { $env:CI = $PreviousCi }
-  if (Test-Path -LiteralPath $TemporaryRoot) { Remove-Item -LiteralPath $TemporaryRoot -Recurse -Force }
+  $env:PATH = $PreviousPath
+  if (Test-Path -LiteralPath $TemporaryRoot) {
+    try { Remove-Item -LiteralPath $TemporaryRoot -Recurse -Force }
+    catch { Write-Warning "Unable to remove temporary wp-env directory: $($_.Exception.Message)" }
+  }
 }

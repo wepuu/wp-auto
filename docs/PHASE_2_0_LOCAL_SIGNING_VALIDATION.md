@@ -29,9 +29,11 @@ Status: implementation candidate; production and staging acceptance remain gated
   same public RFC 7638 `kid`, and the disposable files were removed.
 - Dependency audit: passed with no known high-severity vulnerabilities.
 - SBOM generation and repository policy verification: passed with 262 components.
-  The local scanner also reported the host-provided `NODE_PATH` as high risk and
-  `HTTP_PROXY` as low risk; hosted CI explicitly clears `NODE_PATH`, and neither
-  variable contains signing material or is baked into the candidate images.
+  The command removes the host-provided `NODE_PATH` rather than passing an
+  empty value, and direct Node and pnpm child-process checks confirm it is
+  absent. The outer Codex environment audit still reports its own `NODE_PATH`
+  and `HTTP_PROXY`; neither is baked into candidate images or contains signing
+  material. Hosted Linux CI uses `env -u NODE_PATH` for the same boundary.
 - `git diff --check`: passed.
 - PostgreSQL migration and repository suite: 11 passed, 0 failed. This includes
   two real RSA-3072 keys moving through published, active, retiring and revoked,
@@ -59,6 +61,14 @@ Status: implementation candidate; production and staging acceptance remain gated
 - The accepted connector source repository remained clean at commit `92971ce`.
   Its existing verifier suite passed read-only in pinned PHP 8.2: 530 tests,
   3,621 assertions, 0 failures.
+- Fixed `wp-env` 11.11.0 started and destroyed a disposable WordPress 6.9/PHP
+  8.1 site, activated a temporary connector copy, and exposed the fixed
+  revocation and pairing-proof REST routes. The same temporary copy passed all
+  530 connector tests and 3,621 assertions. The wp-env CLI alone used an
+  isolated Node 24 tool runtime because its Windows native dependency does not
+  provide a Node 26 ABI; all platform validation remained on Node 26. The
+  transient wp-env dependency install emitted deprecation warnings and is not
+  included in the platform lockfile, SBOM or runtime images.
 
 ## Outstanding gates
 
@@ -67,10 +77,5 @@ Status: implementation candidate; production and staging acceptance remain gated
   controlled provider credentials and connector test repository. They remain a
   pre-release/staging gate; this candidate neither modifies the connector nor
   deploys production.
-- Fixed `wp-env` 11.11.0 can build, start and destroy its WordPress 6.9/PHP 8.1
-  environment on this host, but the site returns an empty HTTP response after
-  startup. Therefore the `wp-env` REST-route activation gate remains blocked
-  and is not represented as a pass. The diagnostic script fails closed and
-  leaves the source connector untouched.
 - Historical KMS evidence remains under `docs/` and is explicitly labeled. Its
   obsolete executable harnesses and live-KMS CI configuration are removed.

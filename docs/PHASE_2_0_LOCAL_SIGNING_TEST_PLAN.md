@@ -21,6 +21,9 @@ Date: 2026-10-08
   copy of the accepted connector and exposes its fixed control routes. The
   connector PHPUnit suite runs against that same temporary copy in the pinned
   WordPress PHP runtime. The source repository stays clean before and after.
+  Because the pinned wp-env native tooling does not support Node 26 on Windows,
+  only the disposable wp-env CLI uses an isolated Node 24 runtime; the platform
+  build, tests and OCI images remain on the required Node 26 runtime.
 - Repository, OCI image, process configuration and logs contain no generated
   private key or passphrase.
 

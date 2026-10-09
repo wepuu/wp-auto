@@ -69,9 +69,7 @@ jobs:
       - name: Dependency audit
         run: pnpm audit --audit-level high
       - name: SBOM and license metadata
-        env:
-          NODE_PATH: ''
-        run: pnpm sbom:check
+        run: env -u NODE_PATH pnpm sbom:check
       - name: Install retained conformance dependencies
         working-directory: spikes/oauth-conformance
         run: npm ci

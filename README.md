@@ -137,10 +137,11 @@ only; they must not be placed in `.env`, logs, or Git.
 
 ## Authority and compatibility
 
-The connector integration candidate is isolated at `D:\Codex\wp-auto-connector`
-on `codex/phase-2-0-5-bearer-auth`; it has not been released. Codex CLI 0.154.0
-and WorkBuddy 5.5.2 / codebuddy 2.137.1 are tested as version-specific clients;
-documentation claims alone do not establish support.
+The accepted connector remains a separately governed repository and is never
+modified by platform-only validation. ADR-016 validation used connector commit
+`92971ce` read-only. Codex CLI 0.154.0 and WorkBuddy 5.5.2 / codebuddy 2.137.1
+are historical version-specific results; documentation claims alone do not
+establish support for later client versions.
 
 ## Standards baseline
 
