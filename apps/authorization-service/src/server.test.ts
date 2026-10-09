@@ -19,7 +19,8 @@ test('interaction form preserves a verifiable Origin without disclosing its path
 
 test('consent submission locks after the first decision under a hash-pinned CSP', () => {
   assert.match(CONSENT_SUBMISSION_SCRIPT, /dataset\.submitting === 'true'/u);
-  assert.match(CONSENT_SUBMISSION_SCRIPT, /button\.disabled = true/u);
+  assert.match(CONSENT_SUBMISSION_SCRIPT, /setAttribute\('aria-disabled', 'true'\)/u);
+  assert.doesNotMatch(CONSENT_SUBMISSION_SCRIPT, /\.disabled = true/u);
   assert.match(CONSENT_SUBMISSION_SCRIPT, /decision\.value = submitter\.value/u);
   assert.match(CONSENT_INTERACTION_CSP, /script-src 'self' 'sha256-[A-Za-z0-9+/=]+'/u);
   assert.doesNotMatch(CONSENT_INTERACTION_CSP, /unsafe-inline/u);
