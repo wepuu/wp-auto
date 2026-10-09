@@ -141,7 +141,9 @@ type InteractionRejectionReason =
   | 'invalid_parameters'
   | 'unsupported_prompt'
   | 'method_or_content_type'
-  | 'origin_mismatch'
+  | 'origin_missing'
+  | 'origin_null'
+  | 'origin_unexpected'
   | 'csrf_binding_mismatch';
 
 export function interactionSubmissionHeaderRejection(input: Readonly<{
@@ -153,7 +155,9 @@ export function interactionSubmissionHeaderRejection(input: Readonly<{
   if (input.method !== 'POST' || input.contentType?.split(';')[0] !== 'application/x-www-form-urlencoded') {
     return { status: 405, reason: 'method_or_content_type' };
   }
-  if (input.origin !== input.expectedOrigin) return { status: 403, reason: 'origin_mismatch' };
+  if (input.origin === undefined) return { status: 403, reason: 'origin_missing' };
+  if (input.origin === 'null') return { status: 403, reason: 'origin_null' };
+  if (input.origin !== input.expectedOrigin) return { status: 403, reason: 'origin_unexpected' };
   return undefined;
 }
 
