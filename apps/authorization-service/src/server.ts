@@ -32,6 +32,7 @@ import {
 } from '@wepuu/platform-ui';
 
 const SESSION_COOKIE = '__Host-wepuu_session';
+export const INTERACTION_REFERRER_POLICY = 'strict-origin';
 const mcpScopes = new Set([
   'mcp:read', 'mcp:content.write', 'mcp:media.write', 'mcp:taxonomy.write', 'mcp:seo.write'
 ]);
@@ -356,7 +357,10 @@ export async function startAuthorizationService(
           response.writeHead(200, {
             'content-type': 'text/html; charset=utf-8',
             'cache-control': 'no-store',
-            'referrer-policy': 'no-referrer',
+            // A no-referrer policy serializes Origin as null for a basic HTML
+            // form POST. strict-origin preserves the exact same-origin Origin
+            // required below without disclosing an interaction path.
+            'referrer-policy': INTERACTION_REFERRER_POLICY,
             'content-security-policy': UI_CSP,
             'x-content-type-options': 'nosniff'
           });
