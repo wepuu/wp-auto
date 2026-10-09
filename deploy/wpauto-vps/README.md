@@ -24,6 +24,7 @@ routes the control shell to port 3000. `/internal/metrics` is not public.
 /opt/wpauto/secrets/signing_passphrase
 /opt/wpauto/legal/{terms,privacy,support,status}.html
 /opt/wpauto/backups/
+/opt/wpauto/acme-webroot/.well-known/acme-challenge/
 ```
 
 The three signing files are protected host files mounted read-only. They must
@@ -42,6 +43,10 @@ Auth0 client secret never enter Git or image layers.
    minutes before activation. Do not backdate production metadata.
 5. Activate the key, then start the control and authorization services.
 6. Install the dedicated BaoTa Nginx vhost only after `nginx -t` succeeds.
+
+The port 80 vhost serves only the ACME HTTP-01 challenge directory before
+redirecting all other requests to HTTPS. Keep that directory in place so the
+BaoTa-managed certificate can renew without changing another site.
 
 ## Required acceptance
 
