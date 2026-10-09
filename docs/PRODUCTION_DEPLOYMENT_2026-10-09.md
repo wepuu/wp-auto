@@ -59,6 +59,9 @@ installing Caddy, deploying Vault/HSM, or starting Phase 2.0.7B2.
 - The account-login start response used the configured Auth0 tenant, exact
   callback, Authorization Code, PKCE S256 and a Secure/HttpOnly transaction
   cookie. State, nonce, challenge and cookie values were not recorded.
+- A cookie-preserving probe reached Auth0 Universal Login without an obvious
+  client or callback rejection. It did not authenticate and does not replace
+  the open interactive login/callback gate.
 
 ## Backup and leakage evidence
 
