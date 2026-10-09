@@ -1,12 +1,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  INTERACTION_REFERRER_POLICY,
   interactionResource,
   interactionSubmissionHeaderRejection,
   normalizeAuthorizationResources
 } from './server.js';
 
 const resource = 'https://site.example.test/wp-json/wp-auto/mcp';
+
+test('interaction form preserves a verifiable Origin without disclosing its path', () => {
+  assert.equal(INTERACTION_REFERRER_POLICY, 'strict-origin');
+});
 
 test('interaction resource accepts a string or bounded identical repetitions', () => {
   assert.equal(interactionResource({ resource }), resource);
