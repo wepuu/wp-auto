@@ -33,6 +33,37 @@ import {
 
 const SESSION_COOKIE = '__Host-wepuu_session';
 export const INTERACTION_REFERRER_POLICY = 'strict-origin';
+export const CONSENT_SUBMISSION_SCRIPT = `(() => {
+  for (const form of document.querySelectorAll('form[data-wepuu-consent]')) {
+    form.addEventListener('submit', (event) => {
+      if (form.dataset.submitting === 'true') {
+        event.preventDefault();
+        return;
+      }
+      const submitter = event.submitter;
+      if (!(submitter instanceof HTMLButtonElement)
+          || submitter.name !== 'decision'
+          || (submitter.value !== 'approve' && submitter.value !== 'deny')) {
+        event.preventDefault();
+        return;
+      }
+      const decision = document.createElement('input');
+      decision.type = 'hidden';
+      decision.name = 'decision';
+      decision.value = submitter.value;
+      form.append(decision);
+      form.dataset.submitting = 'true';
+      for (const button of form.querySelectorAll('button[type="submit"]')) button.disabled = true;
+      const status = form.querySelector('[data-wepuu-submit-status]');
+      if (status instanceof HTMLElement) status.hidden = false;
+    });
+  }
+})();`;
+const consentScriptHash = createHash('sha256').update(CONSENT_SUBMISSION_SCRIPT, 'utf8').digest('base64');
+export const CONSENT_INTERACTION_CSP = UI_CSP.replace(
+  "script-src 'self'",
+  `script-src 'self' 'sha256-${consentScriptHash}'`
+);
 const mcpScopes = new Set([
   'mcp:read', 'mcp:content.write', 'mcp:media.write', 'mcp:taxonomy.write', 'mcp:seo.write'
 ]);
@@ -472,14 +503,14 @@ export async function startAuthorizationService(
             // form POST. strict-origin preserves the exact same-origin Origin
             // required below without disclosing an interaction path.
             'referrer-policy': INTERACTION_REFERRER_POLICY,
-            'content-security-policy': UI_CSP,
+            'content-security-policy': CONSENT_INTERACTION_CSP,
             'x-content-type-options': 'nosniff'
           });
           response.end(renderInteractionPage({
             title: `${deployment.productName} authorization`,
             heading: 'Authorize direct MCP access.',
             message: `The client will connect directly to ${displayResource}. WePuu will not receive its tool inputs or results.`,
-            content: `<h2>Approved ceiling</h2><ul class="scope-list">${scopeItems}</ul><form method="post"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><div class="actions"><button name="decision" value="approve" type="submit">Approve access</button><button class="danger" name="decision" value="deny" type="submit">Deny</button></div></form>`
+            content: `<h2>Approved ceiling</h2><ul class="scope-list">${scopeItems}</ul><form method="post" data-wepuu-consent><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><div class="actions"><button name="decision" value="approve" type="submit">Approve access</button><button class="danger" name="decision" value="deny" type="submit">Deny</button></div><p data-wepuu-submit-status role="status" hidden>Authorizing…</p></form><script>${CONSENT_SUBMISSION_SCRIPT}</script>`
           }));
           return;
         }
