@@ -53,7 +53,9 @@ export const CONSENT_SUBMISSION_SCRIPT = `(() => {
       decision.value = submitter.value;
       form.append(decision);
       form.dataset.submitting = 'true';
-      for (const button of form.querySelectorAll('button[type="submit"]')) button.disabled = true;
+      for (const button of form.querySelectorAll('button[type="submit"]')) {
+        button.setAttribute('aria-disabled', 'true');
+      }
       const status = form.querySelector('[data-wepuu-submit-status]');
       if (status instanceof HTMLElement) status.hidden = false;
     });
