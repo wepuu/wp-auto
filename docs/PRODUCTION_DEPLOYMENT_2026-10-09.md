@@ -1,6 +1,7 @@
 # Production deployment validation: 2026-10-09
 
-Status: provisional deployment operational; interactive identity and WordPress end-to-end gates remain open
+Status: provisional deployment operational; interactive identity gate passed;
+WordPress end-to-end gate remains open
 
 ## Scope and authorization
 
@@ -61,7 +62,31 @@ installing Caddy, deploying Vault/HSM, or starting Phase 2.0.7B2.
   cookie. State, nonce, challenge and cookie values were not recorded.
 - A cookie-preserving probe reached Auth0 Universal Login without an obvious
   client or callback rejection. It did not authenticate and does not replace
-  the open interactive login/callback gate.
+  the then-open interactive login/callback gate.
+- The Auth0 dashboard was confirmed to use client ID
+  `AY4V93U0IUs6aWPKgLqClwodKWOneQa9`, the exact production callback and
+  `client_secret_basic`. Initial real browser attempts produced a successful
+  Auth0 login followed by `Failed Exchange: Unauthorized`; no platform account
+  or session was created.
+- The failure was isolated to a stale Auth0 Client Secret in the VPS runtime.
+  The current Secret was supplied through a local protected prompt, verified
+  against the Auth0 token endpoint before installation, written only to the
+  root-owned mode-0600 runtime environment file, and loaded by recreating only
+  the control service. Neither the Secret nor an authorization code was
+  recorded in repository files or validation output.
+- An independent post-change probe returned `invalid_grant` for an intentionally
+  invalid authorization code rather than a client-authentication rejection,
+  proving that Auth0 accepted the configured confidential-client credentials.
+  The control container remained healthy, the runtime file and container value
+  matched, and public readiness returned 200.
+- A fresh Chrome login completed the callback and rendered the tenant workspace.
+  PostgreSQL then contained exactly one pseudonymous account, one active
+  account session, one tenant, one membership and one home-tenant record. No
+  identity subject, Cookie, token or authorization code was inspected or
+  retained. The production interactive identity gate is passed.
+- Data-flow review: this validation exercised only identity and content-free
+  control metadata. No WordPress content, MCP tool input or MCP tool output
+  entered the control plane.
 
 ## Backup and leakage evidence
 
@@ -89,8 +114,6 @@ no longer valid.
 
 ## Open gates
 
-- Confirm the Auth0 application dashboard contains the exact callback and
-  allowed origin/logout URL, then complete an interactive login and callback.
 - Confirm Cloudflare SSL/TLS mode is Full (strict).
 - Create two encrypted offline signing-key backups in separate locations and
   store the passphrase separately. Do not copy old-computer credentials.

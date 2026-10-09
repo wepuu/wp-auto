@@ -155,9 +155,13 @@ On 2026-10-09 the operator separately and explicitly authorized the initial
 single-VPS deployment recorded by ADR-017. `https://auth.wpauto.cc` is online
 for operator validation with Auth0, local ADR-016 signing, BaoTa Nginx and
 Cloudflare. Infrastructure checks passed, but interactive Auth0 callback and
-real WordPress pairing/direct-MCP acceptance remain open. This provisional
-deployment does not close Phase 2.0.7B, authorize connector changes or start
-Phase 2.0.7B2.
+real WordPress pairing/direct-MCP acceptance were initially open. The
+production Auth0 interactive login and callback gate passed on 2026-10-09:
+Auth0 accepted the configured confidential-client credentials, and a fresh
+browser flow created one pseudonymous account, one active session, one personal
+tenant and one home membership. Real WordPress pairing/direct-MCP acceptance
+remains open. This provisional deployment does not close Phase 2.0.7B,
+authorize connector changes or start Phase 2.0.7B2.
 
 ## Deferred and out of scope
 
