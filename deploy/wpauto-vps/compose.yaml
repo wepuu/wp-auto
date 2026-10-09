@@ -1,0 +1,133 @@
+name: wpauto
+
+services:
+  postgres:
+    image: postgres:16.10-alpine
+    restart: unless-stopped
+    shm_size: 64m
+    mem_limit: 384m
+    cpus: 0.75
+    environment:
+      POSTGRES_DB: wpauto
+      POSTGRES_USER: wpauto
+      POSTGRES_PASSWORD: ${WEPUU_POSTGRES_PASSWORD:?}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wpauto -d wpauto"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    security_opt: [no-new-privileges:true]
+    networks: [backend]
+
+  control:
+    image: ${WEPUU_CONTROL_IMAGE:?}
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    mem_limit: 256m
+    cpus: 0.50
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    init: true
+    ports:
+      - 127.0.0.1:3000:3000
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./secrets/signing_keyring.json:/run/secrets/signing_keyring:ro
+      - ./secrets/signing_private_key.pem:/run/secrets/signing_private_key:ro
+      - ./secrets/signing_passphrase:/run/secrets/signing_passphrase:ro
+    environment:
+      WEPUU_DEPLOYMENT_MODE: production
+      WEPUU_PRODUCT_NAME: WePuu
+      WEPUU_DATABASE_URL: ${WEPUU_DATABASE_URL:?}
+      WEPUU_CONTROL_PUBLIC_ORIGIN: https://auth.wpauto.cc
+      WEPUU_ACCOUNT_OIDC_ISSUER: https://dev-o173hfg1cbmd0crj.us.auth0.com/
+      WEPUU_ACCOUNT_OIDC_CLIENT_ID: AY4V93U0IUs6aWPKgLqClwodKWOneQa9
+      WEPUU_ACCOUNT_OIDC_CLIENT_SECRET: ${WEPUU_ACCOUNT_OIDC_CLIENT_SECRET:?}
+      WEPUU_ACCOUNT_OIDC_REDIRECT_URI: https://auth.wpauto.cc/v1/account/oidc/callback
+      WEPUU_ACCOUNT_OIDC_SCOPES: openid
+      WEPUU_ACCOUNT_OIDC_CLIENT_AUTH_METHOD: client_secret_basic
+      WEPUU_OIDC_TRANSACTION_KEYS_JSON: ${WEPUU_OIDC_TRANSACTION_KEYS_JSON:?}
+      WEPUU_IDENTITY_SUBJECT_HMAC_KEY: ${WEPUU_IDENTITY_SUBJECT_HMAC_KEY:?}
+      WEPUU_ISSUER: https://auth.wpauto.cc
+      WEPUU_SIGNING_KEYRING_FILE: /run/secrets/signing_keyring
+      WEPUU_SIGNING_KEY_SLOT: primary
+      WEPUU_GRANT_IDEMPOTENCY_HMAC_KEY: ${WEPUU_GRANT_IDEMPOTENCY_HMAC_KEY:?}
+      WEPUU_LEGAL_PROVIDER_NAME: WePuu
+      WEPUU_TERMS_URL: https://auth.wpauto.cc/terms
+      WEPUU_PRIVACY_URL: https://auth.wpauto.cc/privacy
+      WEPUU_SUPPORT_URL: https://auth.wpauto.cc/support
+      WEPUU_STATUS_URL: https://auth.wpauto.cc/status
+      WEPUU_DATA_REGION_LABEL: ${WEPUU_DATA_REGION_LABEL:?}
+      WEPUU_TRUSTED_PROXY_CIDRS_JSON: '["172.30.50.0/24"]'
+      WEPUU_RELEASE_VERSION: ${WEPUU_RELEASE_VERSION:?}
+      WEPUU_RELEASE_REVISION: ${WEPUU_RELEASE_REVISION:?}
+      WEPUU_IDENTITY_PROVIDER_LABEL: Auth0
+      WEPUU_RETENTION_POLICY_VERSION: ${WEPUU_RETENTION_POLICY_VERSION:?}
+      WEPUU_COMPATIBILITY_MATRIX_VERSION: ${WEPUU_COMPATIBILITY_MATRIX_VERSION:?}
+      WEPUU_OPERATIONS_METRICS_TOKEN: ${WEPUU_OPERATIONS_METRICS_TOKEN:?}
+    networks: [backend]
+
+  authorization:
+    image: ${WEPUU_AUTHORIZATION_IMAGE:?}
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    mem_limit: 256m
+    cpus: 0.50
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    init: true
+    ports:
+      - 127.0.0.1:3001:3001
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./secrets/signing_keyring.json:/run/secrets/signing_keyring:ro
+      - ./secrets/signing_private_key.pem:/run/secrets/signing_private_key:ro
+      - ./secrets/signing_passphrase:/run/secrets/signing_passphrase:ro
+    environment:
+      WEPUU_DEPLOYMENT_MODE: production
+      WEPUU_PRODUCT_NAME: WePuu
+      WEPUU_AUTH_HOST: 0.0.0.0
+      WEPUU_AUTH_PORT: 3001
+      WEPUU_DATABASE_URL: ${WEPUU_DATABASE_URL:?}
+      WEPUU_CONTROL_PUBLIC_ORIGIN: https://auth.wpauto.cc
+      WEPUU_ISSUER: https://auth.wpauto.cc
+      WEPUU_COOKIE_KEYS_JSON: ${WEPUU_COOKIE_KEYS_JSON:?}
+      WEPUU_OAUTH_ARTIFACT_KEYS_JSON: ${WEPUU_OAUTH_ARTIFACT_KEYS_JSON:?}
+      WEPUU_RATE_LIMIT_HMAC_KEY: ${WEPUU_RATE_LIMIT_HMAC_KEY:?}
+      WEPUU_LEGAL_PROVIDER_NAME: WePuu
+      WEPUU_TERMS_URL: https://auth.wpauto.cc/terms
+      WEPUU_PRIVACY_URL: https://auth.wpauto.cc/privacy
+      WEPUU_SUPPORT_URL: https://auth.wpauto.cc/support
+      WEPUU_STATUS_URL: https://auth.wpauto.cc/status
+      WEPUU_DATA_REGION_LABEL: ${WEPUU_DATA_REGION_LABEL:?}
+      WEPUU_TRUSTED_PROXY_CIDRS_JSON: '["172.30.50.0/24"]'
+      WEPUU_RELEASE_VERSION: ${WEPUU_RELEASE_VERSION:?}
+      WEPUU_RELEASE_REVISION: ${WEPUU_RELEASE_REVISION:?}
+      WEPUU_IDENTITY_PROVIDER_LABEL: Auth0
+      WEPUU_RETENTION_POLICY_VERSION: ${WEPUU_RETENTION_POLICY_VERSION:?}
+      WEPUU_COMPATIBILITY_MATRIX_VERSION: ${WEPUU_COMPATIBILITY_MATRIX_VERSION:?}
+      WEPUU_SIGNING_KEYRING_FILE: /run/secrets/signing_keyring
+      WEPUU_SIGNING_KEY_SLOT: primary
+      WEPUU_OPERATIONS_METRICS_TOKEN: ${WEPUU_OPERATIONS_METRICS_TOKEN:?}
+    networks: [backend]
+
+networks:
+  backend:
+    name: wpauto_internal
+    ipam:
+      config:
+        - subnet: 172.30.50.0/24
+
+volumes:
+  postgres-data:
+    name: wpauto_postgres_data

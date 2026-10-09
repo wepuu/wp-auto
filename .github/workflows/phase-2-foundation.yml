@@ -40,6 +40,12 @@ jobs:
         run: npm install --global pnpm@11.19.0
       - name: Install foundation dependencies
         run: pnpm install --frozen-lockfile
+      - name: Validate wpauto VPS deployment manifest
+        run: >-
+          docker compose
+          --env-file deploy/wpauto-vps/runtime.env.example
+          --file deploy/wpauto-vps/compose.yaml
+          config --quiet
       - name: Strict checks
         run: pnpm check
       - name: PostgreSQL migration and isolation tests
