@@ -135,3 +135,22 @@ test('JWKS publishes active then overlap keys without private material', async (
   assert.equal(jwks.keys.length, 2);
   assert.ok(jwks.keys.every((key) => key['d'] === undefined && key['alg'] === 'RS256'));
 });
+
+test('provider Grant preserves a preassigned platform grant id', async () => {
+  const provider = await createAuthorizationProvider({
+    issuer: 'https://auth.example.test',
+    cookieKeys: ['a'.repeat(32), 'b'.repeat(32)],
+    keyCustody: fakeCustody(),
+    adapter: memoryAdapter(),
+    resourceRegistry: new DenyAllResourceRegistry(),
+    grantClaimsResolver: new DenyAllGrantClaimsResolver(),
+    accountRegistry: new DenyAllAccountRegistry(),
+    clients: [{ clientId: 'client_00000001', redirectUris: ['http://127.0.0.1/callback'] }]
+  });
+  const platformGrantId = 'grant_000000000000000000000001';
+  const grant = new provider.Grant({ accountId: 'account_00000001', clientId: 'client_00000001' });
+  Object.assign(grant, { jti: platformGrantId });
+  grant.addResourceScope('https://site.example.test/wp-json/wp-auto/mcp', 'mcp:read');
+  assert.equal(await grant.save(), platformGrantId);
+  assert.ok(await provider.Grant.find(platformGrantId));
+});
