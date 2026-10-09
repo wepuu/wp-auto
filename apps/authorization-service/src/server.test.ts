@@ -74,9 +74,17 @@ test('OAuth failure diagnostics expose only bounded class and machine code', () 
   assert.deepEqual(safeOAuthFailure(Object.assign(new Error('secret'), { name: 'SessionNotFound' })), {
     name: 'SessionNotFound'
   });
-  assert.deepEqual(safeOAuthFailure(Object.assign(
-    new Error('authorization session and cookie identifier mismatch'), { name: 'SessionNotFound' }
-  )), { name: 'SessionNotFound', reason: 'authorization_cookie_mismatch' });
+  assert.deepEqual(safeOAuthFailure(Object.assign(new Error('invalid_request'), {
+    name: 'SessionNotFound',
+    error: 'invalid_request',
+    error_description: 'authorization session and cookie identifier mismatch'
+  })), {
+    name: 'SessionNotFound', oauthError: 'invalid_request', reason: 'authorization_cookie_mismatch'
+  });
+  assert.deepEqual(safeOAuthFailure(Object.assign(new Error('invalid_request'), {
+    name: 'SessionNotFound',
+    error_description: 'attacker-controlled detail must not be logged'
+  })), { name: 'SessionNotFound' });
   assert.deepEqual(safeOAuthFailure(Object.assign(new Error('secret'), { code: 'unsafe-detail' })), { name: 'Error' });
   assert.deepEqual(safeOAuthFailure({ message: 'secret' }), { name: 'UnknownError' });
 });
