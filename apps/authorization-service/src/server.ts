@@ -173,7 +173,7 @@ function writeInteractionError(
 }
 
 export function safeOAuthFailure(error: unknown): Readonly<{ name: string; code?: string; oauthError?: string }> {
-  const name = error instanceof Error && /^(?:Error|[A-Za-z][A-Za-z0-9]*Error)$/u.test(error.name)
+  const name = error instanceof Error && /^[A-Za-z][A-Za-z0-9]{0,63}$/u.test(error.name)
     ? error.name
     : 'UnknownError';
   const candidate = typeof error === 'object' && error !== null && 'code' in error

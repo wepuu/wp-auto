@@ -70,6 +70,9 @@ test('OAuth failure diagnostics expose only bounded class and machine code', () 
   assert.deepEqual(safeOAuthFailure(error), {
     name: 'TypeError', code: 'ERR_SAFE_CODE', oauthError: 'invalid_request'
   });
+  assert.deepEqual(safeOAuthFailure(Object.assign(new Error('secret'), { name: 'SessionNotFound' })), {
+    name: 'SessionNotFound'
+  });
   assert.deepEqual(safeOAuthFailure(Object.assign(new Error('secret'), { code: 'unsafe-detail' })), { name: 'Error' });
   assert.deepEqual(safeOAuthFailure({ message: 'secret' }), { name: 'UnknownError' });
 });
