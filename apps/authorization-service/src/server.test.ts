@@ -4,7 +4,8 @@ import {
   INTERACTION_REFERRER_POLICY,
   interactionResource,
   interactionSubmissionHeaderRejection,
-  normalizeAuthorizationResources
+  normalizeAuthorizationResources,
+  safeOAuthFailure
 } from './server.js';
 
 const resource = 'https://site.example.test/wp-json/wp-auto/mcp';
@@ -60,4 +61,15 @@ test('interaction submission headers require a same-origin URL-encoded POST', ()
   assert.deepEqual(interactionSubmissionHeaderRejection({
     method: 'POST', contentType: 'application/x-www-form-urlencoded', origin: 'null', expectedOrigin
   }), { status: 403, reason: 'origin_null' });
+});
+
+test('OAuth failure diagnostics expose only bounded class and machine code', () => {
+  const error = Object.assign(new TypeError('token and request detail must not be logged'), {
+    code: 'ERR_SAFE_CODE', error: 'invalid_request'
+  });
+  assert.deepEqual(safeOAuthFailure(error), {
+    name: 'TypeError', code: 'ERR_SAFE_CODE', oauthError: 'invalid_request'
+  });
+  assert.deepEqual(safeOAuthFailure(Object.assign(new Error('secret'), { code: 'unsafe-detail' })), { name: 'Error' });
+  assert.deepEqual(safeOAuthFailure({ message: 'secret' }), { name: 'UnknownError' });
 });

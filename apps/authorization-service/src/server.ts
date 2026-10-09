@@ -172,6 +172,25 @@ function writeInteractionError(
   response.end('{"error":"invalid_request"}');
 }
 
+export function safeOAuthFailure(error: unknown): Readonly<{ name: string; code?: string; oauthError?: string }> {
+  const name = error instanceof Error && /^(?:Error|[A-Za-z][A-Za-z0-9]*Error)$/u.test(error.name)
+    ? error.name
+    : 'UnknownError';
+  const candidate = typeof error === 'object' && error !== null && 'code' in error
+    ? (error as { code?: unknown }).code
+    : undefined;
+  const oauthCandidate = typeof error === 'object' && error !== null && 'error' in error
+    ? (error as { error?: unknown }).error
+    : undefined;
+  return {
+    name,
+    ...(typeof candidate === 'string' && /^[A-Z][A-Z0-9_]{1,63}$/u.test(candidate) ? { code: candidate } : {}),
+    ...(typeof oauthCandidate === 'string' && /^[a-z][a-z0-9_]{1,63}$/u.test(oauthCandidate)
+      ? { oauthError: oauthCandidate }
+      : {})
+  };
+}
+
 function requestSource(request: IncomingMessage): string {
   const remote = request.socket.remoteAddress ?? 'unknown';
   if (remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1') {
@@ -420,11 +439,13 @@ export async function startAuthorizationService(
       }
       try {
         await callback(request, response);
-      } catch {
+      } catch (error) {
+        console.error(JSON.stringify({ event: 'oauth.provider_callback_failed', ...safeOAuthFailure(error) }));
         if (!response.headersSent) response.writeHead(500, { 'content-type': 'application/json', 'cache-control': 'no-store' });
         if (!response.writableEnded) response.end('{"error":"temporarily_unavailable"}');
       }
-      })().catch(() => {
+      })().catch((error: unknown) => {
+        console.error(JSON.stringify({ event: 'oauth.request_failed', ...safeOAuthFailure(error) }));
         if (!response.headersSent) {
           response.writeHead(503, { 'content-type': 'application/json', 'cache-control': 'no-store' });
         }
