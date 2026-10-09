@@ -13,6 +13,9 @@ under ADR-013 and is not represented as a pass. Production deployment,
 connector changes and Phase 2.0.7B2 remain separately gated. Until another
 phase is explicitly approved, work may:
 
+- implement the ADR-016 local JOSE signing-custody replacement explicitly
+  approved on 2026-10-08, without production deployment or connector changes;
+
 - preserve the accepted Phase 2.0.2 foundation and its validation evidence;
 - preserve the accepted pairing/grant platform and connector contracts,
   migrations, fixtures, tests, and validation evidence;
@@ -38,7 +41,7 @@ phase is explicitly approved, work may:
 - Application Password direct access remains a supported independent fallback.
 - WordPress makes no platform request until an administrator explicitly enables and starts connection.
 - Authentication, tenant boundaries, audience validation, token validation, and uncertain security states fail closed.
-- Do not implement cryptographic or OAuth protocol primitives from scratch. Use reviewed libraries and managed key custody.
+- Do not implement cryptographic or OAuth protocol primitives from scratch. Use reviewed libraries and the protected local key custody defined by ADR-016.
 
 ## Required protocol baseline
 

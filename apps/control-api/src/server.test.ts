@@ -429,7 +429,7 @@ void test('release-readiness pages expose verified metadata without identity sub
     store, workspace: new StaticWorkspace(), audit: new MemoryAudit(), publicOrigin: 'https://platform.example.test',
     deploymentReadiness: {
       ready: false,
-      checks: [{ id: 'kms', label: 'Temporary KMS identity', status: 'pending', detail: 'Configure workload identity.' }]
+      checks: [{ id: 'signing', label: 'Local signing custody', status: 'pending', detail: 'Configure protected key files.' }]
     }
   });
   const site = await app.inject({ method: 'GET', url: `/app/tenants/${tenantId}/sites/site_00000001` });

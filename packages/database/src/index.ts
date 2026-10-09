@@ -1433,6 +1433,7 @@ export class PostgresOAuthClientRepository {
 
 export interface SigningKeyLifecycleRecord {
   readonly kid: string;
+  readonly custodyProvider: 'aws-kms' | 'local-pkcs8';
   readonly custodyReference: string;
   readonly publicJwk: Readonly<Record<string, unknown>>;
   readonly status: 'published' | 'active' | 'retiring';
@@ -1451,10 +1452,10 @@ export class PostgresSigningKeyRepository {
   }>> {
     return this.#database.withAuthorizationService(async (client) => {
       const result = await client.query<{
-        kid: string; custody_reference: string; public_jwk: Record<string, unknown>;
+        kid: string; custody_provider: SigningKeyLifecycleRecord['custodyProvider']; custody_reference: string; public_jwk: Record<string, unknown>;
         status: SigningKeyLifecycleRecord['status'];
       }>(
-        `SELECT kid, custody_reference, public_jwk, status
+        `SELECT kid, custody_provider, custody_reference, public_jwk, status
          FROM oauth.signing_key_metadata
          WHERE status IN ('published', 'active', 'retiring')
            AND publish_at <= now()
@@ -1464,6 +1465,7 @@ export class PostgresSigningKeyRepository {
       );
       const records = result.rows.map((row) => ({
         kid: row.kid,
+        custodyProvider: row.custody_provider,
         custodyReference: row.custody_reference,
         publicJwk: row.public_jwk,
         status: row.status
@@ -1490,13 +1492,15 @@ export class PostgresSigningKeyRepository {
     kid: string;
     custodyReference: string;
     publicJwk: Readonly<Record<string, unknown>>;
+    custodyProvider?: SigningKeyLifecycleRecord['custodyProvider'];
     publishedAt?: Date;
   }>): Promise<void> {
     await this.#database.withAuthorizationService((client) => client.query(
       `INSERT INTO oauth.signing_key_metadata
         (kid, algorithm, custody_provider, custody_reference, public_jwk, status, publish_at)
-       VALUES ($1, 'RS256', 'aws-kms', $2, $3::jsonb, 'published', $4)`,
-      [input.kid, input.custodyReference, JSON.stringify(input.publicJwk), input.publishedAt ?? new Date()]
+       VALUES ($1, 'RS256', $2, $3, $4::jsonb, 'published', $5)`,
+      [input.kid, input.custodyProvider ?? 'local-pkcs8', input.custodyReference,
+        JSON.stringify(input.publicJwk), input.publishedAt ?? new Date()]
     ).then(() => undefined));
   }
 
@@ -1515,6 +1519,18 @@ export class PostgresSigningKeyRepository {
         'SELECT oauth.revoke_signing_key($1, $2) AS changed', [kid, observedAt]
       );
       return result.rows[0]?.changed === true;
+    });
+  }
+
+  async retire(kid: string, observedAt = new Date()): Promise<boolean> {
+    return this.#database.withAuthorizationService(async (client) => {
+      const result = await client.query(
+        `UPDATE oauth.signing_key_metadata
+         SET status = 'revoked', revoke_at = $2
+         WHERE kid = $1 AND status = 'retiring' AND retire_at <= $2`,
+        [kid, observedAt]
+      );
+      return result.rowCount === 1;
     });
   }
 }

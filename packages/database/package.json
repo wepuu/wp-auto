@@ -6,6 +6,7 @@
   "exports": { ".": "./dist/index.js" },
   "types": "./dist/index.d.ts",
   "dependencies": {
+    "@wepuu/key-custody": "workspace:*",
     "@wepuu/contracts": "workspace:*",
     "@wepuu/pairing": "workspace:*",
     "@wepuu/security-audit": "workspace:*",

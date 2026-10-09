@@ -17,8 +17,8 @@ import {
   secretArtifactCodecFromEnvironment
 } from '@wepuu/database';
 import {
-  AwsKmsKeyCustody,
-  createAwsKmsRevocationEventSigner,
+  localPkcs8KeyCustodyFromEnvironment,
+  signingKeyDescriptorFromPublicJwk,
   type KeyCustody
 } from '@wepuu/key-custody';
 import { allowRegisteredNativeLoopbackPort, createAuthorizationProvider } from '@wepuu/oauth-provider';
@@ -162,15 +162,10 @@ export async function startAuthorizationService(
   try {
     const signingKeys = new PostgresSigningKeyRepository(database);
     const lifecycle = await signingKeys.loadUsable();
-    const regionFor = (reference: string): string => {
-      const region = /^arn:aws(?:-us-gov|-cn)?:kms:([a-z0-9-]+):\d{12}:key\/[0-9a-f-]{36}$/iu.exec(reference)?.[1];
-      if (region === undefined) throw new Error('invalid_kms_custody_reference');
-      return region;
-    };
-    const custodyFor = (record: typeof lifecycle.active): AwsKmsKeyCustody => new AwsKmsKeyCustody({
-      region: regionFor(record.custodyReference), keyId: record.custodyReference, kid: record.kid
-    });
-    const activeCustody = custodyFor(lifecycle.active);
+    if (lifecycle.active.custodyProvider !== 'local-pkcs8') throw new Error('local_active_signing_key_required');
+    const activeCustody = await localPkcs8KeyCustodyFromEnvironment(
+      environment, lifecycle.active.custodyReference, lifecycle.active.kid
+    );
     const custody: KeyCustody = {
       describeSigningKey: () => activeCustody.describeSigningKey(),
       async sign(input) {
@@ -178,16 +173,16 @@ export async function startAuthorizationService(
         return activeCustody.sign(input);
       }
     };
-    const verificationKeys = lifecycle.verification.map((record) => {
+    const verificationKeys = await Promise.all(lifecycle.verification.map(async (record) => {
       if (record.status === 'active') throw new Error('multiple_active_signing_keys');
-      return { custody: custodyFor(record), status: record.status };
-    });
-    await custody.describeSigningKey();
-    for (const record of [lifecycle.active, ...lifecycle.verification]) {
-      const descriptor = await custodyFor(record).describeSigningKey();
-      if (descriptor.publicJwk.n !== record.publicJwk['n'] || descriptor.publicJwk.e !== record.publicJwk['e']
-        || descriptor.publicJwk.kid !== record.kid) throw new Error('kms_public_key_metadata_mismatch');
-    }
+      return {
+        descriptor: await signingKeyDescriptorFromPublicJwk(record.publicJwk, record.custodyProvider !== 'aws-kms'),
+        status: record.status
+      };
+    }));
+    const activeDescriptor = await custody.describeSigningKey();
+    if (activeDescriptor.publicJwk.n !== lifecycle.active.publicJwk['n']
+      || activeDescriptor.publicJwk.e !== lifecycle.active.publicJwk['e']) throw new Error('local_public_key_metadata_mismatch');
     const rateLimitCodec = rateLimitSubjectCodecFromEnvironment(environment);
     const clients = await new PostgresOAuthClientRepository(database).loadActivePublicClients();
     const provider = await createAuthorizationProvider({
@@ -204,11 +199,7 @@ export async function startAuthorizationService(
     const sessions = new PostgresAccountSessionStore(database);
     const authorizationGrants = new PostgresAuthorizationGrantRepository(database);
     const rateLimiter = new PostgresOAuthRateLimiter(database, rateLimitCodec);
-    const revocationSigner = createAwsKmsRevocationEventSigner({
-      region: regionFor(lifecycle.active.custodyReference),
-      keyId: lifecycle.active.custodyReference,
-      kid: lifecycle.active.kid
-    });
+    const revocationSigner = activeCustody.revocationEventSigner();
     const revocationWorker = new RevocationWorker({
       outbox: new PostgresRevocationOutbox(database),
       signer: {

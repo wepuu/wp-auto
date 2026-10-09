@@ -1,27 +1,12 @@
-import {
-  DescribeKeyCommand,
-  GetPublicKeyCommand,
-  KeySpec,
-  KeyState,
-  KeyUsageType,
-  KMSClient,
-  MessageType,
-  SignCommand,
-  SigningAlgorithmSpec,
-  type DescribeKeyCommandOutput,
-  type GetPublicKeyCommandOutput,
-  type SignCommandOutput
-} from '@aws-sdk/client-kms';
-import { createPrivateKey, createPublicKey, type JsonWebKey, type KeyObject } from 'node:crypto';
-import { SignJWT } from 'jose';
+import { lstat, readFile } from 'node:fs/promises';
+import { createPrivateKey, createPublicKey, sign as rsaSign, type JsonWebKey, type KeyObject } from 'node:crypto';
+import { isAbsolute } from 'node:path';
+import { calculateJwkThumbprint, SignJWT } from 'jose';
 import { z } from 'zod';
 
-export const KeyCustodyConfigSchema = z.object({
-  region: z.string().min(1).max(64),
-  keyId: z.string().min(1).max(2048),
-  kid: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u)
-}).strict();
-export type KeyCustodyConfig = z.infer<typeof KeyCustodyConfigSchema>;
+const KidSchema = z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u);
+const publicMembers = ['kty', 'n', 'e', 'kid', 'alg', 'use'] as const;
+const privateMembers = ['d', 'p', 'q', 'dp', 'dq', 'qi', 'oth'] as const;
 
 export interface SigningKeyDescriptor {
   readonly kid: string;
@@ -35,139 +20,6 @@ export interface KeyCustody {
   sign(signingInput: Uint8Array): Promise<Uint8Array>;
 }
 
-/** Signs the bounded platform consent request through a JOSE-managed JWS. */
-export class JoseConsentRequestSigner {
-  readonly #privateKey: KeyObject;
-  readonly #kid: string;
-
-  constructor(privateKey: KeyObject, kid: string) {
-    if (privateKey.type !== 'private' || !/^[A-Za-z0-9_-]{8,128}$/u.test(kid)) {
-      throw new KeyCustodyUnavailableError();
-    }
-    this.#privateKey = privateKey;
-    this.#kid = kid;
-  }
-
-  async sign(payload: Readonly<Record<string, unknown>>): Promise<string> {
-    try {
-      return await new SignJWT({ ...payload })
-        .setProtectedHeader({ alg: 'RS256', typ: 'wepuu-consent-request+jwt', kid: this.#kid })
-        .sign(this.#privateKey);
-    } catch {
-      throw new KeyCustodyUnavailableError();
-    }
-  }
-}
-
-const RevocationEventSchema = z.object({
-  issuer: z.url().refine((value) => value.startsWith('https://')),
-  resource: z.url().refine((value) => value.startsWith('https://')),
-  tenantId: z.uuid(),
-  siteId: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u),
-  sequence: z.number().int().positive(),
-  eventType: z.enum(['grant', 'site', 'subject', 'token', 'key']),
-  grantId: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u).optional(),
-  tokenJtiHash: z.string().regex(/^[A-Za-z0-9_-]{43}$/u).optional(),
-  keyId: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u).optional(),
-  reason: z.string().regex(/^[a-z][a-z0-9_.-]{2,63}$/u)
-}).strict().superRefine((value, context) => {
-  if (value.eventType === 'grant' && value.grantId === undefined) {
-    context.addIssue({ code: 'custom', message: 'grant_id_required' });
-  }
-  if (value.eventType === 'token' && value.tokenJtiHash === undefined) {
-    context.addIssue({ code: 'custom', message: 'token_jti_hash_required' });
-  }
-  if (value.eventType === 'key' && value.keyId === undefined) {
-    context.addIssue({ code: 'custom', message: 'key_id_required' });
-  }
-});
-
-export type RevocationEvent = z.infer<typeof RevocationEventSchema>;
-
-/** Creates the compact, content-free event accepted by the paired connector. */
-export class JoseRevocationEventSigner {
-  readonly #privateKey: KeyObject;
-  readonly #kid: string;
-
-  constructor(privateKey: KeyObject, kid: string) {
-    if (privateKey.type !== 'private' || !/^[A-Za-z0-9_-]{8,128}$/u.test(kid)) {
-      throw new KeyCustodyUnavailableError();
-    }
-    this.#privateKey = privateKey;
-    this.#kid = kid;
-  }
-
-  async sign(input: RevocationEvent, now = new Date()): Promise<string> {
-    const event = RevocationEventSchema.parse(input);
-    const issuedAt = Math.floor(now.getTime() / 1_000);
-    try {
-      return await new SignJWT({
-        kind: 'revocation',
-        protocol_version: '1',
-        tenant_id: event.tenantId,
-        site_id: event.siteId,
-        sequence: event.sequence,
-        event_type: event.eventType,
-        reason: event.reason,
-        ...(event.grantId === undefined ? {} : { grant_id: event.grantId }),
-        ...(event.tokenJtiHash === undefined ? {} : { token_jti_hash: event.tokenJtiHash }),
-        ...(event.keyId === undefined ? {} : { key_id: event.keyId })
-      })
-        .setProtectedHeader({ alg: 'RS256', typ: 'wepuu-revocation+jwt', kid: this.#kid })
-        .setIssuer(event.issuer)
-        .setAudience(event.resource)
-        .setIssuedAt(issuedAt)
-        .setNotBefore(issuedAt - 5)
-        .setExpirationTime(issuedAt + 60)
-        .sign(this.#privateKey);
-    } catch {
-      throw new KeyCustodyUnavailableError();
-    }
-  }
-}
-
-/**
- * Load one AWS KMS asymmetric key through the Node 26.7+ OpenSSL provider.
- * The process must start with `--import @keyobject/aws-kms/register`.
- */
-export function createAwsKmsConsentRequestSigner(input: KeyCustodyConfig): JoseConsentRequestSigner {
-  const config = KeyCustodyConfigSchema.parse(input);
-  const keyArn = /^arn:aws(?:-us-gov|-cn)?:kms:([a-z0-9-]+):\d{12}:key\/[0-9a-f-]{36}$/iu.exec(config.keyId);
-  if (!/^[a-z]{2}(?:-gov)?-[a-z0-9-]+-\d$/u.test(config.region)
-    || keyArn?.[1] !== config.region) {
-    throw new KeyCustodyUnavailableError();
-  }
-  try {
-    // @types/node 24 does not yet describe Node 26.7's OpenSSL STORE URL overload.
-    // The production engine floor and runtime acceptance test guard this narrow cast.
-    const createPrivateKeyFromStoreUrl = createPrivateKey as unknown as (options: { readonly key: URL }) => KeyObject;
-    const key = createPrivateKeyFromStoreUrl({
-      key: new URL(`aws-kms:key-id=${config.keyId};region=${config.region}`)
-    });
-    return new JoseConsentRequestSigner(key, config.kid);
-  } catch {
-    throw new KeyCustodyUnavailableError();
-  }
-}
-
-/** Load the same managed key into a signer restricted to revocation-event JWS. */
-export function createAwsKmsRevocationEventSigner(input: KeyCustodyConfig): JoseRevocationEventSigner {
-  const config = KeyCustodyConfigSchema.parse(input);
-  const keyArn = /^arn:aws(?:-us-gov|-cn)?:kms:([a-z0-9-]+):\d{12}:key\/[0-9a-f-]{36}$/iu.exec(config.keyId);
-  if (!/^[a-z]{2}(?:-gov)?-[a-z0-9-]+-\d$/u.test(config.region) || keyArn?.[1] !== config.region) {
-    throw new KeyCustodyUnavailableError();
-  }
-  try {
-    const createPrivateKeyFromStoreUrl = createPrivateKey as unknown as (options: { readonly key: URL }) => KeyObject;
-    const key = createPrivateKeyFromStoreUrl({
-      key: new URL(`aws-kms:key-id=${config.keyId};region=${config.region}`)
-    });
-    return new JoseRevocationEventSigner(key, config.kid);
-  } catch {
-    throw new KeyCustodyUnavailableError();
-  }
-}
-
 export class KeyCustodyUnavailableError extends Error {
   constructor() {
     super('key_custody_unavailable');
@@ -175,86 +27,192 @@ export class KeyCustodyUnavailableError extends Error {
   }
 }
 
-export interface KmsClientLike {
-  send(command: DescribeKeyCommand): Promise<DescribeKeyCommandOutput>;
-  send(command: GetPublicKeyCommand): Promise<GetPublicKeyCommandOutput>;
-  send(command: SignCommand): Promise<SignCommandOutput>;
+const KeyringSchema = z.object({
+  keys: z.array(z.object({
+    slot: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/u),
+    privateKeyFile: z.string().min(1).max(4096),
+    passphraseFile: z.string().min(1).max(4096)
+  }).strict()).min(1).max(8)
+}).strict();
+
+export type LocalKeyring = z.infer<typeof KeyringSchema>;
+
+async function readProtectedFile(path: string, production: boolean, maximumBytes: number): Promise<Buffer> {
+  if (!isAbsolute(path)) throw new KeyCustodyUnavailableError();
+  try {
+    const metadata = await lstat(path);
+    if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size < 1 || metadata.size > maximumBytes) {
+      throw new KeyCustodyUnavailableError();
+    }
+    if (production && process.platform !== 'win32') {
+      if ((metadata.mode & 0o077) !== 0 || (typeof process.getuid === 'function' && metadata.uid !== process.getuid())) {
+        throw new KeyCustodyUnavailableError();
+      }
+    }
+    return await readFile(path);
+  } catch {
+    throw new KeyCustodyUnavailableError();
+  }
 }
 
-const expectedSigningAlgorithm = SigningAlgorithmSpec.RSASSA_PKCS1_V1_5_SHA_256;
-const allowedKeySpecs: ReadonlySet<KeySpec> = new Set([KeySpec.RSA_2048, KeySpec.RSA_3072, KeySpec.RSA_4096]);
+function canonicalPublicJwk(publicKey: KeyObject, kid: string): SigningKeyDescriptor['publicJwk'] {
+  const exported = publicKey.export({ format: 'jwk' });
+  if (exported.kty !== 'RSA' || typeof exported.n !== 'string' || typeof exported.e !== 'string') throw new KeyCustodyUnavailableError();
+  const jwk = Object.freeze({ kty: 'RSA', n: exported.n, e: exported.e, kid, alg: 'RS256', use: 'sig' } as const);
+  return jwk;
+}
 
-export class AwsKmsKeyCustody implements KeyCustody {
-  readonly #config: KeyCustodyConfig;
-  readonly #client: KmsClientLike;
-  #descriptor: SigningKeyDescriptor | undefined;
+export async function signingKeyDescriptorFromPublicJwk(
+  input: Readonly<Record<string, unknown>>,
+  requireThumbprintKid = true
+): Promise<SigningKeyDescriptor> {
+  try {
+    if (privateMembers.some((member) => input[member] !== undefined)
+      || input['kty'] !== 'RSA' || input['alg'] !== 'RS256' || input['use'] !== 'sig') {
+      throw new KeyCustodyUnavailableError();
+    }
+    const kid = KidSchema.parse(input['kid']);
+    const publicJwk = Object.fromEntries(publicMembers.map((member) => [member, input[member]])) as JsonWebKey;
+    const publicKey = createPublicKey({ key: publicJwk, format: 'jwk' });
+    const canonical = canonicalPublicJwk(publicKey, kid);
+    if (requireThumbprintKid && await calculateJwkThumbprint(canonical, 'sha256') !== kid) throw new KeyCustodyUnavailableError();
+    return Object.freeze({ kid, algorithm: 'RS256', publicKey, publicJwk: canonical });
+  } catch {
+    throw new KeyCustodyUnavailableError();
+  }
+}
 
-  constructor(input: KeyCustodyConfig, client?: KmsClientLike) {
-    this.#config = KeyCustodyConfigSchema.parse(input);
-    this.#client = client ?? new KMSClient({ region: this.#config.region });
+export class LocalPkcs8KeyCustody implements KeyCustody {
+  readonly #privateKey: KeyObject;
+  readonly #descriptor: SigningKeyDescriptor;
+
+  private constructor(privateKey: KeyObject, descriptor: SigningKeyDescriptor) {
+    this.#privateKey = privateKey;
+    this.#descriptor = descriptor;
+  }
+
+  static async load(input: Readonly<{
+    privateKeyFile: string;
+    passphraseFile: string;
+    production?: boolean;
+    expectedKid?: string;
+  }>): Promise<LocalPkcs8KeyCustody> {
+    try {
+      const [pem, passphraseBytes] = await Promise.all([
+        readProtectedFile(input.privateKeyFile, input.production === true, 32_768),
+        readProtectedFile(input.passphraseFile, input.production === true, 1_024)
+      ]);
+      const passphrase = passphraseBytes.toString('utf8').replace(/\r?\n$/u, '');
+      if (passphrase.length < 16) throw new KeyCustodyUnavailableError();
+      if (!/^-----BEGIN ENCRYPTED PRIVATE KEY-----\r?\n/u.test(pem.toString('ascii'))) {
+        throw new KeyCustodyUnavailableError();
+      }
+      const privateKey = createPrivateKey({ key: pem, format: 'pem', type: 'pkcs8', passphrase });
+      if (privateKey.type !== 'private' || privateKey.asymmetricKeyType !== 'rsa'
+        || (privateKey.asymmetricKeyDetails?.modulusLength ?? 0) < 3072) throw new KeyCustodyUnavailableError();
+      const publicKey = createPublicKey(privateKey);
+      const provisional = canonicalPublicJwk(publicKey, 'provisional');
+      const kid = await calculateJwkThumbprint(provisional, 'sha256');
+      if (input.expectedKid !== undefined && KidSchema.parse(input.expectedKid) !== kid) throw new KeyCustodyUnavailableError();
+      const descriptor = Object.freeze({
+        kid, algorithm: 'RS256' as const, publicKey, publicJwk: canonicalPublicJwk(publicKey, kid)
+      });
+      return new LocalPkcs8KeyCustody(privateKey, descriptor);
+    } catch {
+      throw new KeyCustodyUnavailableError();
+    }
   }
 
   async describeSigningKey(): Promise<SigningKeyDescriptor> {
-    if (this.#descriptor !== undefined) return this.#descriptor;
-    try {
-      const description = await this.#client.send(new DescribeKeyCommand({ KeyId: this.#config.keyId }));
-      const metadata = description.KeyMetadata;
-      if (
-        metadata?.Enabled !== true ||
-        metadata.KeyState !== KeyState.Enabled ||
-        metadata.KeyUsage !== KeyUsageType.SIGN_VERIFY ||
-        metadata.KeySpec === undefined ||
-        !allowedKeySpecs.has(metadata.KeySpec) ||
-        metadata.SigningAlgorithms?.includes(expectedSigningAlgorithm) !== true
-      ) {
-        throw new KeyCustodyUnavailableError();
-      }
-
-      const result = await this.#client.send(new GetPublicKeyCommand({ KeyId: this.#config.keyId }));
-      if (!(result.PublicKey instanceof Uint8Array)) throw new KeyCustodyUnavailableError();
-      const publicKey = createPublicKey({ key: Buffer.from(result.PublicKey), format: 'der', type: 'spki' });
-      const publicJwk = {
-        ...publicKey.export({ format: 'jwk' }),
-        kid: this.#config.kid,
-        alg: 'RS256',
-        use: 'sig'
-      } as const;
-      this.#descriptor = Object.freeze({
-        kid: this.#config.kid,
-        algorithm: 'RS256',
-        publicKey,
-        publicJwk: Object.freeze(publicJwk)
-      });
-      return this.#descriptor;
-    } catch {
-      throw new KeyCustodyUnavailableError();
-    }
+    return await Promise.resolve(this.#descriptor);
   }
 
   async sign(signingInput: Uint8Array): Promise<Uint8Array> {
-    if (signingInput.byteLength === 0 || signingInput.byteLength > 4096) {
-      throw new KeyCustodyUnavailableError();
-    }
-    await this.describeSigningKey();
+    if (signingInput.byteLength === 0 || signingInput.byteLength > 4096) throw new KeyCustodyUnavailableError();
     try {
-      const result = await this.#client.send(new SignCommand({
-        KeyId: this.#config.keyId,
-        Message: signingInput,
-        MessageType: MessageType.RAW,
-        SigningAlgorithm: expectedSigningAlgorithm
-      }));
-      if (!(result.Signature instanceof Uint8Array)) throw new KeyCustodyUnavailableError();
-      return new Uint8Array(result.Signature);
+      return await Promise.resolve(new Uint8Array(rsaSign('RSA-SHA256', signingInput, this.#privateKey)));
     } catch {
       throw new KeyCustodyUnavailableError();
     }
   }
+
+  consentRequestSigner(): JoseConsentRequestSigner {
+    return new JoseConsentRequestSigner(this.#privateKey, this.#descriptor.kid);
+  }
+
+  revocationEventSigner(): JoseRevocationEventSigner {
+    return new JoseRevocationEventSigner(this.#privateKey, this.#descriptor.kid);
+  }
 }
 
-export function keyCustodyConfigFromEnvironment(environment: NodeJS.ProcessEnv): KeyCustodyConfig {
-  return KeyCustodyConfigSchema.parse({
-    region: environment['AWS_REGION'],
-    keyId: environment['WEPUU_KMS_KEY_ID'],
-    kid: environment['WEPUU_KMS_KID']
-  });
+export async function localPkcs8KeyCustodyFromEnvironment(
+  environment: NodeJS.ProcessEnv,
+  slot: string,
+  expectedKid?: string
+): Promise<LocalPkcs8KeyCustody> {
+  const manifestPath = environment['WEPUU_SIGNING_KEYRING_FILE'];
+  if (manifestPath === undefined) throw new KeyCustodyUnavailableError();
+  const production = environment['WEPUU_DEPLOYMENT_MODE'] === 'staging'
+    || environment['WEPUU_DEPLOYMENT_MODE'] === 'production';
+  const serialized = await readProtectedFile(manifestPath, production, 32_768);
+  try {
+    const manifest = KeyringSchema.parse(JSON.parse(serialized.toString('utf8')) as unknown);
+    if (new Set(manifest.keys.map((entry) => entry.slot)).size !== manifest.keys.length) throw new KeyCustodyUnavailableError();
+    const entry = manifest.keys.find((candidate) => candidate.slot === slot);
+    if (entry === undefined) throw new KeyCustodyUnavailableError();
+    return await LocalPkcs8KeyCustody.load({ ...entry, production, ...(expectedKid === undefined ? {} : { expectedKid }) });
+  } catch {
+    throw new KeyCustodyUnavailableError();
+  }
+}
+
+/** Signs the bounded platform consent request through panva/jose. */
+export class JoseConsentRequestSigner {
+  constructor(private readonly privateKey: KeyObject, private readonly kid: string) {
+    if (privateKey.type !== 'private' || !KidSchema.safeParse(kid).success) throw new KeyCustodyUnavailableError();
+  }
+  async sign(payload: Readonly<Record<string, unknown>>): Promise<string> {
+    try {
+      return await new SignJWT({ ...payload })
+        .setProtectedHeader({ alg: 'RS256', typ: 'wepuu-consent-request+jwt', kid: this.kid })
+        .sign(this.privateKey);
+    } catch { throw new KeyCustodyUnavailableError(); }
+  }
+}
+
+const RevocationEventSchema = z.object({
+  issuer: z.url().refine((value) => value.startsWith('https://')),
+  resource: z.url().refine((value) => value.startsWith('https://')),
+  tenantId: z.uuid(), siteId: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u),
+  sequence: z.number().int().positive(), eventType: z.enum(['grant', 'site', 'subject', 'token', 'key']),
+  grantId: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u).optional(),
+  tokenJtiHash: z.string().regex(/^[A-Za-z0-9_-]{43}$/u).optional(),
+  keyId: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u).optional(),
+  reason: z.string().regex(/^[a-z][a-z0-9_.-]{2,63}$/u)
+}).strict().superRefine((value, context) => {
+  if (value.eventType === 'grant' && value.grantId === undefined) context.addIssue({ code: 'custom', message: 'grant_id_required' });
+  if (value.eventType === 'token' && value.tokenJtiHash === undefined) context.addIssue({ code: 'custom', message: 'token_jti_hash_required' });
+  if (value.eventType === 'key' && value.keyId === undefined) context.addIssue({ code: 'custom', message: 'key_id_required' });
+});
+export type RevocationEvent = z.infer<typeof RevocationEventSchema>;
+
+export class JoseRevocationEventSigner {
+  constructor(private readonly privateKey: KeyObject, private readonly kid: string) {
+    if (privateKey.type !== 'private' || !KidSchema.safeParse(kid).success) throw new KeyCustodyUnavailableError();
+  }
+  async sign(input: RevocationEvent, now = new Date()): Promise<string> {
+    const event = RevocationEventSchema.parse(input);
+    const issuedAt = Math.floor(now.getTime() / 1_000);
+    try {
+      return await new SignJWT({
+        kind: 'revocation', protocol_version: '1', tenant_id: event.tenantId, site_id: event.siteId,
+        sequence: event.sequence, event_type: event.eventType, reason: event.reason,
+        ...(event.grantId === undefined ? {} : { grant_id: event.grantId }),
+        ...(event.tokenJtiHash === undefined ? {} : { token_jti_hash: event.tokenJtiHash }),
+        ...(event.keyId === undefined ? {} : { key_id: event.keyId })
+      }).setProtectedHeader({ alg: 'RS256', typ: 'wepuu-revocation+jwt', kid: this.kid })
+        .setIssuer(event.issuer).setAudience(event.resource).setIssuedAt(issuedAt)
+        .setNotBefore(issuedAt - 5).setExpirationTime(issuedAt + 60).sign(this.privateKey);
+    } catch { throw new KeyCustodyUnavailableError(); }
+  }
 }

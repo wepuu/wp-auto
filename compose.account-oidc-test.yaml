@@ -137,14 +137,13 @@ services:
       WEPUU_CONTROL_HOST: 0.0.0.0
       WEPUU_CONTROL_PORT: "3000"
       NODE_EXTRA_CA_CERTS: /caddy-data/caddy/pki/authorities/local/root.crt
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
-      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
-      AWS_REGION: us-east-1
-      WEPUU_KMS_KEY_ID: arn:aws:kms:us-east-1:453168420598:key/40426a27-701e-4fd3-b17b-4345ed26e2c3
-      WEPUU_KMS_KID: wepuu-test-2026-01
+      WEPUU_SIGNING_KEYRING_FILE: /run/secrets/wepuu-signing-keyring.json
+      WEPUU_SIGNING_KEY_SLOT: account-oidc-test
     volumes:
       - account-oidc-caddy-data:/caddy-data:ro
+      - ${WEPUU_SIGNING_KEYRING_HOST_FILE:?set WEPUU_SIGNING_KEYRING_HOST_FILE}:/run/secrets/wepuu-signing-keyring.json:ro
+      - ${WEPUU_SIGNING_PRIVATE_KEY_HOST_FILE:?set WEPUU_SIGNING_PRIVATE_KEY_HOST_FILE}:/run/secrets/wepuu-signing-private.pem:ro
+      - ${WEPUU_SIGNING_PASSPHRASE_HOST_FILE:?set WEPUU_SIGNING_PASSPHRASE_HOST_FILE}:/run/secrets/wepuu-signing-passphrase:ro
     networks:
       - default
       - pairing-public
@@ -175,13 +174,14 @@ services:
       WEPUU_COOKIE_KEYS_JSON: ${WEPUU_COOKIE_KEYS_JSON:-}
       WEPUU_OAUTH_ARTIFACT_KEYS_JSON: ${WEPUU_OAUTH_ARTIFACT_KEYS_JSON:-}
       WEPUU_RATE_LIMIT_HMAC_KEY: ${WEPUU_RATE_LIMIT_HMAC_KEY:-}
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
-      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
-      AWS_REGION: ${AWS_REGION:-us-east-1}
+      WEPUU_SIGNING_KEYRING_FILE: /run/secrets/wepuu-signing-keyring.json
+      WEPUU_SIGNING_KEY_SLOT: account-oidc-test
       NODE_EXTRA_CA_CERTS: /caddy-data/caddy/pki/authorities/local/root.crt
     volumes:
       - account-oidc-caddy-data:/caddy-data:ro
+      - ${WEPUU_SIGNING_KEYRING_HOST_FILE:?set WEPUU_SIGNING_KEYRING_HOST_FILE}:/run/secrets/wepuu-signing-keyring.json:ro
+      - ${WEPUU_SIGNING_PRIVATE_KEY_HOST_FILE:?set WEPUU_SIGNING_PRIVATE_KEY_HOST_FILE}:/run/secrets/wepuu-signing-private.pem:ro
+      - ${WEPUU_SIGNING_PASSPHRASE_HOST_FILE:?set WEPUU_SIGNING_PASSPHRASE_HOST_FILE}:/run/secrets/wepuu-signing-passphrase:ro
     networks:
       - default
       - pairing-public

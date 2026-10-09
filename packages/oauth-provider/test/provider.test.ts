@@ -115,11 +115,12 @@ test('authorization provider publishes metadata and public-only JWKS through ext
 test('JWKS publishes active then overlap keys without private material', async (t) => {
   const active = fakeCustody();
   const previous = fakeCustody('kms-key-previous');
+  const previousDescriptor = await previous.describeSigningKey();
   const provider = await createAuthorizationProvider({
     issuer: 'https://auth.example.test',
     cookieKeys: ['a'.repeat(32), 'b'.repeat(32)],
     keyCustody: active,
-    verificationKeys: [{ custody: previous, status: 'retiring' }],
+    verificationKeys: [{ descriptor: previousDescriptor, status: 'retiring' }],
     adapter: memoryAdapter(),
     resourceRegistry: new DenyAllResourceRegistry(),
     grantClaimsResolver: new DenyAllGrantClaimsResolver(),

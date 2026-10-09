@@ -8,7 +8,7 @@ guide, not production-deployment authorization.
 - OCI/Docker-compatible Linux host outside AWS.
 - External PostgreSQL with encrypted transport and tested backups.
 - TLS reverse proxy forwarding only from explicitly configured CIDRs.
-- Outbound HTTPS to the external account OIDC provider, AWS STS, AWS KMS and
+- Outbound HTTPS to the external account OIDC provider and
   paired WordPress control endpoints. MCP traffic does not use this host.
 - Read-only containers, non-root users, dropped capabilities and a bounded
   `/tmp` tmpfs.
@@ -18,28 +18,31 @@ Build with `deploy/Control.Containerfile` and
 services to loopback so a separately managed TLS proxy remains the only public
 listener.
 
-## AWS KMS from a non-AWS server
+## Local signing custody
 
-Preferred: configure the hosting provider's workload OIDC issuer in AWS IAM,
-restrict the role trust policy to the exact workload subject and audience, and
-provide `AWS_ROLE_ARN` plus `AWS_WEB_IDENTITY_TOKEN_FILE`. The AWS SDK exchanges
-that assertion for short-lived STS credentials.
+Run `pnpm keys:generate -- --private-key-file PATH --passphrase-file PATH` on a
+trusted operator host. It creates an encrypted RSA-3072 PKCS#8 key and a
+separate random passphrase, refuses overwrite, applies mode `0600`, and prints
+only the RFC 7638 `kid` and public JWK.
 
-Fallback: configure IAM Roles Anywhere with a dedicated trust anchor, profile
-and least-privilege role, then expose its helper through the standard AWS
-`credential_process` configuration. Certificate private material belongs in
-the host secret facility, never the image or repository.
+Create a non-secret keyring JSON such as:
 
-The role may use only `kms:DescribeKey`, `kms:GetPublicKey` and `kms:Sign` for
-the explicitly approved key ARNs. Production mode refuses static
-`AWS_ACCESS_KEY_ID` or `AWS_SECRET_ACCESS_KEY` values.
+```json
+{"keys":[{"slot":"primary","privateKeyFile":"/run/secrets/signing_private_key","passphraseFile":"/run/secrets/signing_passphrase"}]}
+```
 
-Set `WEPUU_AWS_CREDENTIAL_MODE=web_identity` with `AWS_ROLE_ARN` and
-`AWS_WEB_IDENTITY_TOKEN_FILE`, or set it to `credential_process` with an
-explicit `AWS_PROFILE` and `AWS_CONFIG_FILE`. Public modes also require an
-independent `WEPUU_OPERATIONS_METRICS_TOKEN` of at least 32 characters. The
-token belongs in the host secret facility and protects only
-`/internal/metrics`; it is not an OAuth credential.
+Mount all three files read-only and owned by the container UID at mode `0400`.
+Set `WEPUU_SIGNING_KEYRING_FILE=/run/secrets/signing_keyring` and
+`WEPUU_SIGNING_KEY_SLOT=primary`. Compose secrets are host file mounts; protect
+the source files and keep two encrypted offline copies with passphrases stored
+separately.
+
+Publish with `pnpm keys:publish -- --slot primary`, wait at least 20 minutes,
+then run `pnpm keys:activate -- --kid KID`. After the retiring deadline, run
+`pnpm keys:retire -- --kid OLD_KID` and remove that old private-key Secret.
+These database commands require `WEPUU_DATABASE_URL`. Public modes also require
+an independent `WEPUU_OPERATIONS_METRICS_TOKEN` of at least 32 characters. The
+token protects only `/internal/metrics`; it is not an OAuth credential.
 
 Liveness is available at `/livez`. Readiness at `/readyz` fails closed when the
 database check is uncertain. The product-shell readiness page reports category

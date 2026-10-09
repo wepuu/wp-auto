@@ -4,6 +4,7 @@ import { Database, DataLifecycleService } from '../packages/database/dist/index.
 
 const databaseUrl = process.env['WEPUU_TEST_DATABASE_URL'];
 if (typeof databaseUrl !== 'string' || databaseUrl.length === 0) throw new Error('WEPUU_TEST_DATABASE_URL is required');
+const docker = process.env['DOCKER_BIN'] ?? 'docker';
 
 const tenantId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const accountId = 'account_BACKUP01';
@@ -31,11 +32,11 @@ async function run(command, args, input) {
 }
 
 const container = process.env['WEPUU_POSTGRES_CONTAINER']
-  ?? await run('docker', ['compose', '-f', 'compose.test.yaml', 'ps', '-q', 'postgres']);
+  ?? await run(docker, ['compose', '-f', 'compose.test.yaml', 'ps', '-q', 'postgres']);
 if (!container) throw new Error('WEPUU_POSTGRES_CONTAINER is required when compose cannot identify postgres');
 
 async function execInPostgres(args, input) {
-  return run('docker', ['exec', '-i', container, ...args], input);
+  return run(docker, ['exec', '-i', container, ...args], input);
 }
 
 async function sql(database, statement) {

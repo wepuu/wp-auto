@@ -1,5 +1,8 @@
 # AWS KMS hosted-CI acceptance
 
+> Historical acceptance record only. ADR-016 removed the live-KMS CI job and
+> its configuration script. Do not recreate AWS credentials from this record.
+
 This test-only setup lets GitHub Actions use the existing RSA KMS key through
 short-lived OIDC credentials. It does not store an AWS access key in GitHub.
 

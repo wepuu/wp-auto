@@ -7,7 +7,7 @@ This is a logical model, not a migration specification. Names and field types ma
 | Class | Examples | Rule |
 |---|---|---|
 | Secret | authorization code, pairing verifier, refresh token | never store plaintext; hash immediately; never log |
-| Key material | signing private key | KMS/HSM only; database stores reference, public metadata |
+| Key material | signing private key | encrypted PKCS#8 file/Docker Secret only; database stores logical slot and public metadata |
 | Restricted identity | platform account email, MFA state | encrypt as appropriate; least privilege; explicit retention |
 | Control metadata | tenant/site/grant/client IDs, canonical resource | tenant scoped; audit access; no content enrichment |
 | Public protocol | issuer metadata, JWKS public keys | cacheable and intentionally public |
@@ -127,7 +127,7 @@ Rotation uses a serializable or otherwise proven atomic transition. Used token h
 ### signing_keys
 
 - `kid`, algorithm, public JWK/thumbprint
-- KMS/HSM key reference, never private key bytes
+- custody provider plus logical local key slot, never a path, passphrase or private key bytes
 - publish, activate, retire, revoke, and delete timestamps
 - lifecycle/status and rotation correlation ID
 

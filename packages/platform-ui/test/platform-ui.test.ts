@@ -20,7 +20,7 @@ test('local deployment accepts placeholders while public modes require final rel
   }), /public_deployment_config_incomplete/u);
 });
 
-test('production rejects static AWS credentials and accepts temporary-credential configuration', () => {
+test('production requires protected local signing configuration', () => {
   const release = {
     WEPUU_DEPLOYMENT_MODE: 'production',
     WEPUU_CONTROL_PUBLIC_ORIGIN: 'https://platform.wepuu.dev',
@@ -36,15 +36,11 @@ test('production rejects static AWS credentials and accepts temporary-credential
     WEPUU_IDENTITY_PROVIDER_LABEL: 'Production OIDC',
     WEPUU_RETENTION_POLICY_VERSION: '2026-10-07',
     WEPUU_COMPATIBILITY_MATRIX_VERSION: '2026-10',
-    WEPUU_AWS_CREDENTIAL_MODE: 'web_identity',
-    AWS_ROLE_ARN: 'arn:aws:iam::123456789012:role/wepuu-production-kms',
-    AWS_WEB_IDENTITY_TOKEN_FILE: '/run/secrets/aws-token',
+    WEPUU_SIGNING_KEYRING_FILE: '/run/secrets/wepuu-keyring.json',
+    WEPUU_SIGNING_KEY_SLOT: 'primary',
     WEPUU_OPERATIONS_METRICS_TOKEN: 'm'.repeat(32)
   };
   assert.equal(loadPublicDeploymentConfig(release).deploymentMode, 'production');
-  assert.throws(() => loadPublicDeploymentConfig({
-    ...release, AWS_ACCESS_KEY_ID: 'AKIAEXAMPLE00000000', AWS_SECRET_ACCESS_KEY: 'not-a-real-secret'
-  }), /production_static_aws_credentials_forbidden/u);
   assert.throws(() => loadPublicDeploymentConfig({
     WEPUU_CONTROL_PUBLIC_ORIGIN: 'https://other.wepuu.dev'
   }, 'https://platform.wepuu.dev'), /public_origin_mismatch/u);
@@ -59,18 +55,16 @@ test('readiness reports categories without exposing secret values or paths', () 
     WEPUU_IDENTITY_PROVIDER_LABEL: 'Test OIDC',
     WEPUU_RETENTION_POLICY_VERSION: '2026-10-07',
     WEPUU_COMPATIBILITY_MATRIX_VERSION: '2026-10',
-    WEPUU_AWS_CREDENTIAL_MODE: 'web_identity',
+    WEPUU_SIGNING_KEYRING_FILE: '/run/secrets/keyring.json',
+    WEPUU_SIGNING_KEY_SLOT: 'primary',
     WEPUU_ACCOUNT_OIDC_ISSUER: 'https://identity.example.test/',
     WEPUU_ACCOUNT_OIDC_CLIENT_ID: 'client',
-    AWS_ROLE_ARN: 'arn:aws:iam::123456789012:role/wepuu',
-    AWS_WEB_IDENTITY_TOKEN_FILE: '/secret/token'
   };
   const report = evaluateDeploymentReadiness(loadPublicDeploymentConfig(environment), environment);
   assert.equal(report.ready, false);
   const serialized = JSON.stringify(report);
-  assert.equal(serialized.includes('/secret/token'), false);
-  assert.equal(serialized.includes('arn:aws'), false);
-  assert.deepEqual(report.checks.map((check) => check.id), ['release', 'legal', 'identity', 'residency', 'proxy', 'kms']);
+  assert.equal(serialized.includes('/run/secrets/keyring.json'), false);
+  assert.deepEqual(report.checks.map((check) => check.id), ['release', 'legal', 'identity', 'residency', 'proxy', 'signing']);
 });
 
 test('rendering escapes untrusted values and uses only self-hosted assets', () => {

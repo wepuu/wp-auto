@@ -117,7 +117,7 @@ export interface AuthorizationProviderOptions {
   readonly cookieKeys: readonly string[];
   readonly keyCustody: KeyCustody;
   readonly verificationKeys?: readonly Readonly<{
-    custody: KeyCustody;
+    descriptor: SigningKeyDescriptor;
     status: 'published' | 'retiring';
   }>[];
   readonly adapter: OidcAdapterConstructor;
@@ -189,6 +189,14 @@ class CustodyExternalSigningKey extends ExternalSigningKey {
   }
 }
 
+class PublicExternalSigningKey extends ExternalSigningKey {
+  constructor(private readonly descriptor: SigningKeyDescriptor) { super(); }
+  override get kid(): string { return this.descriptor.kid; }
+  override get alg(): string { return this.descriptor.algorithm; }
+  override keyObject(): SigningKeyDescriptor['publicKey'] { return this.descriptor.publicKey; }
+  override async sign(): Promise<Uint8Array> { return await Promise.reject(new Error('verification_only_key')); }
+}
+
 export async function createAuthorizationProvider(options: AuthorizationProviderOptions): Promise<Provider> {
   const issuer = assertHttpsUrl(options.issuer, 'issuer');
   if (options.cookieKeys.length < 2 || options.cookieKeys.some((key) => key.length < 32)) {
@@ -196,8 +204,8 @@ export async function createAuthorizationProvider(options: AuthorizationProvider
   }
   const descriptor = await options.keyCustody.describeSigningKey();
   const externalKey = new CustodyExternalSigningKey(options.keyCustody, descriptor);
-  const verificationKeys = await Promise.all((options.verificationKeys ?? []).map(async ({ custody }) =>
-    new CustodyExternalSigningKey(custody, await custody.describeSigningKey())));
+  const verificationKeys = (options.verificationKeys ?? []).map(({ descriptor }) =>
+    new PublicExternalSigningKey(descriptor));
   const keyIds = [externalKey, ...verificationKeys].map((key) => key.kid);
   if (new Set(keyIds).size !== keyIds.length) throw new Error('duplicate_signing_kid');
   const clients: ClientMetadata[] = (options.clients ?? []).map((client) => ({

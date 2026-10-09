@@ -12,16 +12,21 @@
     "typecheck": "tsc -b --pretty false",
     "lint": "eslint apps packages",
     "test": "tsx --test --test-concurrency=1 \"packages/*/test/*.test.ts\" \"apps/*/src/*.test.ts\"",
-    "test:kms:live": "node packages/key-custody/node_modules/@keyobject/aws-kms/bin/awskms.js exec -- node --import tsx --test --test-name-pattern=\"live AWS KMS contract|live AWS KMS JOSE consent\" packages/key-custody/test/aws-kms.test.ts",
+    "keys:generate": "tsx packages/key-custody/src/cli.ts generate",
+    "keys:inspect": "tsx packages/key-custody/src/cli.ts inspect",
+    "keys:publish": "pnpm build && node packages/database/dist/signing-keys-cli.js publish",
+    "keys:activate": "pnpm build && node packages/database/dist/signing-keys-cli.js activate",
+    "keys:retire": "pnpm build && node packages/database/dist/signing-keys-cli.js retire",
     "test:account-oidc:discovery": "tsc -b && node scripts/check-account-oidc-discovery.mjs",
     "check": "pnpm typecheck && pnpm lint && pnpm test",
     "audit:high": "pnpm audit --audit-level high",
     "sbom:check": "pnpm dlx @cyclonedx/cdxgen@12.8.4 --type js --recurse --spec-version 1.6 --profile license-compliance --output .tmp/phase-2-0-6-sbom.json && node scripts/verify-sbom.mjs .tmp/phase-2-0-6-sbom.json",
     "test:database": "tsx --test --test-concurrency=1 \"packages/database/test/*.test.ts\"",
     "test:backup": "pnpm build && node scripts/test-backup-restore.mjs",
+    "test:local-signing:oci": "node scripts/test-local-signing-oci.mjs",
     "db:migrate": "tsx packages/database/src/cli.ts migrate",
-    "start:control": "node packages/key-custody/node_modules/@keyobject/aws-kms/bin/awskms.js exec -- node apps/control-api/dist/main.js",
-    "start:authorization": "node packages/key-custody/node_modules/@keyobject/aws-kms/bin/awskms.js exec -- node apps/authorization-service/dist/main.js"
+    "start:control": "node apps/control-api/dist/main.js",
+    "start:authorization": "node apps/authorization-service/dist/main.js"
   },
   "devDependencies": {
     "@eslint/js": "9.39.5",
@@ -29,6 +34,7 @@
     "@types/oidc-provider": "9.12.1",
     "@types/pg": "8.23.1",
     "eslint": "9.39.5",
+    "pg": "8.23.0",
     "tsx": "4.23.13",
     "typescript": "5.9.3",
     "typescript-eslint": "8.70.0"

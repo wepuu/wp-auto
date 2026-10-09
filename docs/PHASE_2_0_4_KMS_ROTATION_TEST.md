@@ -1,5 +1,8 @@
 # Phase 2.0.4 Real AWS KMS Rotation Gate
 
+> Historical Phase 2.0.4 evidence only. ADR-016 replaced this harness with the
+> local PKCS#8 lifecycle tests; its KMS script is intentionally absent.
+
 This external exit gate requires two distinct enabled asymmetric RSA
 `SIGN_VERIFY` keys in the same test region. Both keys permit only
 `kms:DescribeKey`, `kms:GetPublicKey`, and `kms:Sign` to the test principal or

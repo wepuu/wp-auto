@@ -1,5 +1,8 @@
 # AWS KMS Test Setup
 
+> Historical acceptance record only. ADR-016 replaced this runtime with local
+> PKCS#8 custody; the referenced KMS scripts were removed and must not be run.
+
 This procedure validates an existing disposable AWS KMS asymmetric RSA key.
 It does not create, rotate, disable, schedule deletion of, or deploy the key.
 Never paste AWS credentials into chat, `.env`, repository files, CI logs, or

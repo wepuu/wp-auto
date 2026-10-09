@@ -153,6 +153,11 @@ legal identity, policy URLs, residency/retention decisions and staged release:
 
 ## Deferred and out of scope
 
+An independently authorized ADR-016 implementation candidate replaces AWS KMS
+runtime signing with encrypted local PKCS#8 RSA-3072 custody. It preserves the
+closed OAuth and connector contracts and does not authorize production,
+connector work, or Phase 2.0.7B2.
+
 - Hosted MCP gateway or proxy.
 - WordPress content ingestion, indexing, transformation, analytics, or telemetry.
 - Billing, paid-plan enforcement, remote workflows, or WordPress administration

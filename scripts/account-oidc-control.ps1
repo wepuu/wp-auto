@@ -47,8 +47,14 @@ function Invoke-DockerCommand {
 }
 
 $Auth0Secret = Read-Host 'Paste Auth0 Client Secret' -AsSecureString
-$AccessKeyId = (Read-Host 'Paste AWS test Access Key ID').Trim()
-$AwsSecret = Read-Host 'Paste AWS test Secret Access Key' -AsSecureString
+$SigningDirectory = Join-Path $Root ('.tmp\account-oidc-signing-' + [Guid]::NewGuid().ToString('N'))
+$PrivateKeyPath = Join-Path $SigningDirectory 'private.pem'
+$PassphrasePath = Join-Path $SigningDirectory 'passphrase'
+$HostKeyringPath = Join-Path $SigningDirectory 'keyring-host.json'
+$ContainerKeyringPath = Join-Path $SigningDirectory 'keyring-container.json'
+$env:WEPUU_SIGNING_KEYRING_HOST_FILE = $ContainerKeyringPath
+$env:WEPUU_SIGNING_PRIVATE_KEY_HOST_FILE = $PrivateKeyPath
+$env:WEPUU_SIGNING_PASSPHRASE_HOST_FILE = $PassphrasePath
 
 try {
   $env:WEPUU_DATABASE_URL = 'postgresql://postgres:conformance@127.0.0.1:55433/wepuu_test'
@@ -67,15 +73,50 @@ try {
   $env:WEPUU_CONTROL_PORT = '3000'
   $env:NODE_EXTRA_CA_CERTS = $CertificatePath
 
-  $env:AWS_ACCESS_KEY_ID = $AccessKeyId
-  $env:AWS_SECRET_ACCESS_KEY = ConvertFrom-SecureValue $AwsSecret
-  $env:AWS_REGION = 'us-east-1'
-  $env:WEPUU_KMS_KEY_ID = 'arn:aws:kms:us-east-1:453168420598:key/40426a27-701e-4fd3-b17b-4345ed26e2c3'
-  $env:WEPUU_KMS_KID = 'wepuu-test-2026-01'
-
   Set-Location $Root
-  aws sts get-caller-identity --query '{Account:Account,Arn:Arn}'
-  if ($LASTEXITCODE -ne 0) { throw 'AWS credentials could not be validated.' }
+  $ExitCode = Invoke-DockerCommand -Arguments @(
+    'compose', '-f', 'compose.account-oidc-test.yaml',
+    'up', '-d', '--wait', 'platform-db', 'caddy'
+  )
+  if ($ExitCode -ne 0) { throw 'Disposable PostgreSQL and HTTPS fixtures failed to start.' }
+
+  & pnpm build
+  if ($LASTEXITCODE -ne 0) { throw 'TypeScript build failed.' }
+  New-Item -ItemType Directory -Path $SigningDirectory -ErrorAction Stop | Out-Null
+  $Generated = & node packages/key-custody/dist/cli.js generate `
+    --private-key-file $PrivateKeyPath --passphrase-file $PassphrasePath
+  if ($LASTEXITCODE -ne 0) { throw 'Local signing-key generation failed.' }
+  $Kid = ($Generated | Select-Object -Last 1 | ConvertFrom-Json).kid
+  if ($Kid -notmatch '^[A-Za-z0-9_-]{8,128}$') { throw 'Generated signing kid is invalid.' }
+
+  $HostKeyring = @{ keys = @(@{
+    slot = 'account-oidc-test'; privateKeyFile = $PrivateKeyPath; passphraseFile = $PassphrasePath
+  }) } | ConvertTo-Json -Depth 5 -Compress
+  $ContainerKeyring = @{ keys = @(@{
+    slot = 'account-oidc-test'; privateKeyFile = '/run/secrets/wepuu-signing-private.pem';
+    passphraseFile = '/run/secrets/wepuu-signing-passphrase'
+  }) } | ConvertTo-Json -Depth 5 -Compress
+  [IO.File]::WriteAllText($HostKeyringPath, $HostKeyring, [Text.UTF8Encoding]::new($false))
+  [IO.File]::WriteAllText($ContainerKeyringPath, $ContainerKeyring, [Text.UTF8Encoding]::new($false))
+
+  $env:WEPUU_SIGNING_KEYRING_FILE = $HostKeyringPath
+  $env:WEPUU_SIGNING_KEY_SLOT = 'account-oidc-test'
+  $env:WEPUU_SIGNING_KEYRING_HOST_FILE = $ContainerKeyringPath
+  $env:WEPUU_SIGNING_PRIVATE_KEY_HOST_FILE = $PrivateKeyPath
+  $env:WEPUU_SIGNING_PASSPHRASE_HOST_FILE = $PassphrasePath
+  & node packages/database/dist/cli.js migrate
+  if ($LASTEXITCODE -ne 0) { throw 'Database migration failed.' }
+  & node packages/database/dist/signing-keys-cli.js publish --slot account-oidc-test
+  if ($LASTEXITCODE -ne 0) { throw 'Local signing-key publication failed.' }
+  $BackdateSql = "UPDATE oauth.signing_key_metadata SET publish_at = now() - interval '21 minutes' WHERE kid = '$Kid';"
+  $ExitCode = Invoke-DockerCommand -Arguments @(
+    'compose', '-f', 'compose.account-oidc-test.yaml', 'exec', '-T', 'platform-db',
+    'psql', '-U', 'postgres', '-d', 'wepuu_test', '-v', 'ON_ERROR_STOP=1', '-c', $BackdateSql
+  )
+  if ($ExitCode -ne 0) { throw 'Local test-key prepublication setup failed.' }
+  & node packages/database/dist/signing-keys-cli.js activate --kid $Kid
+  if ($LASTEXITCODE -ne 0) { throw 'Local signing-key activation failed.' }
+
   $ExitCode = Invoke-DockerCommand -Arguments @(
     'compose', '-f', 'compose.account-oidc-test.yaml',
     '--profile', 'control',
@@ -85,6 +126,8 @@ try {
 
   Write-Output 'CONTROL_API_RUNTIME=linux-node-26.7.0'
   Write-Output 'CONTROL_API_ORIGIN=https://platform.example.test'
+  Write-Output "CONTROL_API_SIGNING_KID=$Kid"
+  Write-Output "CONTROL_API_TEST_KEY_DIRECTORY=$SigningDirectory"
   Write-Output 'CONTROL_API_STARTED=True'
 } finally {
   Remove-Item Env:WEPUU_DATABASE_URL, Env:WEPUU_ACCOUNT_OIDC_ISSUER, `
@@ -94,10 +137,9 @@ try {
     Env:WEPUU_OIDC_TRANSACTION_KEYS_JSON, Env:WEPUU_IDENTITY_SUBJECT_HMAC_KEY, `
     Env:WEPUU_GRANT_IDEMPOTENCY_HMAC_KEY, Env:WEPUU_ISSUER, `
     Env:WEPUU_CONTROL_HOST, Env:WEPUU_CONTROL_PORT, Env:NODE_EXTRA_CA_CERTS, `
-    Env:AWS_ACCESS_KEY_ID, Env:AWS_SECRET_ACCESS_KEY, Env:AWS_SESSION_TOKEN, `
-    Env:AWS_REGION, Env:WEPUU_KMS_KEY_ID, Env:WEPUU_KMS_KID `
+    Env:WEPUU_SIGNING_KEYRING_FILE, Env:WEPUU_SIGNING_KEY_SLOT, `
+    Env:WEPUU_SIGNING_KEYRING_HOST_FILE, Env:WEPUU_SIGNING_PRIVATE_KEY_HOST_FILE, `
+    Env:WEPUU_SIGNING_PASSPHRASE_HOST_FILE `
     -ErrorAction SilentlyContinue
-  Remove-Variable AccessKeyId -ErrorAction SilentlyContinue
   $Auth0Secret.Dispose()
-  $AwsSecret.Dispose()
 }

@@ -6,7 +6,7 @@ In scope are platform accounts, tenants, paired-site identity, OAuth clients, au
 
 High-value assets:
 
-- signing authority and KMS permissions;
+- signing authority and protected local key files;
 - authorization codes and refresh tokens;
 - tenant/site/grant relationships;
 - local WordPress grant mappings;
@@ -21,7 +21,7 @@ WordPress content is deliberately outside the platform boundary. Its appearance 
 2. OAuth client ↔ authorization service.
 3. OAuth client ↔ WordPress MCP endpoint.
 4. WordPress ↔ platform pairing/revocation endpoints.
-5. Platform services ↔ PostgreSQL/Redis/KMS/logging.
+5. Platform services ↔ PostgreSQL/protected key files/logging.
 6. Tenant ↔ tenant and site ↔ site data partitions.
 7. WordPress OAuth transport identity ↔ existing WordPress ability/service authorization.
 
@@ -32,11 +32,10 @@ boundary. Dynamic values are escaped, assets are self-hosted under a
 deny-by-default CSP, state-changing forms require exact Origin plus CSRF, and
 authorization is rechecked server-side rather than inferred from hidden UI.
 
-A non-AWS workload reaches AWS STS and KMS through short-lived workload
-identity. Production startup rejects static AWS Access Keys. Compromise of a
-host credential is bounded by the exact IAM role, key ARNs and
-`DescribeKey/GetPublicKey/Sign` actions; KMS uncertainty still prevents
-signing.
+Public-mode startup accepts only an encrypted RSA-3072 PKCS#8 file and separate
+passphrase file with strict ownership and mode checks. A symlink, weak key,
+wrong passphrase, metadata mismatch or unsafe permission fails closed. Root
+compromise can still copy the key and is an accepted residual risk.
 
 ## Threat register
 
@@ -52,7 +51,7 @@ signing.
 | T08 | Token passthrough | platform has no MCP proxy route; outbound allow-list; architecture/data-flow checks | route inventory and egress tests |
 | T09 | Access-token replay | short expiry, TLS, unique `jti`, no logging, optional local denylist; evaluate sender constraint later | duplicate/high-risk revoke tests |
 | T10 | Refresh-token theft/reuse | opaque hash, one-use rotation, transaction/CAS, family generation, reuse revokes family | concurrent refresh and old-token replay tests |
-| T11 | JWKS/key substitution | pinned issuer/JWKS origin, TLS, algorithm allow-list, `kid`, overlap, KMS custody, bounded refresh | unknown kid, alg confusion, stale cache and emergency rotation tests |
+| T11 | JWKS/key substitution | pinned issuer/JWKS origin, TLS, algorithm allow-list, RFC 7638 `kid`, overlap, protected local custody, bounded refresh | unknown kid, alg confusion, stale cache and emergency rotation tests |
 | T12 | Tenant IDOR | server-derived tenant context, mandatory tenant key, scoped queries/RLS, non-enumerable IDs | cross-tenant read/write/delete matrix |
 | T13 | Grant mapping tamper | WordPress-protected storage, admin/user nonce, opaque IDs, signed one-time completion, immutable site binding | local privilege and tampering tests |
 | T14 | Stale WordPress privilege | resolve active user and run current capability/object checks on every call | delete, demote, remove-membership and security-plugin hooks |
@@ -112,9 +111,9 @@ Scope and token validity do not preserve old privileges. The connector maps the 
 
 - Codex Security TAC/Daybreak is unavailable to the project and is recorded as
   `waived/not executed` under ADR-013. The project owner accepts the residual
-  risk; all deterministic, live KMS/HTTPS, dependency, immutable-diff, and
+  risk; all deterministic, local-signing/HTTPS, dependency, immutable-diff, and
   data-flow gates remain mandatory.
 - A valid bearer access token can be replayed until expiry if stolen; 2–5 minute lifetime bounds this risk. DPoP may be evaluated later after client support is proven.
 - Platform-originated revocation is not globally instantaneous during site outage; local revoke is immediate and central exposure is bounded by access-token lifetime.
 - Client registration ecosystems are evolving. CIMD and WorkBuddy behavior require continuous compatibility tests.
-- Compromise of an active signing key remains severe; KMS policy, short tokens, rotation, key denylisting, and incident drills reduce but do not remove the risk.
+- Compromise of an active signing key remains severe; encrypted files, strict permissions, short tokens, rotation, key denylisting, offline backups and incident drills reduce but do not remove the risk.

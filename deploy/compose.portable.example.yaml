@@ -14,6 +14,22 @@ services:
     init: true
     ports:
       - 127.0.0.1:3000:3000
+    secrets:
+      - source: signing_keyring
+        target: signing_keyring
+        uid: "1000"
+        gid: "1000"
+        mode: 0400
+      - source: signing_private_key
+        target: signing_private_key
+        uid: "1000"
+        gid: "1000"
+        mode: 0400
+      - source: signing_passphrase
+        target: signing_passphrase
+        uid: "1000"
+        gid: "1000"
+        mode: 0400
     environment:
       WEPUU_DEPLOYMENT_MODE: ${WEPUU_DEPLOYMENT_MODE:?}
       WEPUU_DATABASE_URL: ${WEPUU_DATABASE_URL:?}
@@ -27,8 +43,8 @@ services:
       WEPUU_OIDC_TRANSACTION_KEYS_JSON: ${WEPUU_OIDC_TRANSACTION_KEYS_JSON:?}
       WEPUU_IDENTITY_SUBJECT_HMAC_KEY: ${WEPUU_IDENTITY_SUBJECT_HMAC_KEY:?}
       WEPUU_ISSUER: ${WEPUU_ISSUER:?}
-      WEPUU_KMS_KEY_ID: ${WEPUU_KMS_KEY_ID:?}
-      WEPUU_KMS_KID: ${WEPUU_KMS_KID:?}
+      WEPUU_SIGNING_KEYRING_FILE: /run/secrets/signing_keyring
+      WEPUU_SIGNING_KEY_SLOT: ${WEPUU_SIGNING_KEY_SLOT:?}
       WEPUU_GRANT_IDEMPOTENCY_HMAC_KEY: ${WEPUU_GRANT_IDEMPOTENCY_HMAC_KEY:?}
       WEPUU_LEGAL_PROVIDER_NAME: ${WEPUU_LEGAL_PROVIDER_NAME:?}
       WEPUU_TERMS_URL: ${WEPUU_TERMS_URL:?}
@@ -42,11 +58,7 @@ services:
       WEPUU_IDENTITY_PROVIDER_LABEL: ${WEPUU_IDENTITY_PROVIDER_LABEL:?}
       WEPUU_RETENTION_POLICY_VERSION: ${WEPUU_RETENTION_POLICY_VERSION:?}
       WEPUU_COMPATIBILITY_MATRIX_VERSION: ${WEPUU_COMPATIBILITY_MATRIX_VERSION:?}
-      WEPUU_AWS_CREDENTIAL_MODE: ${WEPUU_AWS_CREDENTIAL_MODE:?}
       WEPUU_OPERATIONS_METRICS_TOKEN: ${WEPUU_OPERATIONS_METRICS_TOKEN:?}
-      AWS_REGION: ${AWS_REGION:?}
-      AWS_ROLE_ARN: ${AWS_ROLE_ARN:-}
-      AWS_WEB_IDENTITY_TOKEN_FILE: ${AWS_WEB_IDENTITY_TOKEN_FILE:-}
 
   authorization:
     build:
@@ -61,6 +73,22 @@ services:
     init: true
     ports:
       - 127.0.0.1:3001:3001
+    secrets:
+      - source: signing_keyring
+        target: signing_keyring
+        uid: "1000"
+        gid: "1000"
+        mode: 0400
+      - source: signing_private_key
+        target: signing_private_key
+        uid: "1000"
+        gid: "1000"
+        mode: 0400
+      - source: signing_passphrase
+        target: signing_passphrase
+        uid: "1000"
+        gid: "1000"
+        mode: 0400
     environment:
       WEPUU_DEPLOYMENT_MODE: ${WEPUU_DEPLOYMENT_MODE:?}
       WEPUU_AUTH_HOST: 0.0.0.0
@@ -69,7 +97,7 @@ services:
       WEPUU_CONTROL_PUBLIC_ORIGIN: ${WEPUU_CONTROL_PUBLIC_ORIGIN:?}
       WEPUU_ISSUER: ${WEPUU_ISSUER:?}
       WEPUU_COOKIE_KEYS_JSON: ${WEPUU_COOKIE_KEYS_JSON:?}
-      WEPUU_ARTIFACT_HMAC_KEYS_JSON: ${WEPUU_ARTIFACT_HMAC_KEYS_JSON:?}
+      WEPUU_OAUTH_ARTIFACT_KEYS_JSON: ${WEPUU_OAUTH_ARTIFACT_KEYS_JSON:?}
       WEPUU_RATE_LIMIT_HMAC_KEY: ${WEPUU_RATE_LIMIT_HMAC_KEY:?}
       WEPUU_LEGAL_PROVIDER_NAME: ${WEPUU_LEGAL_PROVIDER_NAME:?}
       WEPUU_TERMS_URL: ${WEPUU_TERMS_URL:?}
@@ -83,8 +111,14 @@ services:
       WEPUU_IDENTITY_PROVIDER_LABEL: ${WEPUU_IDENTITY_PROVIDER_LABEL:?}
       WEPUU_RETENTION_POLICY_VERSION: ${WEPUU_RETENTION_POLICY_VERSION:?}
       WEPUU_COMPATIBILITY_MATRIX_VERSION: ${WEPUU_COMPATIBILITY_MATRIX_VERSION:?}
-      WEPUU_AWS_CREDENTIAL_MODE: ${WEPUU_AWS_CREDENTIAL_MODE:?}
+      WEPUU_SIGNING_KEYRING_FILE: /run/secrets/signing_keyring
+      WEPUU_SIGNING_KEY_SLOT: ${WEPUU_SIGNING_KEY_SLOT:?}
       WEPUU_OPERATIONS_METRICS_TOKEN: ${WEPUU_OPERATIONS_METRICS_TOKEN:?}
-      AWS_REGION: ${AWS_REGION:?}
-      AWS_ROLE_ARN: ${AWS_ROLE_ARN:-}
-      AWS_WEB_IDENTITY_TOKEN_FILE: ${AWS_WEB_IDENTITY_TOKEN_FILE:-}
+
+secrets:
+  signing_keyring:
+    file: ${WEPUU_SIGNING_KEYRING_HOST_FILE:?}
+  signing_private_key:
+    file: ${WEPUU_SIGNING_PRIVATE_KEY_HOST_FILE:?}
+  signing_passphrase:
+    file: ${WEPUU_SIGNING_PASSPHRASE_HOST_FILE:?}

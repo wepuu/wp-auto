@@ -2,7 +2,6 @@ import { isIP } from 'node:net';
 import { z } from 'zod';
 
 const DeploymentModeSchema = z.enum(['local', 'test', 'staging', 'production']);
-const CredentialModeSchema = z.enum(['preview', 'web_identity', 'credential_process']);
 const OptionalHttpsUrlSchema = z.url().refine((value) => new URL(value).protocol === 'https:');
 
 export interface ReleaseMetadata {
@@ -11,11 +10,10 @@ export interface ReleaseMetadata {
   readonly identityProviderLabel: string;
   readonly retentionPolicyVersion: string;
   readonly compatibilityMatrixVersion: string;
-  readonly credentialMode: z.infer<typeof CredentialModeSchema>;
 }
 
 export interface DeploymentReadinessCheck {
-  readonly id: 'release' | 'legal' | 'identity' | 'residency' | 'proxy' | 'kms';
+  readonly id: 'release' | 'legal' | 'identity' | 'residency' | 'proxy' | 'signing';
   readonly label: string;
   readonly status: 'ready' | 'pending';
   readonly detail: string;
@@ -101,8 +99,7 @@ export function loadPublicDeploymentConfig(
       retentionPolicyVersion: z.string().min(1).max(64)
         .parse(environment['WEPUU_RETENTION_POLICY_VERSION'] ?? 'Policy pending'),
       compatibilityMatrixVersion: z.string().min(1).max(64)
-        .parse(environment['WEPUU_COMPATIBILITY_MATRIX_VERSION'] ?? '2026-10-preview'),
-      credentialMode: CredentialModeSchema.parse(environment['WEPUU_AWS_CREDENTIAL_MODE'] ?? 'preview')
+        .parse(environment['WEPUU_COMPATIBILITY_MATRIX_VERSION'] ?? '2026-10-preview')
     }
   };
   if (deploymentMode === 'staging' || deploymentMode === 'production') {
@@ -119,22 +116,12 @@ export function loadPublicDeploymentConfig(
         || config.release.identityProviderLabel === 'Identity provider pending'
         || !/^\d{4}-\d{2}-\d{2}$/u.test(config.release.retentionPolicyVersion)
         || !/^\d{4}-\d{2}$/u.test(config.release.compatibilityMatrixVersion)
-        || config.release.credentialMode === 'preview') {
+        || (environment['WEPUU_SIGNING_KEYRING_FILE']?.length ?? 0) === 0
+        || (environment['WEPUU_SIGNING_KEY_SLOT']?.length ?? 0) === 0) {
       throw new Error('public_deployment_config_incomplete');
     }
   }
-  if (deploymentMode === 'production'
-      && (environment['AWS_ACCESS_KEY_ID'] !== undefined || environment['AWS_SECRET_ACCESS_KEY'] !== undefined)) {
-    throw new Error('production_static_aws_credentials_forbidden');
-  }
   if (deploymentMode === 'staging' || deploymentMode === 'production') {
-    const temporaryIdentityReady = (config.release.credentialMode === 'web_identity'
-      && (environment['AWS_ROLE_ARN']?.length ?? 0) > 0
-      && (environment['AWS_WEB_IDENTITY_TOKEN_FILE']?.length ?? 0) > 0)
-      || (config.release.credentialMode === 'credential_process'
-        && (environment['AWS_PROFILE']?.length ?? 0) > 0
-        && (environment['AWS_CONFIG_FILE']?.length ?? 0) > 0);
-    if (!temporaryIdentityReady) throw new Error('public_deployment_temporary_identity_required');
     if ((environment['WEPUU_OPERATIONS_METRICS_TOKEN']?.length ?? 0) < 32) {
       throw new Error('public_deployment_operations_token_required');
     }
@@ -157,23 +144,15 @@ export function evaluateDeploymentReadiness(
   const residencyReady = config.dataRegionLabel !== 'Not selected'
     && /^\d{4}-\d{2}-\d{2}$/u.test(config.release.retentionPolicyVersion);
   const proxyReady = config.trustedProxyCidrs.length > 0;
-  const staticCredentialsAbsent = environment['AWS_ACCESS_KEY_ID'] === undefined
-    && environment['AWS_SECRET_ACCESS_KEY'] === undefined;
-  const kmsReady = staticCredentialsAbsent && (
-    (config.release.credentialMode === 'web_identity'
-      && (environment['AWS_ROLE_ARN']?.length ?? 0) > 0
-      && (environment['AWS_WEB_IDENTITY_TOKEN_FILE']?.length ?? 0) > 0)
-    || (config.release.credentialMode === 'credential_process'
-      && (environment['AWS_PROFILE']?.length ?? 0) > 0
-      && (environment['AWS_CONFIG_FILE']?.length ?? 0) > 0)
-  );
+  const signingReady = (environment['WEPUU_SIGNING_KEYRING_FILE']?.length ?? 0) > 0
+    && (environment['WEPUU_SIGNING_KEY_SLOT']?.length ?? 0) > 0;
   const checks: readonly DeploymentReadinessCheck[] = [
     { id: 'release', label: 'Release identity', status: releaseReady ? 'ready' : 'pending', detail: releaseReady ? 'Version and immutable revision are fixed.' : 'Set a semantic version and immutable Git revision.' },
     { id: 'legal', label: 'Public policies', status: legalReady ? 'ready' : 'pending', detail: legalReady ? 'Provider, policy, support and status links are configured.' : 'Final provider and HTTPS policy links are still required.' },
     { id: 'identity', label: 'Account identity', status: identityReady ? 'ready' : 'pending', detail: identityReady ? 'External OIDC issuer and client are configured.' : 'Final external OIDC identity is still required.' },
     { id: 'residency', label: 'Residency and retention', status: residencyReady ? 'ready' : 'pending', detail: residencyReady ? 'Region and retention policy version are fixed.' : 'Choose a data region and publish a retention policy version.' },
     { id: 'proxy', label: 'Trusted proxy boundary', status: proxyReady ? 'ready' : 'pending', detail: proxyReady ? 'Explicit proxy CIDRs are configured.' : 'No trusted proxy CIDR has been selected.' },
-    { id: 'kms', label: 'Temporary KMS identity', status: kmsReady ? 'ready' : 'pending', detail: kmsReady ? 'A non-static AWS credential path is configured.' : 'Configure workload OIDC or credential_process; static keys are not accepted.' }
+    { id: 'signing', label: 'Local signing custody', status: signingReady ? 'ready' : 'pending', detail: signingReady ? 'A protected local PKCS#8 key slot is configured.' : 'Configure the protected signing keyring and active key slot.' }
   ];
   return { ready: checks.every((check) => check.status === 'ready'), checks };
 }

@@ -24,7 +24,7 @@ The control plane may know that a tenant paired an exact canonical MCP endpoint.
 - Implements OAuth endpoints and metadata using a mature server component.
 - Owns authorization transactions, codes, client registrations, refresh-token families, token issuance, revocation, and JWKS publication.
 - Has no WordPress content API and no connector credentials.
-- Uses an isolated storage adapter and KMS/HSM-backed asymmetric signing keys.
+- Uses an isolated storage adapter and encrypted local PKCS#8 RSA signing keys through a reviewed JOSE library.
 
 ### Control API and web UI
 
@@ -90,7 +90,7 @@ Unknown algorithms, issuers, audiences, keys, grant states, malformed claims, ca
 - Refresh tokens are opaque, high-entropy, hashed at rest, client-bound, and single-use.
 - Refresh reuse revokes the full family and emits a security event.
 - New public keys are published before signing begins. Retiring public keys remain available for at least maximum access-token lifetime plus clock skew and cache margin.
-- Private key material never enters application configuration or the database.
+- Private key material never enters environment configuration or the database; it is read only from a protected file or Docker Secret.
 - Unknown `kid` may trigger one bounded JWKS refresh; failure never falls back to accepting the token.
 
 ## Availability model
@@ -110,15 +110,16 @@ provider-neutral OCI images backed by PostgreSQL. TLS termination, DNS,
 database hosting and ingress remain external deployment choices. Runtime
 containers are non-root and read-only with a bounded temporary filesystem.
 
-The application server may run outside AWS. AWS is used only for the accepted
-KMS asymmetric signing adapter. Non-AWS workloads use standard short-lived AWS
-credential providers (workload OIDC/STS or IAM Roles Anywhere), never a static
-production Access Key. Selecting a hosting vendor, production domain, WAF and
-operational policy remains a Phase 2.0.7B2 decision and deployment gate.
+The application server has no AWS runtime dependency. Signing uses encrypted
+local PKCS#8 files and separate passphrase files mounted read-only. Docker
+Compose secrets remain host-mounted files rather than HSM custody; host root
+compromise is therefore an explicitly accepted residual risk. Selecting a
+hosting vendor, production domain, WAF and operational policy remains a Phase
+2.0.7B2 decision and deployment gate.
 
 Phase 2.0.7B1 adds a configuration-only release-readiness layer. It validates
 immutable release identity, policy links, region/retention labels, trusted
-proxy boundaries and the selected temporary AWS credential provider before a
+proxy boundaries and protected local signing configuration before a
 public-mode process starts. The authenticated product shell reports only the
 status of these categories. A dedicated operations endpoint exports
 low-cardinality process metrics without tenant, site, user, URL or content
