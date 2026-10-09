@@ -154,3 +154,31 @@ test('provider Grant preserves a preassigned platform grant id', async () => {
   assert.equal(await grant.save(), platformGrantId);
   assert.ok(await provider.Grant.find(platformGrantId));
 });
+
+test('provider Grant can add OIDC consent to an existing resource grant', async () => {
+  const provider = await createAuthorizationProvider({
+    issuer: 'https://auth.example.test',
+    cookieKeys: ['a'.repeat(32), 'b'.repeat(32)],
+    keyCustody: fakeCustody(),
+    adapter: memoryAdapter(),
+    resourceRegistry: new DenyAllResourceRegistry(),
+    grantClaimsResolver: new DenyAllGrantClaimsResolver(),
+    accountRegistry: new DenyAllAccountRegistry(),
+    clients: [{ clientId: 'client_00000001', redirectUris: ['http://127.0.0.1/callback'] }]
+  });
+  const platformGrantId = 'grant_000000000000000000000001';
+  const initial = new provider.Grant({ accountId: 'account_00000001', clientId: 'client_00000001' });
+  Object.assign(initial, { jti: platformGrantId });
+  initial.addResourceScope('https://site.example.test/wp-json/wp-auto/mcp', 'mcp:read');
+  await initial.save();
+
+  const existing = await provider.Grant.find(platformGrantId);
+  assert.ok(existing);
+  existing.addOIDCScope('openid offline_access');
+  assert.equal(await existing.save(), platformGrantId);
+
+  const updated = await provider.Grant.find(platformGrantId);
+  assert.ok(updated);
+  assert.deepEqual(new Set(updated.getOIDCScope().split(' ')), new Set(['openid', 'offline_access']));
+  assert.equal(updated.getResourceScope('https://site.example.test/wp-json/wp-auto/mcp'), 'mcp:read');
+});

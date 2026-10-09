@@ -172,7 +172,31 @@ function writeInteractionError(
   response.end('{"error":"invalid_request"}');
 }
 
-export function safeOAuthFailure(error: unknown): Readonly<{ name: string; code?: string; oauthError?: string }> {
+type OAuthSessionFailureReason =
+  | 'authorization_request_expired'
+  | 'interaction_cookie_missing'
+  | 'interaction_not_found'
+  | 'authentication_session_not_found'
+  | 'session_principal_changed'
+  | 'authorization_cookie_mismatch'
+  | 'authentication_session_mismatch';
+
+const oauthSessionFailureReasons = new Map<string, OAuthSessionFailureReason>([
+  ['authorization request has expired', 'authorization_request_expired'],
+  ['interaction session id cookie not found', 'interaction_cookie_missing'],
+  ['interaction session not found', 'interaction_not_found'],
+  ['session not found', 'authentication_session_not_found'],
+  ['session principal changed', 'session_principal_changed'],
+  ['authorization session and cookie identifier mismatch', 'authorization_cookie_mismatch'],
+  ['interaction session and authentication session mismatch', 'authentication_session_mismatch']
+]);
+
+export function safeOAuthFailure(error: unknown): Readonly<{
+  name: string;
+  code?: string;
+  oauthError?: string;
+  reason?: OAuthSessionFailureReason;
+}> {
   const name = error instanceof Error && /^[A-Za-z][A-Za-z0-9]{0,63}$/u.test(error.name)
     ? error.name
     : 'UnknownError';
@@ -182,12 +206,77 @@ export function safeOAuthFailure(error: unknown): Readonly<{ name: string; code?
   const oauthCandidate = typeof error === 'object' && error !== null && 'error' in error
     ? (error as { error?: unknown }).error
     : undefined;
+  const reason = error instanceof Error && error.name === 'SessionNotFound'
+    ? oauthSessionFailureReasons.get(error.message)
+    : undefined;
   return {
     name,
     ...(typeof candidate === 'string' && /^[A-Z][A-Z0-9_]{1,63}$/u.test(candidate) ? { code: candidate } : {}),
     ...(typeof oauthCandidate === 'string' && /^[a-z][a-z0-9_]{1,63}$/u.test(oauthCandidate)
       ? { oauthError: oauthCandidate }
-      : {})
+      : {}),
+    ...(reason === undefined ? {} : { reason })
+  };
+}
+
+export interface ConsentGrantUpdatePlan {
+  readonly existingGrantId?: string;
+  readonly oidcScopes: readonly ('openid' | 'offline_access')[];
+  readonly oidcClaims: readonly string[];
+  readonly resourceScopes: readonly Readonly<{ resource: string; scopes: readonly string[] }>[];
+}
+
+function boundedStringArray(value: unknown, errorCode: string): readonly string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length === 0 || value.length > 32
+      || value.some((item) => typeof item !== 'string' || item.length === 0 || item.length > 128)) {
+    throw new Error(errorCode);
+  }
+  return [...new Set(value as string[])];
+}
+
+export function consentGrantUpdatePlan(input: Readonly<{
+  providerGrantId: unknown;
+  platformGrantId: string;
+  resource: string;
+  scopes: readonly string[];
+  promptDetails: Readonly<Record<string, unknown>>;
+}>): ConsentGrantUpdatePlan {
+  if (input.providerGrantId !== undefined && typeof input.providerGrantId !== 'string') {
+    throw new Error('invalid_provider_grant_id');
+  }
+  if (typeof input.providerGrantId === 'string' && input.providerGrantId !== input.platformGrantId) {
+    throw new Error('grant_binding_mismatch');
+  }
+  if (input.promptDetails['rar'] !== undefined) throw new Error('unsupported_authorization_details');
+
+  const oidcScopes = boundedStringArray(input.promptDetails['missingOIDCScope'], 'invalid_missing_oidc_scope') ?? [];
+  if (oidcScopes.some((scope) => scope !== 'openid' && scope !== 'offline_access')) {
+    throw new Error('unapproved_oidc_scope');
+  }
+  const oidcClaims = boundedStringArray(input.promptDetails['missingOIDCClaims'], 'invalid_missing_oidc_claim') ?? [];
+  if (oidcClaims.some((claim) => claim !== 'sub')) throw new Error('unapproved_oidc_claim');
+
+  const missingResources = input.promptDetails['missingResourceScopes'];
+  const resourceScopes: Array<Readonly<{ resource: string; scopes: readonly string[] }>> = [];
+  if (missingResources !== undefined) {
+    if (typeof missingResources !== 'object' || missingResources === null || Array.isArray(missingResources)) {
+      throw new Error('invalid_missing_resource_scope');
+    }
+    const entries = Object.entries(missingResources);
+    if (entries.length !== 1 || entries[0]?.[0] !== input.resource) throw new Error('resource_binding_mismatch');
+    const missing = boundedStringArray(entries[0][1], 'invalid_missing_resource_scope');
+    if (missing === undefined || missing.some((scope) => !input.scopes.includes(scope))) {
+      throw new Error('scope_binding_mismatch');
+    }
+    resourceScopes.push({ resource: input.resource, scopes: missing });
+  }
+
+  return {
+    ...(typeof input.providerGrantId === 'string' ? { existingGrantId: input.providerGrantId } : {}),
+    oidcScopes: oidcScopes as readonly ('openid' | 'offline_access')[],
+    oidcClaims,
+    resourceScopes
   };
 }
 
@@ -414,13 +503,23 @@ export async function startAuthorizationService(
           }, { mergeWithLastSubmission: false });
           return;
         }
-        const grant = new provider.Grant({ accountId: session.accountId, clientId });
-        Object.assign(grant, { jti: binding.grantId });
-        const oidcScopes = typeof params['scope'] === 'string'
-          ? params['scope'].split(' ').filter((scope) => scope === 'openid' || scope === 'offline_access')
-          : [];
-        if (oidcScopes.length > 0) grant.addOIDCScope(oidcScopes.join(' '));
-        grant.addResourceScope(resource, scopes.join(' '));
+        const update = consentGrantUpdatePlan({
+          providerGrantId: details.grantId,
+          platformGrantId: binding.grantId,
+          resource,
+          scopes,
+          promptDetails: details.prompt.details
+        });
+        const grant = update.existingGrantId === undefined
+          ? new provider.Grant({ accountId: session.accountId, clientId })
+          : await provider.Grant.find(update.existingGrantId);
+        if (grant === undefined) throw new Error('provider_grant_not_found');
+        if (update.existingGrantId === undefined) Object.assign(grant, { jti: binding.grantId });
+        if (update.oidcScopes.length > 0) grant.addOIDCScope(update.oidcScopes.join(' '));
+        if (update.oidcClaims.length > 0) grant.addOIDCClaims([...update.oidcClaims]);
+        for (const missing of update.resourceScopes) {
+          grant.addResourceScope(missing.resource, missing.scopes.join(' '));
+        }
         const savedGrantId = await grant.save();
         if (savedGrantId !== binding.grantId) throw new Error('grant_binding_mismatch');
         await provider.interactionFinished(request, response, {
