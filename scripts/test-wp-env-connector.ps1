@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-  [string]$ConnectorPath = (Join-Path (Split-Path -Parent $PSScriptRoot) '..\wp-auto-connector'),
+  [string]$ConnectorPath,
   [string]$WpEnvVersion = '11.11.0',
   [string]$ToolNodePath = $env:WEPUU_WP_ENV_NODE_BIN
 )
@@ -9,6 +9,9 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $Root = [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
+if ([string]::IsNullOrWhiteSpace($ConnectorPath)) {
+  $ConnectorPath = Join-Path $Root '..\wp-auto-connector'
+}
 $ConnectorPath = [IO.Path]::GetFullPath($ConnectorPath)
 $TemporaryRoot = Join-Path $Root '.tmp\wp-env-local-signing'
 $ConnectorCopy = Join-Path $TemporaryRoot 'wp-env-connector'
@@ -20,6 +23,8 @@ $NpmCommand = (Get-Command npm.cmd -ErrorAction Stop).Source
 $NpmCli = Join-Path (Split-Path -Parent $NpmCommand) 'node_modules\npm\bin\npm-cli.js'
 $WpEnv = Join-Path $ToolRoot 'node_modules\.bin\wp-env.cmd'
 $Curl = (Get-Command curl.exe -ErrorAction Stop).Source
+$ApplicationPasswordCreated = $false
+$WpCliContainer = $null
 
 if ([string]::IsNullOrWhiteSpace($ToolNodePath)) {
   $ToolNodePath = (Get-Command node.exe -ErrorAction Stop).Source
@@ -51,7 +56,6 @@ function Invoke-WpEnv([string[]]$Arguments, [switch]$AllowFailure) {
 
 function Write-WpEnvDiagnostics {
   Write-Warning 'wp-env validation failed; collecting content-free diagnostics before cleanup.'
-  Invoke-WpEnv @("--config=$ConfigPath", 'logs') -AllowFailure | Out-Null
   Invoke-WpEnv @("--config=$ConfigPath", 'run', 'cli', 'wp', 'core', 'is-installed') -AllowFailure | Out-Null
   Invoke-WpEnv @("--config=$ConfigPath", 'run', 'cli', 'wp', 'plugin', 'list', '--fields=name,status,version') -AllowFailure | Out-Null
   & $DockerCommand ps -a --format '{{.Names}} {{.Status}} {{.Ports}}' |
@@ -114,13 +118,18 @@ $PreviousWpEnvHome = $env:WP_ENV_HOME
 $PreviousNpmCache = $env:npm_config_cache
 $PreviousCi = $env:CI
 $PreviousPath = $env:PATH
+$PreviousMcpAuthorization = $env:WP_AUTO_MCP_AUTHORIZATION
 $env:WP_ENV_HOME = $WpEnvHome
 $env:npm_config_cache = $NpmCache
 $env:CI = 'true'
 $env:PATH = "$(Split-Path -Parent $ToolNodePath)$([IO.Path]::PathSeparator)$env:PATH"
 
 try {
-  & $ToolNodePath $NpmCli install --prefix $ToolRoot --no-save --no-package-lock --audit=false --fund=false "@wordpress/env@$WpEnvVersion"
+  # npm 11.20 can omit this declared wcwidth runtime dependency from an
+  # isolated --no-save prefix install. Pin it explicitly so the fixed wp-env
+  # CLI remains reproducible without changing the platform dependency graph.
+  & $ToolNodePath $NpmCli install --prefix $ToolRoot --no-save --no-package-lock --audit=false --fund=false `
+    "@wordpress/env@$WpEnvVersion" 'defaults@1.0.4'
   if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $WpEnv -PathType Leaf)) {
     throw "Unable to install the fixed wp-env CLI version $WpEnvVersion."
   }
@@ -147,6 +156,47 @@ try {
   if ($Routes -notcontains '/wp-auto/v1/revocations' -or $Routes -notcontains '/wp-auto/v1/pairing/proof') {
     throw 'The wp-env WordPress site did not activate the connector REST routes.'
   }
+  $WordPressContainer = @(
+    & $DockerCommand ps --filter 'publish=8888' --format '{{.ID}}'
+  ) | Select-Object -First 1
+  if ([string]::IsNullOrWhiteSpace($WordPressContainer)) {
+    throw 'Unable to find the disposable wp-env WordPress container.'
+  }
+  $ContainerLabels = (& $DockerCommand inspect --format '{{json .Config.Labels}}' $WordPressContainer | ConvertFrom-Json)
+  $ComposeProject = [string]$ContainerLabels.'com.docker.compose.project'
+  if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($ComposeProject)) {
+    throw 'Unable to identify the disposable wp-env Compose project.'
+  }
+  $WpCliContainer = @(
+    & $DockerCommand ps `
+      --filter "label=com.docker.compose.project=$ComposeProject" `
+      --filter 'label=com.docker.compose.service=cli' `
+      --format '{{.ID}}'
+  ) | Select-Object -First 1
+  if ([string]::IsNullOrWhiteSpace($WpCliContainer)) {
+    throw 'Unable to find the disposable wp-env CLI container.'
+  }
+  $ApplicationPasswordOutput = @(
+    & $DockerCommand exec $WpCliContainer wp user application-password create admin wepuu-local-e2e --porcelain
+  )
+  if ($LASTEXITCODE -ne 0) { throw 'Unable to create the disposable WordPress Application Password.' }
+  $ApplicationPassword = @(
+    $ApplicationPasswordOutput |
+      ForEach-Object { ([string]$_).Trim() } |
+      Where-Object { $_ -match '^(?:[A-Za-z0-9]{4}[ ]?){6}$' }
+  ) | Select-Object -Last 1
+  if ([string]::IsNullOrWhiteSpace($ApplicationPassword)) {
+    throw 'The disposable WordPress Application Password output was not recognized.'
+  }
+  $ApplicationPasswordCreated = $true
+  $BasicCredential = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("admin:$ApplicationPassword"))
+  $env:WP_AUTO_MCP_AUTHORIZATION = "Basic $BasicCredential"
+  $ProbeScript = Join-Path $Root 'scripts\probe-direct-mcp.mjs'
+  & $ToolNodePath $ProbeScript 'http://127.0.0.1:8888/wp-json/wp-auto/mcp'
+  if ($LASTEXITCODE -ne 0) { throw 'Application Password direct-MCP probe failed.' }
+  Remove-Item Env:WP_AUTO_MCP_AUTHORIZATION -ErrorAction SilentlyContinue
+  $ApplicationPassword = $null
+  $BasicCredential = $null
   & $DockerCommand run --rm --entrypoint php `
     --mount "type=bind,source=$ConnectorCopy,target=/plugin,readonly" `
     --workdir /plugin `
@@ -154,12 +204,17 @@ try {
     vendor/bin/phpunit --do-not-cache-result
   if ($LASTEXITCODE -ne 0) { throw 'Connector PHPUnit suite failed in the pinned WordPress PHP runtime.' }
   Write-Output 'WP_ENV_CONNECTOR_ACTIVE=True'
+  Write-Output 'WP_ENV_APPLICATION_PASSWORD_MCP=True'
   Write-Output 'WP_ENV_CONNECTOR_TESTS=True'
   Write-Output "WP_ENV_CONNECTOR_COMMIT=$ConnectorCommit"
 } catch {
   if (Test-Path -LiteralPath $WpEnv -PathType Leaf) { Write-WpEnvDiagnostics }
   throw
 } finally {
+  Remove-Item Env:WP_AUTO_MCP_AUTHORIZATION -ErrorAction SilentlyContinue
+  if ($ApplicationPasswordCreated -and -not [string]::IsNullOrWhiteSpace($WpCliContainer)) {
+    & $DockerCommand exec $WpCliContainer wp user application-password delete admin --all | Out-Null
+  }
   if (Test-Path -LiteralPath $WpEnv -PathType Leaf) {
     Invoke-WpEnv @("--config=$ConfigPath", 'destroy', '--force') -AllowFailure | Out-Null
   }
@@ -171,6 +226,7 @@ try {
   if ($null -eq $PreviousWpEnvHome) { Remove-Item Env:WP_ENV_HOME -ErrorAction SilentlyContinue } else { $env:WP_ENV_HOME = $PreviousWpEnvHome }
   if ($null -eq $PreviousNpmCache) { Remove-Item Env:npm_config_cache -ErrorAction SilentlyContinue } else { $env:npm_config_cache = $PreviousNpmCache }
   if ($null -eq $PreviousCi) { Remove-Item Env:CI -ErrorAction SilentlyContinue } else { $env:CI = $PreviousCi }
+  if ($null -ne $PreviousMcpAuthorization) { $env:WP_AUTO_MCP_AUTHORIZATION = $PreviousMcpAuthorization }
   $env:PATH = $PreviousPath
   if (Test-Path -LiteralPath $TemporaryRoot) {
     try { Remove-Item -LiteralPath $TemporaryRoot -Recurse -Force }

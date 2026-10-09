@@ -137,7 +137,32 @@ async function readForm(request: IncomingMessage): Promise<URLSearchParams> {
   return new URLSearchParams(body);
 }
 
-function writeInteractionError(response: ServerResponse, status = 400): void {
+type InteractionRejectionReason =
+  | 'invalid_parameters'
+  | 'unsupported_prompt'
+  | 'method_or_content_type'
+  | 'origin_mismatch'
+  | 'csrf_binding_mismatch';
+
+export function interactionSubmissionHeaderRejection(input: Readonly<{
+  method: string | undefined;
+  contentType: string | undefined;
+  origin: string | undefined;
+  expectedOrigin: string;
+}>): Readonly<{ status: 403 | 405; reason: InteractionRejectionReason }> | undefined {
+  if (input.method !== 'POST' || input.contentType?.split(';')[0] !== 'application/x-www-form-urlencoded') {
+    return { status: 405, reason: 'method_or_content_type' };
+  }
+  if (input.origin !== input.expectedOrigin) return { status: 403, reason: 'origin_mismatch' };
+  return undefined;
+}
+
+function writeInteractionError(
+  response: ServerResponse,
+  status = 400,
+  reason: InteractionRejectionReason = 'invalid_parameters'
+): void {
+  console.warn(JSON.stringify({ event: 'oauth.interaction_rejected', reason, status }));
   response.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
   response.end('{"error":"invalid_request"}');
 }
@@ -294,7 +319,7 @@ export async function startAuthorizationService(
           return;
         }
         if (details.prompt.name !== 'consent') {
-          writeInteractionError(response);
+          writeInteractionError(response, 400, 'unsupported_prompt');
           return;
         }
         const params = details.params as Record<string, unknown>;
@@ -339,19 +364,21 @@ export async function startAuthorizationService(
           }));
           return;
         }
-        if (request.method !== 'POST' || request.headers['content-type']?.split(';')[0] !== 'application/x-www-form-urlencoded') {
-          writeInteractionError(response, 405);
-          return;
-        }
-        if (request.headers.origin !== new URL(config.issuer).origin) {
-          writeInteractionError(response, 403);
+        const headerRejection = interactionSubmissionHeaderRejection({
+          method: request.method,
+          contentType: request.headers['content-type'],
+          origin: request.headers.origin,
+          expectedOrigin: new URL(config.issuer).origin
+        });
+        if (headerRejection !== undefined) {
+          writeInteractionError(response, headerRejection.status, headerRejection.reason);
           return;
         }
         const form = await readForm(request);
         const csrf = verifyCsrf(form.get('csrf') ?? '', config.cookieKeys[0] ?? '');
         if (csrf === undefined || csrf.uid !== details.uid || csrf.accountId !== session.accountId
           || csrf.grantId !== binding.grantId) {
-          writeInteractionError(response);
+          writeInteractionError(response, 400, 'csrf_binding_mismatch');
           return;
         }
         if (form.get('decision') !== 'approve') {

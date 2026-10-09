@@ -1,0 +1,86 @@
+name: wpauto-wordpress-e2e
+
+services:
+  database:
+    image: mariadb:11.8.5@sha256:345fa26d595e8c7fe298e0c4098ed400356f502458769c8902229b3437d6da2b
+    restart: unless-stopped
+    mem_limit: 384m
+    cpus: 0.50
+    environment:
+      MARIADB_DATABASE: wpauto_e2e
+      MARIADB_USER: wpauto_e2e
+      MARIADB_PASSWORD: ${WPAUTO_E2E_DATABASE_PASSWORD:?}
+      MARIADB_ROOT_PASSWORD: ${WPAUTO_E2E_DATABASE_ROOT_PASSWORD:?}
+    volumes:
+      - database-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "healthcheck.sh --connect --innodb_initialized"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    security_opt: [no-new-privileges:true]
+    networks: [backend]
+
+  wordpress:
+    image: wordpress:6.9-php8.3-apache@sha256:85c24b4b92dc7fcea65317d2be635643189d0d8ad4bba65d79a660fd018fe246
+    restart: unless-stopped
+    mem_limit: 512m
+    cpus: 0.75
+    ports:
+      - 127.0.0.1:3200:80
+    depends_on:
+      database:
+        condition: service_healthy
+    environment:
+      WORDPRESS_DB_HOST: database:3306
+      WORDPRESS_DB_NAME: wpauto_e2e
+      WORDPRESS_DB_USER: wpauto_e2e
+      WORDPRESS_DB_PASSWORD: ${WPAUTO_E2E_DATABASE_PASSWORD:?}
+      WORDPRESS_CONFIG_EXTRA: |
+        if (isset($$_SERVER['HTTP_X_FORWARDED_PROTO']) && strpos($$_SERVER['HTTP_X_FORWARDED_PROTO'], 'https') !== false) { $$_SERVER['HTTPS'] = 'on'; }
+        define('WP_HOME', 'https://test.wpauto.cc');
+        define('WP_SITEURL', 'https://test.wpauto.cc');
+        define('WP_ENVIRONMENT_TYPE', 'staging');
+        define('DISALLOW_FILE_EDIT', true);
+    volumes:
+      - wordpress-data:/var/www/html
+    healthcheck:
+      test: ["CMD-SHELL", "php -r '$$s=@fsockopen(\"127.0.0.1\",80,$$e,$$m,2); if(!$$s){exit(1);} fclose($$s);'"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    security_opt: [no-new-privileges:true]
+    networks: [backend]
+
+  wpcli:
+    profiles: [tools]
+    image: wordpress:cli-2.12.0-php8.3@sha256:9e1e5309e3e3b27bef70e62874978d5fecac970e4b1d46ca95f596a711ef3dc1
+    user: "33:33"
+    depends_on:
+      database:
+        condition: service_healthy
+      wordpress:
+        condition: service_healthy
+    environment:
+      WORDPRESS_DB_HOST: database:3306
+      WORDPRESS_DB_NAME: wpauto_e2e
+      WORDPRESS_DB_USER: wpauto_e2e
+      WORDPRESS_DB_PASSWORD: ${WPAUTO_E2E_DATABASE_PASSWORD:?}
+    volumes:
+      - wordpress-data:/var/www/html
+      - ./artifacts:/artifacts:ro
+    security_opt: [no-new-privileges:true]
+    networks: [backend]
+
+networks:
+  backend:
+    name: wpauto_wordpress_e2e_internal
+    ipam:
+      config:
+        - subnet: 172.30.51.0/24
+
+volumes:
+  database-data:
+    name: wpauto_wordpress_e2e_database
+  wordpress-data:
+    name: wpauto_wordpress_e2e_files

@@ -33,6 +33,23 @@ Compose file-secret ownership emulation.
 The completed runtime environment file, generated keys, database dumps and
 Auth0 client secret never enter Git or image layers.
 
+## WordPress end-to-end test site
+
+`compose.wordpress-e2e.yaml` defines the isolated `test.wpauto.cc` acceptance
+site. It uses its own Compose project, network, named volumes and database, and
+publishes WordPress only on `127.0.0.1:3200`. The connector release archive is
+mounted read-only into the one-shot WP-CLI service and is never rebuilt on the
+VPS. Runtime database and administrator secrets live only in
+`/opt/wpauto-wordpress-e2e/config/runtime.env` with mode `0600`.
+
+Install `nginx.test.wpauto.cc.bootstrap.conf` only while obtaining the initial
+HTTP-01 certificate. After the public challenge file succeeds, replace it with
+`nginx.test.wpauto.cc.conf`, validate with `nginx -t`, and reload Nginx. This
+test vhost is independent from `auth.wpauto.cc` and every existing BaoTa site.
+`request-http-certificate.py` is a narrow wrapper around BaoTa's existing ACME
+client for this manually managed vhost; it accepts only `test.wpauto.cc` and the
+fixed acceptance webroot and never prints certificate private material.
+
 ## First-key bootstrap
 
 1. Pull the two immutable `git-<sha>` images.
