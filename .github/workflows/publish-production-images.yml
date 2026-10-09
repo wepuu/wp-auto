@@ -1,0 +1,37 @@
+name: Publish production images
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Authenticate to GHCR
+        shell: bash
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io --username "${{ github.actor }}" --password-stdin
+      - name: Build and publish immutable images
+        shell: bash
+        run: |
+          set -euo pipefail
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          tag="git-${GITHUB_SHA}"
+          control="ghcr.io/${owner}/wp-auto-control:${tag}"
+          authorization="ghcr.io/${owner}/wp-auto-authorization:${tag}"
+          docker build --file deploy/Control.Containerfile --tag "${control}" .
+          docker build --file deploy/Authorization.Containerfile --tag "${authorization}" .
+          test "$(docker image inspect "${control}" --format '{{.Config.User}}')" = "node"
+          test "$(docker image inspect "${authorization}" --format '{{.Config.User}}')" = "node"
+          docker push "${control}"
+          docker push "${authorization}"
+          {
+            echo "### Published immutable images"
+            echo "- \`${control}\`"
+            echo "- \`${authorization}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
