@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   INTERACTION_REFERRER_POLICY,
+  CONSENT_INTERACTION_CSP,
+  CONSENT_SUBMISSION_SCRIPT,
   consentGrantUpdatePlan,
   interactionResource,
   interactionSubmissionHeaderRejection,
@@ -13,6 +15,14 @@ const resource = 'https://site.example.test/wp-json/wp-auto/mcp';
 
 test('interaction form preserves a verifiable Origin without disclosing its path', () => {
   assert.equal(INTERACTION_REFERRER_POLICY, 'strict-origin');
+});
+
+test('consent submission locks after the first decision under a hash-pinned CSP', () => {
+  assert.match(CONSENT_SUBMISSION_SCRIPT, /dataset\.submitting === 'true'/u);
+  assert.match(CONSENT_SUBMISSION_SCRIPT, /button\.disabled = true/u);
+  assert.match(CONSENT_SUBMISSION_SCRIPT, /decision\.value = submitter\.value/u);
+  assert.match(CONSENT_INTERACTION_CSP, /script-src 'self' 'sha256-[A-Za-z0-9+/=]+'/u);
+  assert.doesNotMatch(CONSENT_INTERACTION_CSP, /unsafe-inline/u);
 });
 
 test('interaction resource accepts a string or bounded identical repetitions', () => {
