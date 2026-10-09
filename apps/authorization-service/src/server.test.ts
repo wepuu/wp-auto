@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   INTERACTION_REFERRER_POLICY,
+  consentGrantUpdatePlan,
   interactionResource,
   interactionSubmissionHeaderRejection,
   normalizeAuthorizationResources,
@@ -73,6 +74,59 @@ test('OAuth failure diagnostics expose only bounded class and machine code', () 
   assert.deepEqual(safeOAuthFailure(Object.assign(new Error('secret'), { name: 'SessionNotFound' })), {
     name: 'SessionNotFound'
   });
+  assert.deepEqual(safeOAuthFailure(Object.assign(
+    new Error('authorization session and cookie identifier mismatch'), { name: 'SessionNotFound' }
+  )), { name: 'SessionNotFound', reason: 'authorization_cookie_mismatch' });
   assert.deepEqual(safeOAuthFailure(Object.assign(new Error('secret'), { code: 'unsafe-detail' })), { name: 'Error' });
   assert.deepEqual(safeOAuthFailure({ message: 'secret' }), { name: 'UnknownError' });
+});
+
+test('consent grant update reuses the exactly bound grant and only missing approved values', () => {
+  assert.deepEqual(consentGrantUpdatePlan({
+    providerGrantId: 'grant_000000000000000000000001',
+    platformGrantId: 'grant_000000000000000000000001',
+    resource,
+    scopes: ['mcp:read'],
+    promptDetails: {
+      missingOIDCScope: ['openid', 'offline_access'],
+      missingOIDCClaims: ['sub']
+    }
+  }), {
+    existingGrantId: 'grant_000000000000000000000001',
+    oidcScopes: ['openid', 'offline_access'],
+    oidcClaims: ['sub'],
+    resourceScopes: []
+  });
+
+  assert.deepEqual(consentGrantUpdatePlan({
+    providerGrantId: undefined,
+    platformGrantId: 'grant_000000000000000000000001',
+    resource,
+    scopes: ['mcp:read'],
+    promptDetails: { missingResourceScopes: { [resource]: ['mcp:read'] } }
+  }), {
+    oidcScopes: [], oidcClaims: [], resourceScopes: [{ resource, scopes: ['mcp:read'] }]
+  });
+});
+
+test('consent grant update fails closed on grant, resource, scope and OIDC expansion', () => {
+  const base = {
+    providerGrantId: 'grant_other',
+    platformGrantId: 'grant_expected',
+    resource,
+    scopes: ['mcp:read'],
+    promptDetails: {}
+  } as const;
+  assert.throws(() => consentGrantUpdatePlan(base), /grant_binding_mismatch/u);
+  assert.throws(() => consentGrantUpdatePlan({
+    ...base, providerGrantId: undefined, promptDetails: { missingOIDCScope: ['profile'] }
+  }), /unapproved_oidc_scope/u);
+  assert.throws(() => consentGrantUpdatePlan({
+    ...base, providerGrantId: undefined,
+    promptDetails: { missingResourceScopes: { 'https://other.example.test/mcp': ['mcp:read'] } }
+  }), /resource_binding_mismatch/u);
+  assert.throws(() => consentGrantUpdatePlan({
+    ...base, providerGrantId: undefined,
+    promptDetails: { missingResourceScopes: { [resource]: ['mcp:content.write'] } }
+  }), /scope_binding_mismatch/u);
 });
