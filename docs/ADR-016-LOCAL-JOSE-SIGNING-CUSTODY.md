@@ -1,6 +1,6 @@
 # ADR-016: Local JOSE signing custody
 
-- Status: accepted for implementation on 2026-10-08; production deployment remains separately gated
+- Status: accepted on 2026-10-08; provisionally deployed under ADR-017 on 2026-10-09
 - Date: 2026-10-08
 
 ## Context

@@ -1,6 +1,6 @@
 # WordPress.org External Service Disclosure
 
-Status: architecture draft. Final publication requires real Terms of Service and Privacy Policy URLs, production hostnames, retention periods, and verified implementation behavior.
+Status: operator draft with production service URLs; connector publication and traffic-capture acceptance remain gated.
 
 ## Proposed readme disclosure
 
@@ -20,11 +20,12 @@ When enabled, the plugin may send the following control information to WePuu Pla
 
 The plugin and service do not send WordPress passwords or Application Passwords to WePuu Platform. MCP tool requests and responses travel directly between the MCP client and the WordPress site. The platform is not an MCP proxy and is not intended to receive posts, pages, media, taxonomy values, SEO data, email data, tool arguments, or tool results.
 
-The service is provided by: **[legal provider name required]**
+The service is provided by: **WePuu**
 
-- Terms of Service: **[production URL required]**
-- Privacy Policy: **[production URL required]**
-- Service status/support: **[production URL required]**
+- Terms of Service: **https://auth.wpauto.cc/terms**
+- Privacy Policy: **https://auth.wpauto.cc/privacy**
+- Service status: **https://auth.wpauto.cc/status**
+- Support: **https://auth.wpauto.cc/support** / **support@wpauto.cc**
 
 Administrators can disconnect the service from the plugin settings. Users can revoke their local grants. Application Password access remains independent of the optional service.
 
