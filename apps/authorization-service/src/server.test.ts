@@ -48,5 +48,11 @@ test('interaction submission headers require a same-origin URL-encoded POST', ()
   }), { status: 405, reason: 'method_or_content_type' });
   assert.deepEqual(interactionSubmissionHeaderRejection({
     method: 'POST', contentType: 'application/x-www-form-urlencoded', origin: 'https://other.example.test', expectedOrigin
-  }), { status: 403, reason: 'origin_mismatch' });
+  }), { status: 403, reason: 'origin_unexpected' });
+  assert.deepEqual(interactionSubmissionHeaderRejection({
+    method: 'POST', contentType: 'application/x-www-form-urlencoded', origin: undefined, expectedOrigin
+  }), { status: 403, reason: 'origin_missing' });
+  assert.deepEqual(interactionSubmissionHeaderRejection({
+    method: 'POST', contentType: 'application/x-www-form-urlencoded', origin: 'null', expectedOrigin
+  }), { status: 403, reason: 'origin_null' });
 });
