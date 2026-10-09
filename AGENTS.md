@@ -9,12 +9,15 @@ This repository defines and will eventually implement the WePuu OAuth 2.1 contro
 Phase 2.0.1 through Phase 2.0.7B1 are accepted and closed. The accepted
 Phase 2.0.7B1 candidate is on `main` at merge commit `a57b422`; PR #4 and the
 post-merge hosted CI passed. The restricted TAC/Daybreak review remains waived
-under ADR-013 and is not represented as a pass. Production deployment,
-connector changes and Phase 2.0.7B2 remain separately gated. Until another
+under ADR-013 and is not represented as a pass. ADR-016 local signing was
+merged at `7007caf`. The operator explicitly authorized the provisional
+single-VPS production deployment recorded by ADR-017 on 2026-10-09;
+interactive identity and WordPress end-to-end release gates remain open.
+Connector changes and Phase 2.0.7B2 remain separately gated. Until another
 phase is explicitly approved, work may:
 
-- implement the ADR-016 local JOSE signing-custody replacement explicitly
-  approved on 2026-10-08, without production deployment or connector changes;
+- operate, validate and safely roll back the bounded ADR-017 deployment without
+  connector changes or expansion into Phase 2.0.7B2;
 
 - preserve the accepted Phase 2.0.2 foundation and its validation evidence;
 - preserve the accepted pairing/grant platform and connector contracts,
@@ -26,8 +29,7 @@ phase is explicitly approved, work may:
 - add content-free operations probes and metrics without tenant, content or
   credential labels;
 - retain placeholder release metadata only in local/test mode;
-- keep production deployment, connector changes and Phase 2.0.7B2 separately
-  gated;
+- keep general release, connector changes and Phase 2.0.7B2 separately gated;
 - do not reopen or materially change the closed Phase 2.0.3 contract without
   an ADR and explicit approval;
 - keep all architecture decisions consistent with the documents under `docs/`.

@@ -151,12 +151,19 @@ legal identity, policy URLs, residency/retention decisions and staged release:
 - Compatibility matrix for supported Codex and WorkBuddy versions.
 - Staged opt-in release with Application Password rollback intact.
 
+On 2026-10-09 the operator separately and explicitly authorized the initial
+single-VPS deployment recorded by ADR-017. `https://auth.wpauto.cc` is online
+for operator validation with Auth0, local ADR-016 signing, BaoTa Nginx and
+Cloudflare. Infrastructure checks passed, but interactive Auth0 callback and
+real WordPress pairing/direct-MCP acceptance remain open. This provisional
+deployment does not close Phase 2.0.7B, authorize connector changes or start
+Phase 2.0.7B2.
+
 ## Deferred and out of scope
 
-An independently authorized ADR-016 implementation candidate replaces AWS KMS
-runtime signing with encrypted local PKCS#8 RSA-3072 custody. It preserves the
-closed OAuth and connector contracts and does not authorize production,
-connector work, or Phase 2.0.7B2.
+ADR-016 replaces AWS KMS runtime signing with encrypted local PKCS#8 RSA-3072
+custody. ADR-017 separately authorizes the provisional operator deployment;
+neither decision authorizes connector work or Phase 2.0.7B2.
 
 - Hosted MCP gateway or proxy.
 - WordPress content ingestion, indexing, transformation, analytics, or telemetry.

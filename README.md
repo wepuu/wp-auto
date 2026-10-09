@@ -118,6 +118,8 @@ only; they must not be placed in `.env`, logs, or Git.
 - [ADR-007 external account OIDC](docs/ADR-007-EXTERNAL-ACCOUNT-OIDC.md)
 - [ADR-008 Node 26 KMS JOSE runtime](docs/ADR-008-NODE-26-KMS-JOSE-RUNTIME.md)
 - [ADR-016 local JOSE signing custody](docs/ADR-016-LOCAL-JOSE-SIGNING-CUSTODY.md)
+- [ADR-017 initial single-VPS deployment](docs/ADR-017-SINGLE-VPS-PRODUCTION-DEPLOYMENT.md)
+- [Production deployment validation](docs/PRODUCTION_DEPLOYMENT_2026-10-09.md)
 - [Local signing test plan](docs/PHASE_2_0_LOCAL_SIGNING_TEST_PLAN.md)
 - [Local signing validation](docs/PHASE_2_0_LOCAL_SIGNING_VALIDATION.md)
 - [External account OIDC local acceptance](docs/ACCOUNT_OIDC_TEST_SETUP.md)
