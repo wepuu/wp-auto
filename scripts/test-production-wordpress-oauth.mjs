@@ -37,6 +37,10 @@ const EXPECTED_TOOLS = [
   'wp-auto-seo-update',
 ];
 
+// Match the authorization server and connector contract: numeric-date claims
+// remain mandatory and receive only the documented bounded clock skew.
+const TOKEN_CLOCK_TOLERANCE_SECONDS = 60;
+
 function readArguments(argv) {
   const values = new Map();
   for (let index = 0; index < argv.length; index += 2) {
@@ -128,6 +132,7 @@ async function verifyAccessToken(token, context) {
     algorithms: ['RS256'],
     issuer: context.issuer,
     audience: context.resource,
+    clockTolerance: TOKEN_CLOCK_TOLERANCE_SECONDS,
     requiredClaims: ['sub', 'client_id', 'tenant_id', 'site_id', 'grant_id', 'scope', 'nbf'],
   });
   const claims = verified.payload;
