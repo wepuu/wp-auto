@@ -4,6 +4,7 @@ import type { McpScope, TenantContext } from '@wepuu/contracts';
 import {
   Database,
   PostgresAccountAuthLinkStore,
+  PostgresAccountLoginTransactionStore,
   PostgresAccountWorkspaceStore,
   PostgresGrantRepository,
   PostgresPairingRepository,
@@ -31,10 +32,10 @@ if (publicOrigin === undefined) throw new Error('WEPUU_CONTROL_PUBLIC_ORIGIN is 
 const deployment = loadPublicDeploymentConfig(process.env, publicOrigin);
 const accountAuth = await accountAuthFromEnvironment(process.env, {
   applicationName: 'wepuu-control-account-auth',
-  databaseRole: 'wepuu_account_auth_writer',
-  includeTemporaryAuth0: true
+  databaseRole: 'wepuu_account_auth_writer'
 });
 const accountAuthLinks = new PostgresAccountAuthLinkStore(database);
+const loginTransactions = new PostgresAccountLoginTransactionStore(database);
 const platformIssuer = process.env['WEPUU_ISSUER'];
 if (platformIssuer !== undefined && !platformIssuer.startsWith('https://')) throw new Error('WEPUU_ISSUER must use HTTPS');
 const pairingVerifier = new HttpsSiteVerificationClient();
@@ -141,6 +142,7 @@ const app = buildControlApi({
   audit: new PostgresSecurityAuditSink(database),
   readiness: () => database.checkReady(),
   accountAuth,
+  loginTransactions,
   workspace: new PostgresAccountWorkspaceStore(database),
   deployment,
   deploymentReadiness: evaluateDeploymentReadiness(deployment, process.env),

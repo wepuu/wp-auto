@@ -51,12 +51,12 @@ test('Better Auth user projection is atomic, concurrent and fail-closed', { skip
   );
   await admin.query(
     `INSERT INTO auth."account" ("id", "accountId", "providerId", "userId", "createdAt", "updatedAt")
-     VALUES ('provider_link_one', 'upstream_subject', 'auth0', 'auth_user_concurrent', now(), now())`
+     VALUES ('provider_link_one', 'upstream_subject', 'future-oidc', 'auth_user_concurrent', now(), now())`
   );
   await assert.rejects(
     admin.query(
       `INSERT INTO auth."account" ("id", "accountId", "providerId", "userId", "createdAt", "updatedAt")
-       VALUES ('provider_link_two', 'upstream_subject', 'auth0', 'auth_user_other', now(), now())`
+       VALUES ('provider_link_two', 'upstream_subject', 'future-oidc', 'auth_user_other', now(), now())`
     ),
     (error: unknown) => typeof error === 'object' && error !== null && 'code' in error && error.code === '23505'
   );

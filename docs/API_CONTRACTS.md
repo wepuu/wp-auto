@@ -55,15 +55,29 @@ Implemented Phase 2.0.3A routes additionally include:
 - `POST /v1/tenants/{tenant_id}/grants/{grant_id}/revoke`;
 - `POST /v1/tenants/{tenant_id}/sites/{site_id}/disconnect`.
 
-ADR-018 P1 supersedes the active account-login routes in its local candidate:
+ADR-019 P2 supersedes the P1 account-login routes in its local candidate:
 
-- `GET|POST /api/auth/*` is the Better Auth Fetch handler surface;
-- `GET /v1/account/login?return_to={local_path}` starts temporary Auth0 login;
-- `GET /api/auth/callback/auth0` is the Better Auth callback;
-- `GET /v1/account/bootstrap?return_to={local_path}` atomically projects the
-  authenticated user to a stable WePuu account and resumes the local path;
-- `GET /v1/account/oidc/login` is a 303 compatibility alias;
-- `GET /v1/account/oidc/callback` is closed and cannot issue a Session.
+- `GET /v1/account/login?return_to={local_path}` creates a ten-minute,
+  server-side login transaction after validating the local return path;
+- `POST /v1/account/email/send` and `/resend` call the Better Auth Fetch
+  handler internally after exact-Origin, CSRF, method and form validation;
+- `POST /v1/account/email/verify` verifies the six-digit code through Better
+  Auth, then atomically projects the authenticated user to a stable WePuu
+  account and resumes the stored local path;
+- `POST /v1/account/email/change` replaces the transaction without carrying a
+  user-controlled return path;
+- `POST /v1/account/bootstrap` retries an idempotent business-account
+  projection using an already valid Better Auth Session, without a new OTP;
+- raw `/api/auth/*` and the retired `/v1/account/oidc/*` routes return a fixed
+  content-free `not_found` response and cannot issue a Session.
+
+The browser never submits `return_to` after the first GET. PostgreSQL stores
+only the login transaction token digest, CSRF digest and an HMAC email binding.
+Transactions expire after ten minutes, are single-use, and independent tabs
+may each resume their own validated OAuth interaction. The Better Auth
+database limiter is reached through its HTTP handler; current test-stage
+quotas are keyed by trusted client IP plus route. Email-targeted abuse controls
+must be reassessed before public registration.
 
 Phase 2.0.7A adds `GET /v1/account/tenants`, returning only active tenant
 memberships derived from the authenticated server-side account session. It

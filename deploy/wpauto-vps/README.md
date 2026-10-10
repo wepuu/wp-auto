@@ -8,8 +8,11 @@ existing Docker network or the BaoTa Nginx main configuration.
 ## Public origin
 
 - Origin and OAuth issuer: `https://auth.wpauto.cc`
-- P1 candidate Auth0 callback: `https://auth.wpauto.cc/api/auth/callback/auth0`
-- Auth0 logout/origin: `https://auth.wpauto.cc`
+- P2 candidate account login: `https://auth.wpauto.cc/v1/account/login`
+
+The P2 Compose template in this directory is not deployed by the repository
+change. The currently running ADR-017 image continues to use its historical
+Auth0 callback until a separate rollout is authorized.
 
 The Nginx vhost routes only the established OAuth/JWKS paths to port 3001 and
 routes the control shell to port 3000. `/internal/metrics` is not public.
@@ -19,10 +22,12 @@ routes the control shell to port 3000. `/internal/metrics` is not public.
 ```text
 /opt/wpauto/compose.yaml
 /opt/wpauto/config/runtime.env       root:root 0600
+/opt/wpauto/config/cloudflare-realip.conf
 /opt/wpauto/secrets/signing_keyring.json
 /opt/wpauto/secrets/signing_private_key.pem
 /opt/wpauto/secrets/signing_passphrase
 /opt/wpauto/secrets/account_auth_secrets.json
+/opt/wpauto/secrets/resend_api_key
 /opt/wpauto/legal/{terms,privacy,support,status}.html
 /opt/wpauto/backups/
 /opt/wpauto/bin/{check-health,backup-database,deploy-service}.sh
@@ -30,12 +35,12 @@ routes the control shell to port 3000. `/internal/metrics` is not public.
 /opt/wpauto/acme-webroot/.well-known/acme-challenge/
 ```
 
-The three signing files and the separate Better Auth active/previous secret
-key ring are protected host files mounted read-only. They must
+The three signing files, Better Auth active/previous secret key ring and Resend
+API key are protected host files mounted read-only. They must
 be owned by UID/GID 1000 and mode 0400; the deployment does not rely on
 Compose file-secret ownership emulation.
 The completed runtime environment file, generated keys, database dumps and
-Auth0 client secret never enter Git or image layers.
+Resend API key never enter Git or image layers.
 
 ## WordPress end-to-end test site
 
@@ -65,6 +70,12 @@ fixed acceptance webroot and never prints certificate private material.
 5. Activate the key, then start the control and authorization services.
 6. Install the dedicated BaoTa Nginx vhost only after `nginx -t` succeeds.
 
+Install `cloudflare-realip.conf` with the auth vhost and review it against
+Cloudflare's published IP ranges before every rollout. Nginx trusts
+`CF-Connecting-IP` only from those source ranges and overwrites
+`X-Forwarded-For` with the resulting `$remote_addr`; arbitrary client-supplied
+forwarding chains therefore cannot choose the Better Auth limiter key.
+
 The port 80 vhost serves only the ACME HTTP-01 challenge directory before
 redirecting all other requests to HTTPS. Keep that directory in place so the
 BaoTa-managed certificate can renew without changing another site.
@@ -74,10 +85,11 @@ BaoTa-managed certificate can renew without changing another site.
 - `/health/ready` succeeds on both loopback services.
 - public discovery, JWKS and control readiness succeed through Cloudflare;
 - JWKS contains RS256 public members only;
-- Auth0 Authorization Code + PKCE S256 login completes with an exact callback;
+- Email OTP registration/login, Session issuance and OAuth interaction resume
+  complete without exposing raw Better Auth routes;
 - existing BaoTa sites and `tikdd` containers retain their previous status;
 - a database backup can be restored into a disposable database;
-- no private key, passphrase, Auth0 secret or WordPress content appears in
+- no private key, passphrase, Resend API key, OTP or WordPress content appears in
   logs, images, PostgreSQL metadata or public responses.
 
 The bounded ADR-017 production acceptance passed on 2026-10-10 using the old

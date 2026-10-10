@@ -45,10 +45,12 @@ direct-MCP acceptance flow passed by 2026-10-10. This remains an operator
 validation deployment: connector changes, general release expansion and Phase
 2.0.7B2 are not authorized.
 
-The P1 Better Auth account-boundary candidate is implemented and locally
-validated but is not deployed. It preserves `platform.accounts.id` as the
-stable OAuth subject, adds an isolated authentication schema and temporarily
-uses Auth0 through Better Auth until P2 Email OTP is implemented. See ADR-018.
+The P1 Better Auth account boundary is implemented and locally validated. The
+P2 Email OTP candidate replaces its temporary Auth0 runtime with Better Auth's
+official Email OTP plugin and a Resend adapter while preserving
+`platform.accounts.id` as the stable OAuth subject. P2 is not deployed;
+production continues to run the separately authorized ADR-017 image until a
+rollout is explicitly approved. See ADR-018 and ADR-019.
 
 ## Architecture
 
@@ -109,10 +111,12 @@ they must not be stored in `.env`, fixtures, logs, evidence, or Git.
 Signing processes start normally through `pnpm start:control` and
 `pnpm start:authorization`; no AWS/OpenSSL provider registration is required.
 
-The P1 candidate requires a versioned Better Auth secret key ring through the
-protected file path `WEPUU_ACCOUNT_AUTH_SECRETS_FILE`. The temporary Auth0
-provider uses Authorization Code, PKCE and the exact callback
-`/api/auth/callback/auth0`; it requests `openid email profile`. Grant creation additionally requires a
+The P2 candidate requires a versioned Better Auth secret key ring through the
+protected file path `WEPUU_ACCOUNT_AUTH_SECRETS_FILE`. Production email
+delivery uses `WEPUU_EMAIL_DELIVERY=resend`, a Resend API key read from
+`WEPUU_RESEND_API_KEY_FILE`, and a configured `WEPUU_RESEND_FROM`. Local and
+ordinary CI tests use the in-process mock sender and never contact Resend.
+Grant creation additionally requires a
 separate 32-byte `WEPUU_GRANT_IDEMPOTENCY_HMAC_KEY`; it deterministically
 derives retry-safe consent challenges while PostgreSQL stores only their
 digests. Secrets are process environment values or secret-manager injections
@@ -132,7 +136,9 @@ only; they must not be placed in `.env`, logs, or Git.
 - [ADR-016 local JOSE signing custody](docs/ADR-016-LOCAL-JOSE-SIGNING-CUSTODY.md)
 - [ADR-017 initial single-VPS deployment](docs/ADR-017-SINGLE-VPS-PRODUCTION-DEPLOYMENT.md)
 - [ADR-018 Better Auth account boundary](docs/ADR-018-BETTER-AUTH-ACCOUNT-BOUNDARY.md)
+- [ADR-019 Better Auth Email OTP](docs/ADR-019-BETTER-AUTH-EMAIL-OTP.md)
 - [P1 Better Auth validation](docs/P1_BETTER_AUTH_VALIDATION_2026-10-10.md)
+- [P2 Email OTP validation](docs/P2_EMAIL_OTP_VALIDATION_2026-10-10.md)
 - [Production deployment validation](docs/PRODUCTION_DEPLOYMENT_2026-10-09.md)
 - [Production OAuth end-to-end validation](docs/PRODUCTION_OAUTH_CONSENT_RESUME_VALIDATION_2026-10-10.md)
 - [ADR-017 operations runbook](docs/ADR_017_OPERATIONS_RUNBOOK.md)
@@ -140,7 +146,6 @@ only; they must not be placed in `.env`, logs, or Git.
 - [ADR-017 operations automation validation](docs/ADR_017_OPERATIONS_AUTOMATION_2026-10-10.md)
 - [Local signing test plan](docs/PHASE_2_0_LOCAL_SIGNING_TEST_PLAN.md)
 - [Local signing validation](docs/PHASE_2_0_LOCAL_SIGNING_VALIDATION.md)
-- [External account OIDC local acceptance](docs/ACCOUNT_OIDC_TEST_SETUP.md)
 - [Phase 2.0.3 test plan](docs/PHASE_2_0_3_TEST_PLAN.md)
 - [Phase 2.0.3 validation](docs/PHASE_2_0_3_VALIDATION.md)
 - [Phase 2.0.3 versions](docs/PHASE_2_0_3_VERSION_MATRIX.md)

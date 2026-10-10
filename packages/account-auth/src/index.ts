@@ -3,14 +3,17 @@ import type { IncomingHttpHeaders } from 'node:http';
 import { resolve } from 'node:path';
 import { betterAuth } from 'better-auth';
 import { fromNodeHeaders } from 'better-auth/node';
-import { auth0, genericOAuth } from 'better-auth/plugins/generic-oauth';
+import { emailOTP } from 'better-auth/plugins';
 import { PostgresDialect } from 'kysely';
 import { Pool } from 'pg';
+import { Resend } from 'resend';
 import { z } from 'zod';
 
 export const ACCOUNT_AUTH_SESSION_COOKIE = '__Host-wepuu_session';
 export const ACCOUNT_AUTH_BASE_PATH = '/api/auth';
 export const ACCOUNT_AUTH_SESSION_TTL_SECONDS = 43_200;
+export const ACCOUNT_AUTH_CLIENT_IP_HEADER = 'x-wepuu-client-ip';
+export const ACCOUNT_AUTH_DELIVERY_ID_HEADER = 'x-wepuu-delivery-id';
 
 const SecretKeyringSchema = z.object({
   secrets: z.array(z.object({
@@ -18,13 +21,73 @@ const SecretKeyringSchema = z.object({
     value: z.string().min(32)
   }).strict()).min(1)
 }).strict();
+const EmailSchema = z.email().max(254);
+const DeliveryIdSchema = z.string().regex(/^[A-Za-z0-9_-]{16,128}$/u);
+const DeliveryModeSchema = z.enum(['mock', 'resend']);
 
 export type AccountAuthSecret = Readonly<{ version: number; value: string }>;
+export type OtpDeliveryOutcome = 'accepted' | 'rejected' | 'unknown';
 
-export interface TemporaryAuth0ProviderConfig {
-  readonly domain: string;
-  readonly clientId: string;
-  readonly clientSecret: string;
+function validatedSender(input: string): string {
+  if (input.length > 320 || /[\r\n]/u.test(input)) throw new Error('resend_sender_invalid');
+  const bracketed = /^(?:[^<>]+\s)?<([^<>]+)>$/u.exec(input.trim());
+  EmailSchema.parse(bracketed?.[1] ?? input.trim());
+  return input.trim();
+}
+
+export interface OtpEmailSender {
+  send(input: Readonly<{ email: string; otp: string }>): Promise<OtpDeliveryOutcome>;
+}
+
+export class MockOtpEmailSender implements OtpEmailSender {
+  readonly #send: (input: Readonly<{ email: string; otp: string }>) => Promise<OtpDeliveryOutcome>;
+
+  constructor(send: (input: Readonly<{ email: string; otp: string }>) => Promise<OtpDeliveryOutcome>
+    = () => Promise.resolve('accepted')) {
+    this.#send = send;
+  }
+
+  send(input: Readonly<{ email: string; otp: string }>): Promise<OtpDeliveryOutcome> {
+    return this.#send(input);
+  }
+}
+
+export class ResendOtpEmailSender implements OtpEmailSender {
+  readonly #resend: Resend;
+  readonly #from: string;
+  readonly #replyTo: string | undefined;
+
+  constructor(options: Readonly<{ apiKey: string; from: string; replyTo?: string }>) {
+    if (options.apiKey.length < 16) throw new Error('resend_api_key_invalid');
+    this.#resend = new Resend(options.apiKey);
+    this.#from = validatedSender(options.from);
+    this.#replyTo = options.replyTo === undefined ? undefined : EmailSchema.parse(options.replyTo);
+  }
+
+  async send(input: Readonly<{ email: string; otp: string }>): Promise<OtpDeliveryOutcome> {
+    try {
+      const result = await this.#resend.emails.send({
+        from: this.#from,
+        to: [EmailSchema.parse(input.email)],
+        subject: 'Your WePuu verification code',
+        text: `Your WePuu verification code is ${input.otp}. It expires in 5 minutes. If you did not request this code, you can ignore this email.`,
+        html: `<div style="font-family:system-ui,sans-serif;color:#17242e"><h1>Verify your email</h1><p>Use this code to sign in to WePuu:</p><p style="font-size:32px;font-weight:700;letter-spacing:8px">${input.otp}</p><p>This code expires in 5 minutes. If you did not request it, you can ignore this email.</p></div>`,
+        ...(this.#replyTo === undefined ? {} : { replyTo: this.#replyTo })
+      }, { signal: AbortSignal.timeout(5_000) });
+      if (result.error !== null) return 'rejected';
+      return result.data.id === '' ? 'unknown' : 'accepted';
+    } catch {
+      // A timeout or transport failure cannot establish whether Resend accepted the request.
+      return 'unknown';
+    }
+  }
+}
+
+export interface AccountAuthRateLimitConfig {
+  readonly sendWindowSeconds: number;
+  readonly sendMax: number;
+  readonly verifyWindowSeconds: number;
+  readonly verifyMax: number;
 }
 
 export interface CreateAccountAuthOptions {
@@ -32,7 +95,8 @@ export interface CreateAccountAuthOptions {
   readonly applicationName: string;
   readonly publicOrigin: string;
   readonly secrets: readonly AccountAuthSecret[];
-  readonly temporaryAuth0?: TemporaryAuth0ProviderConfig;
+  readonly emailSender: OtpEmailSender;
+  readonly rateLimit?: AccountAuthRateLimitConfig;
   readonly databaseRole?: 'wepuu_account_auth_writer' | 'wepuu_account_auth_reader';
 }
 
@@ -45,7 +109,7 @@ export interface AccountAuthSession {
 export interface AccountAuth {
   handle(request: Request): Promise<Response>;
   getSession(headers: Headers): Promise<AccountAuthSession | undefined>;
-  startTemporaryAuth0(headers: Headers, callbackURL: string): Promise<Response>;
+  takeDeliveryOutcome(deliveryId: string): OtpDeliveryOutcome | undefined;
   signOut(headers: Headers): Promise<Response>;
   close(): Promise<void>;
 }
@@ -58,6 +122,10 @@ function protectedProviderAccount<T extends Record<string, unknown>>(account: T)
     }
   }
   return { ...account, idToken: null };
+}
+
+export function normalizeAccountEmail(input: string): string {
+  return EmailSchema.parse(input.trim().normalize('NFC').toLowerCase());
 }
 
 export function accountAuthSecurityOptions() {
@@ -136,10 +204,10 @@ function validateSecrets(input: readonly AccountAuthSecret[]): Array<{ version: 
   return parsed.toSorted((left, right) => right.version - left.version);
 }
 
-export async function loadAccountAuthSecrets(
+async function loadProtectedFile(
   filePath: string,
   options: Readonly<{ production?: boolean; expectedUid?: number }> = {}
-): Promise<readonly AccountAuthSecret[]> {
+): Promise<string> {
   const absolutePath = resolve(filePath);
   const metadata = await lstat(absolutePath);
   if (!metadata.isFile() || metadata.isSymbolicLink()) throw new Error('account_auth_secret_file_invalid');
@@ -149,7 +217,14 @@ export async function loadAccountAuthSecrets(
       throw new Error('account_auth_secret_file_owner_invalid');
     }
   }
-  return validateSecrets(SecretKeyringSchema.parse(JSON.parse(await readFile(absolutePath, 'utf8'))).secrets);
+  return readFile(absolutePath, 'utf8');
+}
+
+export async function loadAccountAuthSecrets(
+  filePath: string,
+  options: Readonly<{ production?: boolean; expectedUid?: number }> = {}
+): Promise<readonly AccountAuthSecret[]> {
+  return validateSecrets(SecretKeyringSchema.parse(JSON.parse(await loadProtectedFile(filePath, options))).secrets);
 }
 
 function databaseOptions(options: CreateAccountAuthOptions): {
@@ -186,21 +261,20 @@ function databaseOptions(options: CreateAccountAuthOptions): {
   };
 }
 
+const defaultRateLimit: AccountAuthRateLimitConfig = {
+  sendWindowSeconds: 60,
+  sendMax: 1,
+  verifyWindowSeconds: 300,
+  verifyMax: 5
+};
+
 export function createAccountAuth(options: CreateAccountAuthOptions): AccountAuth {
   const publicOrigin = exactHttpsOrigin(options.publicOrigin);
   const secrets = validateSecrets(options.secrets);
+  const limits = options.rateLimit ?? defaultRateLimit;
   const { pool, database } = databaseOptions(options);
-  const plugins = options.temporaryAuth0 === undefined ? [] : [genericOAuth({
-    config: [{ ...auth0({
-      domain: options.temporaryAuth0.domain,
-      clientId: options.temporaryAuth0.clientId,
-      clientSecret: options.temporaryAuth0.clientSecret,
-      tokenEndpointAuth: { method: 'client_secret_basic' },
-      scopes: ['openid', 'email', 'profile'],
-      pkce: true,
-      disableProviderLogout: true
-    }), requireIdTokenVerification: true, requireEmailVerification: true }]
-  })];
+  const deliveryOutcomes = new Map<string, { outcome: OtpDeliveryOutcome; expiresAt: number }>();
+  const security = accountAuthSecurityOptions();
   const auth = betterAuth({
     appName: 'WePuu',
     baseURL: publicOrigin,
@@ -208,8 +282,42 @@ export function createAccountAuth(options: CreateAccountAuthOptions): AccountAut
     trustedOrigins: [publicOrigin],
     secrets,
     database,
-    ...accountAuthSecurityOptions(),
-    plugins,
+    ...security,
+    advanced: {
+      ...security.advanced,
+      ipAddress: { ipAddressHeaders: [ACCOUNT_AUTH_CLIENT_IP_HEADER] }
+    },
+    rateLimit: {
+      enabled: true,
+      storage: 'database',
+      customRules: {
+        '/email-otp/send-verification-otp': { window: limits.sendWindowSeconds, max: limits.sendMax },
+        '/sign-in/email-otp': { window: limits.verifyWindowSeconds, max: limits.verifyMax }
+      }
+    },
+    plugins: [emailOTP({
+      otpLength: 6,
+      expiresIn: 300,
+      allowedAttempts: 5,
+      storeOTP: 'hashed',
+      resendStrategy: 'rotate',
+      disableSignUp: false,
+      rateLimit: { window: limits.verifyWindowSeconds, max: limits.verifyMax },
+      async sendVerificationOTP({ email, otp, type }, context) {
+        if (type !== 'sign-in') throw new Error('otp_delivery_type_invalid');
+        const deliveryId = context?.request?.headers.get(ACCOUNT_AUTH_DELIVERY_ID_HEADER);
+        if (deliveryId === null || deliveryId === undefined || !DeliveryIdSchema.safeParse(deliveryId).success) {
+          throw new Error('otp_delivery_context_missing');
+        }
+        const outcome = await options.emailSender.send({ email, otp });
+        const now = Date.now();
+        for (const [key, value] of deliveryOutcomes) {
+          if (value.expiresAt <= now) deliveryOutcomes.delete(key);
+        }
+        deliveryOutcomes.set(deliveryId, { outcome, expiresAt: now + 60_000 });
+        if (outcome === 'rejected') throw new Error('otp_delivery_rejected');
+      }
+    })],
     telemetry: { enabled: false }
   });
 
@@ -227,13 +335,10 @@ export function createAccountAuth(options: CreateAccountAuthOptions): AccountAut
         expiresAt: value.session.expiresAt
       };
     },
-    async startTemporaryAuth0(headers, callbackURL) {
-      if (options.temporaryAuth0 === undefined) throw new Error('account_auth_provider_unavailable');
-      return auth.api.signInSocial({
-        headers,
-        body: { provider: 'auth0', callbackURL },
-        asResponse: true
-      });
+    takeDeliveryOutcome(deliveryId) {
+      const value = deliveryOutcomes.get(deliveryId);
+      deliveryOutcomes.delete(deliveryId);
+      return value?.outcome;
     },
     signOut: (headers) => auth.api.signOut({ headers, asResponse: true }),
     close: () => pool.end()
@@ -244,12 +349,19 @@ export function accountAuthHeaders(headers: IncomingHttpHeaders): Headers {
   return fromNodeHeaders(headers);
 }
 
+function boundedInteger(environment: NodeJS.ProcessEnv, name: string, fallback: number, minimum: number, maximum: number): number {
+  const value = environment[name];
+  if (value === undefined || value === '') return fallback;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < minimum || parsed > maximum) throw new Error(`${name}_invalid`);
+  return parsed;
+}
+
 export async function accountAuthFromEnvironment(
   environment: NodeJS.ProcessEnv,
   options: Readonly<{
     applicationName: string;
     databaseRole: 'wepuu_account_auth_writer' | 'wepuu_account_auth_reader';
-    includeTemporaryAuth0: boolean;
   }>
 ): Promise<AccountAuth> {
   const databaseUrl = environment['WEPUU_DATABASE_URL'];
@@ -258,34 +370,44 @@ export async function accountAuthFromEnvironment(
   if (databaseUrl === undefined || publicOrigin === undefined || secretFile === undefined) {
     throw new Error('account_auth_environment_incomplete');
   }
-  const temporaryAuth0 = options.includeTemporaryAuth0
-    ? temporaryAuth0FromEnvironment(environment)
-    : undefined;
+  const production = environment['NODE_ENV'] === 'production';
+  const fileOptions = {
+    production,
+    ...(process.platform === 'win32' || process.getuid === undefined ? {} : { expectedUid: process.getuid() })
+  };
+  const deliveryMode = DeliveryModeSchema.parse(environment['WEPUU_EMAIL_DELIVERY'] ?? 'mock');
+  if (production && options.databaseRole === 'wepuu_account_auth_writer' && deliveryMode !== 'resend') {
+    throw new Error('production_email_delivery_required');
+  }
+  let emailSender: OtpEmailSender;
+  if (deliveryMode === 'resend' && options.databaseRole === 'wepuu_account_auth_writer') {
+    const apiKeyFile = environment['WEPUU_RESEND_API_KEY_FILE'];
+    const from = environment['WEPUU_RESEND_FROM'];
+    if (apiKeyFile === undefined || from === undefined) throw new Error('resend_environment_incomplete');
+    const apiKey = (await loadProtectedFile(apiKeyFile, fileOptions)).trim();
+    emailSender = new ResendOtpEmailSender({
+      apiKey,
+      from,
+      ...(environment['WEPUU_RESEND_REPLY_TO'] === undefined || environment['WEPUU_RESEND_REPLY_TO'] === ''
+        ? {} : { replyTo: environment['WEPUU_RESEND_REPLY_TO'] })
+    });
+  } else {
+    emailSender = new MockOtpEmailSender();
+  }
   return createAccountAuth({
     databaseUrl,
     applicationName: options.applicationName,
     publicOrigin,
-    secrets: await loadAccountAuthSecrets(secretFile, {
-      production: environment['NODE_ENV'] === 'production',
-      ...(process.platform === 'win32' || process.getuid === undefined ? {} : { expectedUid: process.getuid() })
-    }),
+    secrets: await loadAccountAuthSecrets(secretFile, fileOptions),
     databaseRole: options.databaseRole,
-    ...(temporaryAuth0 === undefined ? {} : { temporaryAuth0 })
+    emailSender,
+    rateLimit: {
+      sendWindowSeconds: boundedInteger(environment, 'WEPUU_EMAIL_OTP_SEND_WINDOW_SECONDS', 60, 10, 3_600),
+      sendMax: boundedInteger(environment, 'WEPUU_EMAIL_OTP_SEND_MAX', 1, 1, 10),
+      verifyWindowSeconds: boundedInteger(environment, 'WEPUU_EMAIL_OTP_VERIFY_WINDOW_SECONDS', 300, 10, 3_600),
+      verifyMax: boundedInteger(environment, 'WEPUU_EMAIL_OTP_VERIFY_MAX', 5, 1, 20)
+    }
   });
-}
-
-function temporaryAuth0FromEnvironment(environment: NodeJS.ProcessEnv): TemporaryAuth0ProviderConfig {
-  const issuer = environment['WEPUU_ACCOUNT_OIDC_ISSUER'];
-  const clientId = environment['WEPUU_ACCOUNT_OIDC_CLIENT_ID'];
-  const clientSecret = environment['WEPUU_ACCOUNT_OIDC_CLIENT_SECRET'];
-  if (issuer === undefined || clientId === undefined || clientSecret === undefined) {
-    throw new Error('temporary_auth0_environment_incomplete');
-  }
-  const url = new URL(issuer);
-  if (url.protocol !== 'https:' || url.username !== '' || url.password !== '') {
-    throw new Error('temporary_auth0_issuer_invalid');
-  }
-  return { domain: url.host, clientId, clientSecret };
 }
 
 // Exported only for the pinned CLI schema-generation entry point.
@@ -294,6 +416,7 @@ export function createAccountAuthSchemaDefinition(databaseUrl: string) {
     databaseUrl,
     applicationName: 'wepuu-account-auth-schema',
     publicOrigin: 'https://schema.invalid',
-    secrets: [{ version: 1, value: 'schema-generation-only-secret-value-0000000000000000' }]
+    secrets: [{ version: 1, value: 'schema-generation-only-secret-value-0000000000000000' }],
+    emailSender: new MockOtpEmailSender()
   });
 }

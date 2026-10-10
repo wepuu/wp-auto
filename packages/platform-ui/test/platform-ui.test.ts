@@ -57,8 +57,10 @@ test('readiness reports categories without exposing secret values or paths', () 
     WEPUU_COMPATIBILITY_MATRIX_VERSION: '2026-10',
     WEPUU_SIGNING_KEYRING_FILE: '/run/secrets/keyring.json',
     WEPUU_SIGNING_KEY_SLOT: 'primary',
-    WEPUU_ACCOUNT_OIDC_ISSUER: 'https://identity.example.test/',
-    WEPUU_ACCOUNT_OIDC_CLIENT_ID: 'client',
+    WEPUU_ACCOUNT_AUTH_SECRETS_FILE: '/run/secrets/account-auth.json',
+    WEPUU_EMAIL_DELIVERY: 'resend',
+    WEPUU_RESEND_API_KEY_FILE: '/run/secrets/resend-api-key',
+    WEPUU_RESEND_FROM: 'WePuu <login@example.test>',
   };
   const report = evaluateDeploymentReadiness(loadPublicDeploymentConfig(environment), environment);
   assert.equal(report.ready, false);

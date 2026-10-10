@@ -1,7 +1,14 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import Fastify, { LogController, type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { ACCOUNT_AUTH_BASE_PATH, accountAuthHeaders, type AccountAuth } from '@wepuu/account-auth';
+import {
+  ACCOUNT_AUTH_CLIENT_IP_HEADER,
+  ACCOUNT_AUTH_DELIVERY_ID_HEADER,
+  accountAuthHeaders,
+  normalizeAccountEmail,
+  type AccountAuth,
+  type OtpDeliveryOutcome
+} from '@wepuu/account-auth';
 import {
   AccountPrincipalSchema,
   McpScopeSetSchema,
@@ -37,8 +44,11 @@ import {
 import { ContentFreeMetrics } from './operations.js';
 import {
   renderAccount,
+  renderAccountBootstrapRetry,
   renderActivity,
   renderCompatibility,
+  renderEmailLogin,
+  renderEmailVerification,
   renderGrantDetail,
   renderGrants,
   renderOverview,
@@ -58,6 +68,17 @@ const ActivityQuerySchema = z.object({
 }).strict();
 const IdempotencyKeySchema = z.string().regex(/^[A-Za-z0-9_-]{16,128}$/u);
 const AccountLoginQuerySchema = z.object({ return_to: z.string().max(2_048).optional() }).strict();
+const LoginTransactionSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/u);
+const LoginMutationBaseSchema = z.object({
+  csrf: z.string().regex(/^[A-Za-z0-9_-]{43}$/u),
+  transaction: LoginTransactionSchema
+}).strict();
+const EmailSendFormSchema = LoginMutationBaseSchema.extend({
+  email: z.string().min(3).max(320)
+}).strict();
+const EmailVerifyFormSchema = EmailSendFormSchema.extend({
+  otp: z.string().regex(/^\d{6}$/u)
+}).strict();
 const PairingBodySchema = z.object({
   resource: z.string().min(1).max(2_048),
   verifier: z.string().regex(/^[A-Za-z0-9_-]{43,128}$/u)
@@ -72,7 +93,6 @@ const GrantCompletionBodySchema = z.object({
   decision: z.enum(['approved', 'denied'])
 }).strict();
 const SESSION_COOKIE = '__Host-wepuu_session';
-const TRANSACTION_COOKIE = '__Host-wepuu_oidc_tx';
 const CSRF_COOKIE = '__Host-wepuu_csrf';
 const UiFormSchema = z.object({
   csrf: z.string().regex(/^[A-Za-z0-9_-]{43}$/u),
@@ -106,6 +126,26 @@ export interface AccountAuthLinkStore {
   } | undefined>;
 }
 
+export interface AccountLoginTransactionStore {
+  create(returnPath: string, csrf: string): Promise<{
+    readonly token: string;
+    readonly returnPath: string;
+    readonly expiresAt: Date;
+  }>;
+  bindEmail(token: string, csrf: string, email: string): Promise<void>;
+  restart(token: string, csrf: string): Promise<{
+    readonly token: string;
+    readonly returnPath: string;
+    readonly expiresAt: Date;
+  }>;
+  complete(token: string, csrf: string, authUserId: string): Promise<{
+    readonly accountId: string;
+    readonly homeTenantId: string;
+    readonly accountStatus: 'active' | 'suspended' | 'deleted';
+    readonly returnPath: string;
+  }>;
+}
+
 export class BetterAuthAccountIdentityProvider implements AccountIdentityProvider {
   readonly #auth: Pick<AccountAuth, 'getSession'>;
   readonly #links: AccountAuthLinkStore;
@@ -130,7 +170,7 @@ export class BetterAuthAccountIdentityProvider implements AccountIdentityProvide
     return AccountPrincipalSchema.parse({
       accountId: link.accountId,
       authenticationTime: Math.floor(session.createdAt.getTime() / 1_000),
-      authenticationMethod: 'oidc'
+      authenticationMethod: 'email_otp'
     });
   }
 }
@@ -252,6 +292,7 @@ export interface ControlApiOptions {
   readonly audit: SecurityAuditSink;
   readonly readiness?: () => Promise<void>;
   readonly accountAuth?: AccountAuth;
+  readonly loginTransactions?: AccountLoginTransactionStore;
   readonly publicOrigin?: string;
   readonly pairing?: PairingOperations;
   readonly grants?: GrantOperations;
@@ -273,17 +314,6 @@ function validatedReturnTo(value: string | undefined): string {
   return `${parsed.pathname}${parsed.search}`;
 }
 
-function bodyForAccountAuth(request: FastifyRequest): string | Buffer | URLSearchParams | undefined {
-  if (request.method === 'GET' || request.method === 'HEAD' || request.body === undefined) return undefined;
-  const contentType = request.headers['content-type']?.split(';', 1)[0]?.trim().toLowerCase();
-  if (typeof request.body === 'string' || Buffer.isBuffer(request.body)) return request.body;
-  if (contentType === 'application/x-www-form-urlencoded' && typeof request.body === 'object' && request.body !== null) {
-    return new URLSearchParams(Object.entries(request.body as Record<string, unknown>)
-      .map(([key, value]): [string, string] => [key, String(value)]));
-  }
-  return JSON.stringify(request.body);
-}
-
 async function sendAccountAuthResponse(reply: FastifyReply, response: Response): Promise<unknown> {
   for (const [name, value] of response.headers.entries()) {
     if (name.toLowerCase() !== 'set-cookie') reply.header(name, value);
@@ -292,6 +322,15 @@ async function sendAccountAuthResponse(reply: FastifyReply, response: Response):
   if (cookies.length > 0) reply.header('set-cookie', cookies);
   const body = response.body === null ? undefined : Buffer.from(await response.arrayBuffer());
   return reply.status(response.status).send(body);
+}
+
+function forwardAccountAuthHeaders(reply: FastifyReply, response: Response): void {
+  const cookies = response.headers.getSetCookie();
+  if (cookies.length > 0) reply.header('set-cookie', cookies);
+  for (const name of ['retry-after', 'x-retry-after'] as const) {
+    const value = response.headers.get(name);
+    if (value !== null) reply.header(name, value);
+  }
 }
 
 export interface AccountWorkspaceOperations {
@@ -379,6 +418,25 @@ const consentCompleteScript = `(() => {
   } catch { sessionStorage.removeItem(key); status.textContent = 'Invalid consent result.'; }
 })();`;
 
+const emailOtpScript = `(() => {
+  const button = document.querySelector('[data-retry-after]');
+  if (!(button instanceof HTMLButtonElement)) return;
+  let remaining = Number(button.dataset.retryAfter || '0');
+  if (!Number.isFinite(remaining) || remaining <= 0) return;
+  button.disabled = true;
+  const tick = () => {
+    remaining -= 1;
+    if (remaining <= 0) {
+      button.disabled = false;
+      button.textContent = 'Resend code';
+      return;
+    }
+    button.textContent = 'Resend code in ' + String(remaining) + 's';
+    setTimeout(tick, 1000);
+  };
+  setTimeout(tick, 1000);
+})();`;
+
 function correlationId(): string {
   return randomBytes(18).toString('base64url');
 }
@@ -411,24 +469,6 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
       done(null, typeof body === 'string' ? body : body.toString('utf8'));
     } catch (error) {
       done(error as Error);
-    }
-  });
-
-  app.route({
-    method: ['GET', 'POST'],
-    url: '/api/auth/*',
-    handler: async (request, reply) => {
-      if (options.accountAuth === undefined || options.publicOrigin === undefined) {
-        throw new PlatformError('temporarily_unavailable', 503);
-      }
-      const url = new URL(request.raw.url ?? ACCOUNT_AUTH_BASE_PATH, options.publicOrigin);
-      const body = bodyForAccountAuth(request);
-      const webRequest = new Request(url, {
-        method: request.method,
-        headers: accountAuthHeaders(request.headers),
-        ...(body === undefined ? {} : { body })
-      });
-      return sendAccountAuthResponse(reply, await options.accountAuth.handle(webRequest));
     }
   });
 
@@ -492,6 +532,72 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
       throw new PlatformError('forbidden', 403);
     }
     return form.data;
+  }
+
+  function loginFormInput(request: FastifyRequest): Record<string, unknown> {
+    if (options.publicOrigin === undefined || request.headers.origin !== options.publicOrigin) {
+      throw new PlatformError('forbidden', 403);
+    }
+    if (typeof request.body === 'string') return Object.fromEntries(new URLSearchParams(request.body));
+    if (typeof request.body === 'object' && request.body !== null) return request.body as Record<string, unknown>;
+    throw new PlatformError('invalid_request', 400);
+  }
+
+  function validateLoginMutation<T extends z.ZodType>(request: FastifyRequest, schema: T): z.infer<T> {
+    const input = loginFormInput(request);
+    const csrf = z.string().regex(/^[A-Za-z0-9_-]{43}$/u).safeParse(input['csrf']);
+    const cookie = requestCookie(request, CSRF_COOKIE);
+    if (!csrf.success || cookie === undefined || !sameSecret(cookie, csrf.data)) {
+      throw new PlatformError('forbidden', 403);
+    }
+    const form = schema.safeParse(input);
+    if (!form.success) throw new PlatformError('invalid_request', 400);
+    return form.data;
+  }
+
+  async function accountAuthPost(
+    request: FastifyRequest,
+    path: '/email-otp/send-verification-otp' | '/sign-in/email-otp',
+    body: Record<string, string>,
+    deliveryId?: string
+  ): Promise<Response> {
+    if (options.accountAuth === undefined || options.publicOrigin === undefined) {
+      throw new PlatformError('temporarily_unavailable', 503);
+    }
+    const headers = new Headers({
+      origin: options.publicOrigin,
+      'content-type': 'application/json',
+      [ACCOUNT_AUTH_CLIENT_IP_HEADER]: request.ip
+    });
+    if (deliveryId !== undefined) headers.set(ACCOUNT_AUTH_DELIVERY_ID_HEADER, deliveryId);
+    if (request.headers.cookie !== undefined) headers.set('cookie', request.headers.cookie);
+    if (request.headers['user-agent'] !== undefined) headers.set('user-agent', request.headers['user-agent']);
+    return options.accountAuth.handle(new Request(new URL(`/api/auth${path}`, options.publicOrigin), {
+      method: 'POST', headers, body: JSON.stringify(body)
+    }));
+  }
+
+  function headersWithResponseCookies(request: FastifyRequest, response: Response): Headers {
+    const cookieValues = [request.headers.cookie ?? '', ...response.headers.getSetCookie()
+      .map((cookie) => cookie.split(';', 1)[0] ?? '')].filter((value) => value !== '');
+    return new Headers(cookieValues.length === 0 ? {} : { cookie: cookieValues.join('; ') });
+  }
+
+  async function completeLogin(
+    transaction: string,
+    csrf: string,
+    sessionHeaders: Headers
+  ): Promise<string> {
+    if (options.accountAuth === undefined || options.loginTransactions === undefined) {
+      throw new PlatformError('temporarily_unavailable', 503);
+    }
+    const session = await options.accountAuth.getSession(sessionHeaders);
+    if (session === undefined || session.expiresAt.getTime() <= Date.now()) {
+      throw new PlatformError('unauthenticated', 401);
+    }
+    const completed = await options.loginTransactions.complete(transaction, csrf, session.userId);
+    if (completed.accountStatus !== 'active') throw new PlatformError('forbidden', 403);
+    return completed.returnPath;
   }
 
   function hasOperationsAccess(request: FastifyRequest): boolean {
@@ -592,6 +698,12 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
     .type('text/javascript; charset=utf-8')
     .send(consentCompleteScript));
 
+  app.get('/assets/email-otp-v1.js', async (_request, reply) => reply
+    .header('cache-control', 'public, max-age=31536000, immutable')
+    .header('x-content-type-options', 'nosniff')
+    .type('text/javascript; charset=utf-8')
+    .send(emailOtpScript));
+
   const live = async (_request: FastifyRequest, reply: FastifyReply): Promise<unknown> =>
     reply.header('cache-control', 'no-store').send({ status: 'live' });
   const ready = async (_request: FastifyRequest, reply: FastifyReply): Promise<unknown> => {
@@ -638,50 +750,148 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
   });
 
   app.get('/v1/account/login', async (request, reply) => {
-    if (options.accountAuth === undefined || options.publicOrigin === undefined) {
+    if (options.accountAuth === undefined || options.publicOrigin === undefined
+      || options.loginTransactions === undefined) {
       throw new PlatformError('temporarily_unavailable', 503);
     }
     const query = AccountLoginQuerySchema.safeParse(request.query);
     if (!query.success) throw new PlatformError('invalid_request', 400);
-    try {
-      const returnTo = validatedReturnTo(query.data.return_to);
-      const bootstrap = new URL('/v1/account/bootstrap', options.publicOrigin);
-      bootstrap.searchParams.set('return_to', returnTo);
-      const response = await options.accountAuth.startTemporaryAuth0(
-        accountAuthHeaders(request.headers), bootstrap.href
-      );
-      return await sendAccountAuthResponse(reply, response);
-    } catch (error) {
-      if (error instanceof PlatformError && error.code === 'invalid_request') {
-        throw new PlatformError('invalid_request', 400);
+    const returnTo = validatedReturnTo(query.data.return_to);
+    const csrf = uiCsrf(request);
+    const transaction = await options.loginTransactions.create(returnTo, csrf.value);
+    const session = await options.accountAuth.getSession(accountAuthHeaders(request.headers));
+    if (session !== undefined && session.expiresAt.getTime() > Date.now()) {
+      try {
+        const completed = await options.loginTransactions.complete(transaction.token, csrf.value, session.userId);
+        return await reply.status(303).header('cache-control', 'no-store')
+          .header('location', completed.returnPath)
+          .header('set-cookie', csrf.setCookie ?? csrfCookie(csrf.value)).send();
+      } catch {
+        return htmlHeaders(reply.status(503), csrf.setCookie).type('text/html; charset=utf-8')
+          .send(renderAccountBootstrapRetry({ csrfToken: csrf.value, transactionToken: transaction.token }));
       }
+    }
+    return htmlHeaders(reply, csrf.setCookie).type('text/html; charset=utf-8')
+      .send(renderEmailLogin({ csrfToken: csrf.value, transactionToken: transaction.token }));
+  });
+
+  const sendEmailCode = async (request: FastifyRequest, reply: FastifyReply): Promise<unknown> => {
+    if (options.accountAuth === undefined || options.loginTransactions === undefined) {
       throw new PlatformError('temporarily_unavailable', 503);
     }
-  });
-
-  app.get('/v1/account/oidc/login', async (request, reply) => {
-    const query = AccountLoginQuerySchema.safeParse(request.query);
-    if (!query.success) throw new PlatformError('invalid_request', 400);
-    const target = new URL('/v1/account/login', options.publicOrigin ?? 'https://return.invalid');
-    if (query.data.return_to !== undefined) target.searchParams.set('return_to', validatedReturnTo(query.data.return_to));
-    return reply.status(303).header('cache-control', 'no-store').header('location', `${target.pathname}${target.search}`).send();
-  });
-
-  app.get('/v1/account/bootstrap', async (request, reply) => {
-    const query = AccountLoginQuerySchema.safeParse(request.query);
-    if (!query.success) throw new PlatformError('invalid_request', 400);
-    const principal = await options.identityProvider.authenticate(request);
-    if (principal === undefined) {
-      return reply.status(401).header('cache-control', 'no-store').send({ error: 'unauthenticated' });
+    const form = validateLoginMutation(request, EmailSendFormSchema);
+    let email: string;
+    try {
+      email = normalizeAccountEmail(form.email);
+    } catch {
+      return htmlHeaders(reply.status(400)).type('text/html; charset=utf-8').send(renderEmailLogin({
+        csrfToken: form.csrf,
+        transactionToken: form.transaction,
+        message: 'Enter a valid email address.'
+      }));
     }
-    return reply.status(303).header('cache-control', 'no-store')
-      .header('location', validatedReturnTo(query.data.return_to)).send();
+    await options.loginTransactions.bindEmail(form.transaction, form.csrf, email);
+    const deliveryId = randomBytes(18).toString('base64url');
+    const response = await accountAuthPost(request, '/email-otp/send-verification-otp', {
+      email, type: 'sign-in'
+    }, deliveryId);
+    const outcome = options.accountAuth.takeDeliveryOutcome(deliveryId);
+    forwardAccountAuthHeaders(reply, response);
+    const retryHeader = response.headers.get('x-retry-after') ?? response.headers.get('retry-after');
+    const retryAfter = retryHeader === null ? 60 : Math.max(0, Number.parseInt(retryHeader, 10) || 60);
+    if (response.status === 429) {
+      return htmlHeaders(reply.status(429)).type('text/html; charset=utf-8').send(renderEmailVerification({
+        csrfToken: form.csrf, transactionToken: form.transaction, email, delivery: 'unknown',
+        retryAfterSeconds: retryAfter,
+        message: 'Please wait before requesting another code.'
+      }));
+    }
+    if (outcome === 'rejected') {
+      return htmlHeaders(reply.status(503)).type('text/html; charset=utf-8').send(renderEmailVerification({
+        csrfToken: form.csrf, transactionToken: form.transaction, email, delivery: 'rejected',
+        message: 'We could not send a code right now.'
+      }));
+    }
+    if (!response.ok || outcome === undefined) throw new PlatformError('temporarily_unavailable', 503);
+    const delivery: OtpDeliveryOutcome = outcome;
+    return htmlHeaders(reply.status(delivery === 'unknown' ? 202 : 200)).type('text/html; charset=utf-8')
+      .send(renderEmailVerification({
+        csrfToken: form.csrf, transactionToken: form.transaction, email,
+        delivery: delivery === 'unknown' ? 'unknown' : 'accepted'
+      }));
+  };
+
+  app.post('/v1/account/email/send', sendEmailCode);
+  app.post('/v1/account/email/resend', sendEmailCode);
+
+  app.post('/v1/account/email/change', async (request, reply) => {
+    if (options.loginTransactions === undefined) throw new PlatformError('temporarily_unavailable', 503);
+    const form = validateLoginMutation(request, LoginMutationBaseSchema);
+    const restarted = await options.loginTransactions.restart(form.transaction, form.csrf);
+    return htmlHeaders(reply).type('text/html; charset=utf-8')
+      .send(renderEmailLogin({ csrfToken: form.csrf, transactionToken: restarted.token }));
   });
 
-  app.get('/v1/account/oidc/callback', async (request, reply) => {
-    return reply.status(410).header('cache-control', 'no-store')
-      .header('set-cookie', clearCookie(TRANSACTION_COOKIE)).send({ error: 'invalid_request' });
+  app.post('/v1/account/email/verify', async (request, reply) => {
+    if (options.accountAuth === undefined || options.loginTransactions === undefined) {
+      throw new PlatformError('temporarily_unavailable', 503);
+    }
+    const form = validateLoginMutation(request, EmailVerifyFormSchema);
+    let email: string;
+    try {
+      email = normalizeAccountEmail(form.email);
+    } catch {
+      throw new PlatformError('invalid_request', 400);
+    }
+    await options.loginTransactions.bindEmail(form.transaction, form.csrf, email);
+
+    const currentSession = await options.accountAuth.getSession(accountAuthHeaders(request.headers));
+    if (currentSession !== undefined && currentSession.expiresAt.getTime() > Date.now()) {
+      const returnPath = await completeLogin(
+        form.transaction, form.csrf, accountAuthHeaders(request.headers)
+      );
+      return reply.status(303).header('cache-control', 'no-store').header('location', returnPath).send();
+    }
+
+    const response = await accountAuthPost(request, '/sign-in/email-otp', { email, otp: form.otp });
+    forwardAccountAuthHeaders(reply, response);
+    if (!response.ok) {
+      const retryHeader = response.headers.get('x-retry-after') ?? response.headers.get('retry-after');
+      const retryAfter = retryHeader === null ? 0 : Math.max(0, Number.parseInt(retryHeader, 10) || 0);
+      return htmlHeaders(reply.status(response.status === 429 ? 429 : 400)).type('text/html; charset=utf-8')
+        .send(renderEmailVerification({
+          csrfToken: form.csrf, transactionToken: form.transaction, email, delivery: 'accepted',
+          ...(retryAfter === 0 ? {} : { retryAfterSeconds: retryAfter }),
+          message: response.status === 429
+            ? 'Too many verification attempts. Please wait and try again.'
+            : 'The code is invalid or expired. Request a new code if needed.'
+        }));
+    }
+    const sessionHeaders = headersWithResponseCookies(request, response);
+    try {
+      const returnPath = await completeLogin(form.transaction, form.csrf, sessionHeaders);
+      return await reply.status(303).header('cache-control', 'no-store').header('location', returnPath).send();
+    } catch {
+      return htmlHeaders(reply.status(503)).type('text/html; charset=utf-8')
+        .send(renderAccountBootstrapRetry({ csrfToken: form.csrf, transactionToken: form.transaction }));
+    }
   });
+
+  app.post('/v1/account/bootstrap', async (request, reply) => {
+    const form = validateLoginMutation(request, LoginMutationBaseSchema);
+    try {
+      const returnPath = await completeLogin(
+        form.transaction, form.csrf, accountAuthHeaders(request.headers)
+      );
+      return await reply.status(303).header('cache-control', 'no-store').header('location', returnPath).send();
+    } catch {
+      return htmlHeaders(reply.status(503)).type('text/html; charset=utf-8')
+        .send(renderAccountBootstrapRetry({ csrfToken: form.csrf, transactionToken: form.transaction }));
+    }
+  });
+
+  app.all('/api/auth/*', async (_request, reply) => reply.status(404)
+    .header('cache-control', 'no-store').send({ error: 'not_found' }));
 
   app.get('/v1/account/session', async (request, reply) => {
     const principal = await options.identityProvider.authenticate(request);
@@ -970,6 +1180,10 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
     if (!params.success || !idempotencyKey.success) throw new PlatformError('invalid_request', 400);
     await options.store.disconnectSite(context, params.data.objectId);
     return reply.status(204).header('cache-control', 'no-store').send();
+  });
+
+  app.setNotFoundHandler((_request, reply) => {
+    void reply.status(404).header('cache-control', 'no-store').send({ error: 'not_found' });
   });
 
   app.setErrorHandler((error, request, reply) => {

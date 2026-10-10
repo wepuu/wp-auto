@@ -1,7 +1,8 @@
 import { betterAuth } from 'better-auth';
 import { PostgresDialect } from 'kysely';
 import { Pool } from 'pg';
-import { accountAuthSecurityOptions } from './index.js';
+import { ACCOUNT_AUTH_CLIENT_IP_HEADER, accountAuthSecurityOptions } from './index.js';
+import { emailOTP } from 'better-auth/plugins';
 
 // Pinned Better Auth CLI input. Runtime migrations are deliberately disabled;
 // generated SQL is reviewed and committed through wepuu_schema_migrations.
@@ -24,5 +25,27 @@ export const auth = betterAuth({
     schemaName: 'auth'
   },
   ...accountAuthSecurityOptions(),
+  advanced: {
+    ...accountAuthSecurityOptions().advanced,
+    ipAddress: { ipAddressHeaders: [ACCOUNT_AUTH_CLIENT_IP_HEADER] }
+  },
+  rateLimit: {
+    enabled: true,
+    storage: 'database',
+    customRules: {
+      '/email-otp/send-verification-otp': { window: 60, max: 1 },
+      '/sign-in/email-otp': { window: 300, max: 5 }
+    }
+  },
+  plugins: [emailOTP({
+    otpLength: 6,
+    expiresIn: 300,
+    allowedAttempts: 5,
+    storeOTP: 'hashed',
+    resendStrategy: 'rotate',
+    disableSignUp: false,
+    rateLimit: { window: 300, max: 5 },
+    sendVerificationOTP: () => Promise.resolve()
+  })],
   telemetry: { enabled: false }
 });

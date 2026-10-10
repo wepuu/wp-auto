@@ -167,12 +167,28 @@ or start Phase 2.0.7B2.
 Status: implemented and locally validated on 2026-10-10; not deployed.
 
 P1 pins Better Auth 1.7.7, adds its isolated `auth` schema and maps each
-authentication user to a stable WePuu account. Auth0 is temporarily routed
-through Better Auth while P2 Email OTP remains unimplemented. OAuth issuer,
+authentication user to a stable WePuu account. P1 temporarily routed Auth0
+through Better Auth; that candidate runtime is superseded by P2 Email OTP.
+OAuth issuer,
 PKCE, consent, token lifecycle, local signing, JWKS, tenant/grant isolation and
 the WordPress Connector remain unchanged. See ADR-018 and the P1 validation
 record. Production rollout and any old-session cleanup remain separately
 authorized actions.
+
+### P2 - Email OTP account login
+
+Status: implemented as a local candidate on 2026-10-10; not deployed.
+
+P2 uses the Better Auth 1.7.7 Email OTP plugin with hashed verification
+records, a six-digit five-minute code, five verification attempts, database
+rate limiting, and a Resend delivery adapter. Protected ten-minute login
+transactions preserve OAuth interaction return paths across the two-step form,
+and account bootstrap remains atomic and retryable without obtaining another
+code. The temporary Auth0 runtime and its `openid-client` package were removed.
+Production continues to run the prior ADR-017 image until a separately
+authorized migration and rollout. Real Resend delivery is an explicit opt-in
+validation and is not exercised by ordinary CI. See ADR-019 and the P2
+validation record.
 
 ## Deferred and out of scope
 
