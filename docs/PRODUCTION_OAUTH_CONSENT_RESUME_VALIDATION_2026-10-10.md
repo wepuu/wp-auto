@@ -48,9 +48,25 @@ Upstream references:
 - Do not log error messages, descriptions, request parameters, tenant or user
   identifiers, redirect URIs, tokens, cookies, or WordPress data.
 
+## Callback redirect root cause
+
+The bounded stage diagnostics subsequently proved that the provider completed
+`interaction.ended`, `authorization.accepted`, and `authorization.success`,
+and persisted an AuthorizationCode. The user agent nevertheless remained on
+the consent page and never reached the loopback callback. The consent page's
+`form-action 'self'` CSP allowed the same-origin POST but blocked the resulting
+redirect to the registered native-client loopback origin.
+
+The correction keeps the base CSP closed and adds only the exact origin of the
+redirect URI already validated by oidc-provider. It accepts HTTPS origins and
+RFC 8252-style `http://127.0.0.1:<explicit-port>` origins. It rejects non-TLS
+remote origins, portless loopback URIs, credentials, fragments, invalid URLs,
+and all wildcard sources. Paths, queries, state, codes, and other request data
+are never copied into the CSP or logs.
+
 ## Pre-deployment validation
 
-- Authorization-service focused tests: 12 passed, 0 failed.
+- Authorization-service focused tests: 15 passed, 0 failed.
 - TypeScript project typecheck: passed.
 - ESLint: passed.
 - Data-flow review: unchanged. MCP requests and WordPress content remain direct
@@ -71,4 +87,3 @@ record can be marked complete:
 - refresh-token rotation and revocation validated;
 - direct WordPress MCP request succeeds without content traversing WePuu;
 - Application Password direct access remains unaffected.
-

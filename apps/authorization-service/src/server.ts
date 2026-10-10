@@ -66,6 +66,22 @@ export const CONSENT_INTERACTION_CSP = UI_CSP.replace(
   "script-src 'self'",
   `script-src 'self' 'sha256-${consentScriptHash}'`
 );
+
+export function consentInteractionCsp(redirectUri: unknown): string | undefined {
+  if (typeof redirectUri !== 'string') return undefined;
+  try {
+    const target = new URL(redirectUri);
+    const allowed = target.protocol === 'https:'
+      || (target.protocol === 'http:' && target.hostname === '127.0.0.1' && target.port !== '');
+    if (!allowed || target.username !== '' || target.password !== '' || target.hash !== '') return undefined;
+    return CONSENT_INTERACTION_CSP.replace(
+      "form-action 'self'",
+      `form-action 'self' ${target.origin}`
+    );
+  } catch {
+    return undefined;
+  }
+}
 const mcpScopes = new Set([
   'mcp:read', 'mcp:content.write', 'mcp:media.write', 'mcp:taxonomy.write', 'mcp:seo.write'
 ]);
@@ -535,7 +551,9 @@ export async function startAuthorizationService(
         const clientId = typeof params['client_id'] === 'string' ? params['client_id'] : undefined;
         const resource = interactionResource(params);
         const scopes = interactionScopes(params);
-        if (clientId === undefined || resource === undefined || scopes === undefined) {
+        const interactionCsp = consentInteractionCsp(params['redirect_uri']);
+        if (clientId === undefined || resource === undefined || scopes === undefined
+          || interactionCsp === undefined) {
           writeInteractionError(response);
           return;
         }
@@ -565,7 +583,7 @@ export async function startAuthorizationService(
             // form POST. strict-origin preserves the exact same-origin Origin
             // required below without disclosing an interaction path.
             'referrer-policy': INTERACTION_REFERRER_POLICY,
-            'content-security-policy': CONSENT_INTERACTION_CSP,
+            'content-security-policy': interactionCsp,
             'x-content-type-options': 'nosniff'
           });
           response.end(renderInteractionPage({

@@ -5,6 +5,7 @@ import {
   CONSENT_INTERACTION_CSP,
   CONSENT_SUBMISSION_SCRIPT,
   authorizationErrorDiagnostic,
+  consentInteractionCsp,
   consentInteractionResult,
   consentGrantUpdatePlan,
   interactionResource,
@@ -40,6 +41,25 @@ test('consent submission locks after the first decision under a hash-pinned CSP'
   assert.match(CONSENT_SUBMISSION_SCRIPT, /decision\.value = submitter\.value/u);
   assert.match(CONSENT_INTERACTION_CSP, /script-src 'self' 'sha256-[A-Za-z0-9+/=]+'/u);
   assert.doesNotMatch(CONSENT_INTERACTION_CSP, /unsafe-inline/u);
+});
+
+test('consent CSP allows only the exact validated callback origin', () => {
+  const loopback = consentInteractionCsp('http://127.0.0.1:49152/callback?client=value');
+  assert.match(loopback ?? '', /form-action 'self' http:\/\/127\.0\.0\.1:49152/u);
+  assert.doesNotMatch(loopback ?? '', /callback|client=value|\*/u);
+
+  const web = consentInteractionCsp('https://client.example.test/oauth/callback');
+  assert.match(web ?? '', /form-action 'self' https:\/\/client\.example\.test/u);
+  assert.doesNotMatch(web ?? '', /oauth\/callback/u);
+});
+
+test('consent CSP rejects unsafe or ambiguous callback origins', () => {
+  assert.equal(consentInteractionCsp('http://client.example.test/callback'), undefined);
+  assert.equal(consentInteractionCsp('http://127.0.0.1/callback'), undefined);
+  assert.equal(consentInteractionCsp('https://user:secret@client.example.test/callback'), undefined);
+  assert.equal(consentInteractionCsp('https://client.example.test/callback#fragment'), undefined);
+  assert.equal(consentInteractionCsp('not-a-url'), undefined);
+  assert.equal(consentInteractionCsp(undefined), undefined);
 });
 
 test('interaction resource accepts a string or bounded identical repetitions', () => {
