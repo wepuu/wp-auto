@@ -177,7 +177,7 @@ export class BetterAuthAccountIdentityProvider implements AccountIdentityProvide
 
 function requestCookie(request: FastifyRequest, cookieName: string): string | undefined {
   const header = request.headers.cookie;
-  if (header === undefined || header.length > 4_096) return undefined;
+  if (header === undefined) return undefined;
   for (const part of header.split(';')) {
     const [name, ...value] = part.trim().split('=');
     if (name === cookieName) return value.join('=');
