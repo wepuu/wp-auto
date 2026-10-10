@@ -26,6 +26,12 @@ Run weekly and after a deployment:
 6. Confirm the Cloudflare dashboard still uses **Full (strict)**. Public TLS
    success alone cannot prove this setting.
 
+The installed content-free host probe is `/opt/wpauto/bin/check-health.sh`.
+Its success, warning and failure lines contain only check names, restart counts
+and disk percentage. It never prints response bodies, identifiers or request
+data. The checked-in script is the authority; do not edit the VPS copy in
+place.
+
 ## Secret file checks
 
 Only inspect metadata. The keyring, encrypted PKCS#8 file and passphrase file
@@ -47,6 +53,13 @@ check. Both application services mount the same three signing files read-only.
   failed database and current dump, verify the selected dump checksum, restore,
   run migrations, then start authorization and control and repeat the public
   probe. Do not overwrite the only usable copy.
+
+`/opt/wpauto/bin/backup-database.sh` creates a root-owned mode-0600 PostgreSQL
+custom-format dump and checksum each day. Daily files older than seven days and
+Sunday copies older than 28 days are removed only from the exact
+`/opt/wpauto/backups/daily` and `/opt/wpauto/backups/weekly` directories. This
+host-local copy is protected but not an offline disaster-recovery copy; copy
+selected database backups to separately protected storage as appropriate.
 
 ## Signing-key backup and recovery
 
@@ -94,6 +107,14 @@ If validation fails, restore the preceding digest and dedicated vhost, run
 `nginx -t`, recreate only the affected wpauto service, and verify public
 readiness. Preserve PostgreSQL and signing material for investigation. The
 connector's Application Password path remains independent.
+
+The installed `/opt/wpauto/bin/deploy-service.sh` accepts only `control` or
+`authorization` and an exact project GHCR `@sha256:` reference. It serializes
+deployments, atomically changes only the corresponding image entry, recreates
+only that service, checks loopback and public readiness, and restores the
+previous digest if validation fails. Its `rollback` action uses only the
+previous digest recorded outside the secret runtime file. It never runs a
+global prune or Compose `down`.
 
 ## Minimal incident matrix
 

@@ -24,6 +24,8 @@ routes the control shell to port 3000. `/internal/metrics` is not public.
 /opt/wpauto/secrets/signing_passphrase
 /opt/wpauto/legal/{terms,privacy,support,status}.html
 /opt/wpauto/backups/
+/opt/wpauto/bin/{check-health,backup-database,deploy-service}.sh
+/opt/wpauto/rollback/
 /opt/wpauto/acme-webroot/.well-known/acme-challenge/
 ```
 
@@ -81,3 +83,10 @@ run `pnpm check:production:public` from a trusted workstation and follow
 `docs/ADR_017_OPERATIONS_RUNBOOK.md`. The public probe is content-free and does
 not replace the VPS file-permission, certificate, disk, backup-restore or
 Cloudflare Full (strict) checks in the runbook.
+
+The three scripts under this deployment directory are installed without the
+`.sh` suffix under `/opt/wpauto/bin`, owned by root and mode `0700`. The health
+probe is suitable for a five-minute cron entry. The database backup job is
+suitable for a daily cron entry. Cron output must go only to the system logger;
+the scripts themselves emit content-free result lines. The deploy script is
+manual-only and must never be scheduled.

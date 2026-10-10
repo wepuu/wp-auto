@@ -44,11 +44,11 @@ control plane evidence.
 
 ## Remaining operator actions
 
-1. Confirm Cloudflare SSL/TLS mode is Full (strict) in the dashboard.
-2. Choose two separate offline destinations, copy the current encrypted local
-   signing key to both, and store the passphrase separately. Automation does
-   not choose or access these locations.
-3. Continue weekly public/runtime checks and monthly isolated database restore
+The operator subsequently confirmed Full (strict), two separate offline copies
+of the encrypted local signing key and separate passphrase storage. The
+temporary combined workstation copy was deleted after integrity verification.
+
+1. Continue weekly public/runtime checks and monthly isolated database restore
    drills using `ADR_017_OPERATIONS_RUNBOOK.md`.
-4. Keep general release, final legal/residency wording and Phase 2.0.7B2 gated
+2. Keep general release, final legal/residency wording and Phase 2.0.7B2 gated
    until separately approved.
