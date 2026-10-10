@@ -75,3 +75,9 @@ BaoTa-managed certificate can renew without changing another site.
 - a database backup can be restored into a disposable database;
 - no private key, passphrase, Auth0 secret or WordPress content appears in
   logs, images, PostgreSQL metadata or public responses.
+
+The bounded production acceptance passed on 2026-10-10. For ongoing checks,
+run `pnpm check:production:public` from a trusted workstation and follow
+`docs/ADR_017_OPERATIONS_RUNBOOK.md`. The public probe is content-free and does
+not replace the VPS file-permission, certificate, disk, backup-restore or
+Cloudflare Full (strict) checks in the runbook.

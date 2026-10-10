@@ -1,7 +1,7 @@
 # Production deployment validation: 2026-10-09
 
-Status: provisional deployment operational; interactive identity gate passed;
-WordPress end-to-end gate remains open
+Status: provisional deployment operational; interactive identity and bounded
+WordPress end-to-end gates passed
 
 ## Scope and authorization
 
@@ -18,8 +18,9 @@ installing Caddy, deploying Vault/HSM, or starting Phase 2.0.7B2.
   PR and post-merge CI passed (`37874358513`, `37874546201`).
 - Immutable production images: workflow run `37874716892` passed. Control image
   digest is `sha256:d386d694f917a1df1798e4c6331dafcbeb61db65b63646ce56a450fd3f676486`;
-  authorization image digest is
-  `sha256:7d72342ab9472d5fc381eb016d322c5eee9d9cc3e4111650af6548ee3f28c616`.
+  the authorization image was subsequently replaced by the consent-resume
+  correction and is currently pinned to
+  `sha256:66696aec588a13cd5148472d4f447824a78a224f4d1a0b82043655ce64f81bac`.
 - ACME renewal correction: PR #8, merge commit
   `7fc794b8721c6d0e1cf43d27258dd2975f8e440b`; PR and post-merge CI passed
   (`37876500352`, `37876805831`).
@@ -112,13 +113,20 @@ issued. A post-rotation scan found none of the current Secret values in logs,
 image history or PostgreSQL. The exposed values are not recorded here and are
 no longer valid.
 
-## Open gates
+## End-to-end closeout
+
+The bounded production WordPress acceptance flow passed on 2026-10-10. It
+covered pairing, consent, Authorization Code with PKCE S256, RS256 access-token
+bindings, refresh rotation, revocation, JWKS verification and a direct MCP
+call. Application Password regression also passed in an isolated local
+`wp-env`; the connector repository was not modified. Detailed evidence is in
+`PRODUCTION_OAUTH_CONSENT_RESUME_VALIDATION_2026-10-10.md`.
+
+## Remaining operator and general-release gates
 
 - Confirm Cloudflare SSL/TLS mode is Full (strict).
 - Create two encrypted offline signing-key backups in separate locations and
   store the passphrase separately. Do not copy old-computer credentials.
-- Complete a real WordPress pairing, consent, access/refresh, revocation, JWKS
-  refresh and direct MCP call while preserving Application Password fallback.
 - Confirm the final data-residency/retention wording and obtain any legal review
   the operator considers necessary before inviting general users.
 

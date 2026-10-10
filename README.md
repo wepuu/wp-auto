@@ -11,19 +11,21 @@ Phase 2.0.0 and Phase 2.0.1 are accepted. The local provider, HTTPS,
 persistence, PHP, and Codex 0.154.0 pre-registered OAuth gates pass; Auth0 is
 rejected for the frozen S256 profile and WorkBuddy 5.5.2 is unsupported. The
 Phase 2.0.1 executable work remains isolated under `spikes/oauth-conformance/`.
-Phase 2.0.2 Platform Foundation is accepted and closed after local, live AWS
-KMS, and hosted CI validation. It provides:
+Phase 2.0.2 Platform Foundation is accepted and closed after local, historical
+live AWS KMS, and hosted CI validation. It provides:
 strict TypeScript packages, an authorization service, a control API,
 PostgreSQL RLS, content-free audit records, and an asymmetric signing
-adapter. It is not deployed and does not modify the WordPress connector.
+adapter. Later ADR-016 work replaced AWS KMS runtime signing with encrypted
+local PKCS#8 custody; the historical KMS evidence remains part of the closed
+phase record.
 Phase 2.0.3 is accepted and closed. Platform tranche 2.0.3A implements tenant-scoped
 site/pairing/grant persistence, SSRF-safe verification, Ed25519 site proofs,
 external OIDC account login, hashed server-side sessions, and fail-closed
 authorization resolvers. The real WordPress connector tranche 2.0.3B adds an
 explicit fragment-safe Connect handoff, site-ID-bound Ed25519 pairing proof,
 and local opaque grant storage. The signing runtime is pinned to Node 26.7+
-and uses `jose` with an AWS KMS-backed `KeyObject`; real wp-admin pairing,
-consent, domain migration/re-pair, cleanup, and hosted GitHub OIDC/KMS
+and uses `jose` with an encrypted local RSA-3072 PKCS#8 key; real wp-admin
+pairing, consent, domain migration/re-pair, cleanup, and the historical GitHub OIDC/KMS
 acceptance all pass. Phase 2.0.4A/2.0.4B are accepted and closed. They add real authorization interactions, opaque
 code/refresh lookup, atomic refresh replay revocation, database-backed endpoint
 limits, managed signing-key lifecycle/JWKS overlap, durable signed revocation
@@ -36,7 +38,12 @@ available-capability review gates passed. Phase 2.0.7A product shell and
 portable runtime are accepted on `main` after PR, post-merge and hosted
 single/two-key KMS validation. Phase 2.0.7B1 release-readiness is accepted and
 closed on `main` at merge commit `a57b422` after PR #4 and post-merge CI passed.
-Production deployment, connector changes and Phase 2.0.7B2 are not authorized.
+ADR-016 local signing was merged at `7007caf`. The operator separately
+authorized the bounded ADR-017 single-VPS deployment on 2026-10-09. Production
+Auth0 login and the WordPress pairing, PKCE, access/refresh, revocation and
+direct-MCP acceptance flow passed by 2026-10-10. This remains an operator
+validation deployment: connector changes, general release expansion and Phase
+2.0.7B2 are not authorized.
 
 ## Architecture
 
@@ -120,6 +127,9 @@ only; they must not be placed in `.env`, logs, or Git.
 - [ADR-016 local JOSE signing custody](docs/ADR-016-LOCAL-JOSE-SIGNING-CUSTODY.md)
 - [ADR-017 initial single-VPS deployment](docs/ADR-017-SINGLE-VPS-PRODUCTION-DEPLOYMENT.md)
 - [Production deployment validation](docs/PRODUCTION_DEPLOYMENT_2026-10-09.md)
+- [Production OAuth end-to-end validation](docs/PRODUCTION_OAUTH_CONSENT_RESUME_VALIDATION_2026-10-10.md)
+- [ADR-017 operations runbook](docs/ADR_017_OPERATIONS_RUNBOOK.md)
+- [ADR-017 operations closeout](docs/ADR_017_OPERATIONS_CLOSEOUT_2026-10-10.md)
 - [Local signing test plan](docs/PHASE_2_0_LOCAL_SIGNING_TEST_PLAN.md)
 - [Local signing validation](docs/PHASE_2_0_LOCAL_SIGNING_VALIDATION.md)
 - [External account OIDC local acceptance](docs/ACCOUNT_OIDC_TEST_SETUP.md)

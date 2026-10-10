@@ -113,9 +113,11 @@ containers are non-root and read-only with a bounded temporary filesystem.
 The application server has no AWS runtime dependency. Signing uses encrypted
 local PKCS#8 files and separate passphrase files mounted read-only. Docker
 Compose secrets remain host-mounted files rather than HSM custody; host root
-compromise is therefore an explicitly accepted residual risk. Selecting a
-hosting vendor, production domain, WAF and operational policy remains a Phase
-2.0.7B2 decision and deployment gate.
+compromise is therefore an explicitly accepted residual risk. ADR-017
+separately authorizes the provisional operator deployment on the existing VPS
+and `auth.wpauto.cc`. That bounded exception does not settle the hosting, WAF,
+support, legal or availability policy for general release; those decisions
+remain a Phase 2.0.7B2 gate.
 
 Phase 2.0.7B1 adds a configuration-only release-readiness layer. It validates
 immutable release identity, policy links, region/retention labels, trusted

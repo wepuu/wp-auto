@@ -1,6 +1,6 @@
 # ADR-017: Initial single-VPS production deployment
 
-- Status: accepted and provisionally deployed on 2026-10-09; end-to-end release acceptance remains open
+- Status: accepted and provisionally deployed on 2026-10-09; bounded production end-to-end acceptance passed on 2026-10-10
 - Date: 2026-10-09
 
 ## Context
@@ -62,6 +62,10 @@ independent and remains available.
 
 Infrastructure, TLS, OIDC redirect construction, public metadata, backup
 restore and leakage checks are recorded in
-`PRODUCTION_DEPLOYMENT_2026-10-09.md`. Interactive Auth0 login/callback and a
-real WordPress pairing, consent, refresh, revocation and direct MCP flow remain
-open. This ADR does not authorize a connector change or start Phase 2.0.7B2.
+`PRODUCTION_DEPLOYMENT_2026-10-09.md`. Interactive Auth0 login/callback passed
+on 2026-10-09. The real WordPress pairing, consent, Authorization Code with
+PKCE S256, access/refresh, revocation, JWKS and direct MCP flow passed on
+2026-10-10 as recorded in
+`PRODUCTION_OAUTH_CONSENT_RESUME_VALIDATION_2026-10-10.md`. The deployment
+remains limited to operator validation. This ADR does not authorize a
+connector change, invitation of general users or Phase 2.0.7B2.
