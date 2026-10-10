@@ -30,6 +30,11 @@ services:
         uid: "1000"
         gid: "1000"
         mode: 0400
+      - source: account_auth_secrets
+        target: account_auth_secrets
+        uid: "1000"
+        gid: "1000"
+        mode: 0400
     environment:
       WEPUU_DEPLOYMENT_MODE: ${WEPUU_DEPLOYMENT_MODE:?}
       WEPUU_DATABASE_URL: ${WEPUU_DATABASE_URL:?}
@@ -37,11 +42,7 @@ services:
       WEPUU_ACCOUNT_OIDC_ISSUER: ${WEPUU_ACCOUNT_OIDC_ISSUER:?}
       WEPUU_ACCOUNT_OIDC_CLIENT_ID: ${WEPUU_ACCOUNT_OIDC_CLIENT_ID:?}
       WEPUU_ACCOUNT_OIDC_CLIENT_SECRET: ${WEPUU_ACCOUNT_OIDC_CLIENT_SECRET:?}
-      WEPUU_ACCOUNT_OIDC_REDIRECT_URI: ${WEPUU_ACCOUNT_OIDC_REDIRECT_URI:?}
-      WEPUU_ACCOUNT_OIDC_SCOPES: openid
-      WEPUU_ACCOUNT_OIDC_CLIENT_AUTH_METHOD: client_secret_basic
-      WEPUU_OIDC_TRANSACTION_KEYS_JSON: ${WEPUU_OIDC_TRANSACTION_KEYS_JSON:?}
-      WEPUU_IDENTITY_SUBJECT_HMAC_KEY: ${WEPUU_IDENTITY_SUBJECT_HMAC_KEY:?}
+      WEPUU_ACCOUNT_AUTH_SECRETS_FILE: /run/secrets/account_auth_secrets
       WEPUU_ISSUER: ${WEPUU_ISSUER:?}
       WEPUU_SIGNING_KEYRING_FILE: /run/secrets/signing_keyring
       WEPUU_SIGNING_KEY_SLOT: ${WEPUU_SIGNING_KEY_SLOT:?}
@@ -89,12 +90,18 @@ services:
         uid: "1000"
         gid: "1000"
         mode: 0400
+      - source: account_auth_secrets
+        target: account_auth_secrets
+        uid: "1000"
+        gid: "1000"
+        mode: 0400
     environment:
       WEPUU_DEPLOYMENT_MODE: ${WEPUU_DEPLOYMENT_MODE:?}
       WEPUU_AUTH_HOST: 0.0.0.0
       WEPUU_AUTH_PORT: 3001
       WEPUU_DATABASE_URL: ${WEPUU_DATABASE_URL:?}
       WEPUU_CONTROL_PUBLIC_ORIGIN: ${WEPUU_CONTROL_PUBLIC_ORIGIN:?}
+      WEPUU_ACCOUNT_AUTH_SECRETS_FILE: /run/secrets/account_auth_secrets
       WEPUU_ISSUER: ${WEPUU_ISSUER:?}
       WEPUU_COOKIE_KEYS_JSON: ${WEPUU_COOKIE_KEYS_JSON:?}
       WEPUU_OAUTH_ARTIFACT_KEYS_JSON: ${WEPUU_OAUTH_ARTIFACT_KEYS_JSON:?}
@@ -122,3 +129,5 @@ secrets:
     file: ${WEPUU_SIGNING_PRIVATE_KEY_HOST_FILE:?}
   signing_passphrase:
     file: ${WEPUU_SIGNING_PASSPHRASE_HOST_FILE:?}
+  account_auth_secrets:
+    file: ${WEPUU_ACCOUNT_AUTH_SECRETS_HOST_FILE:?}

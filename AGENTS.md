@@ -17,8 +17,12 @@ the production WordPress end-to-end release gate passed on 2026-10-10 with
 Authorization Code plus PKCE, local RS256 signing, refresh rotation and
 revocation, direct WordPress MCP, and isolated Application Password regression
 evidence. Connector changes and
-Phase 2.0.7B2 remain separately gated. Until another phase is explicitly
-approved, work may:
+Phase 2.0.7B2 remain separately gated. The ADR-018 P1 Better Auth
+account-boundary candidate was implemented and
+locally validated on 2026-10-10 but is not deployed. Production still uses the
+ADR-017/ADR-007 callback until a separate rollout is authorized.
+
+Until another phase is explicitly approved, work may:
 
 - operate, validate and safely roll back the bounded ADR-017 deployment without
   connector changes or expansion into Phase 2.0.7B2;

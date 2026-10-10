@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import type { AccountPrincipal, GrantView, SiteView, TenantContext, TenantMembershipView, TenantView } from '@wepuu/contracts';
 import type { SecurityEventView } from '@wepuu/database';
 import type { SecurityAuditEvent, SecurityAuditSink } from '@wepuu/security-audit';
-import { AccountLoginError } from '@wepuu/account-identity';
+import type { AccountAuth } from '@wepuu/account-auth';
 import {
   buildControlApi,
   SessionAccountIdentityProvider,
@@ -54,27 +54,72 @@ class StaticStore implements ControlStore {
   disconnectSite(): Promise<boolean> { return Promise.resolve(true); }
 }
 
-class StaticAccountLogin {
-  loggedOutToken: string | undefined;
+class StaticAccountAuth implements AccountAuth {
+  signedOut = false;
   failWith: Error | undefined;
-  start() {
-    if (this.failWith !== undefined) return Promise.reject(this.failWith);
-    return Promise.resolve({
-      authorizationUrl: new URL('https://identity.example.test/authorize?request=redacted'),
-      transactionCookie: 'a.b.c.d.e'
+  lastRequest: { method: string; url: string; contentType?: string; body: string } | undefined;
+  async handle(request: Request) {
+    this.lastRequest = {
+      method: request.method,
+      url: request.url,
+      ...(request.headers.get('content-type') === null ? {} : { contentType: request.headers.get('content-type') ?? '' }),
+      body: await request.text()
+    };
+    const headers = new Headers({ 'content-type': 'application/json' });
+    headers.append('set-cookie', '__Host-wepuu_state=state; Secure; HttpOnly; Path=/');
+    headers.append('set-cookie', '__Host-wepuu_nonce=nonce; Secure; HttpOnly; Path=/');
+    return new Response('{"ok":true}', {
+      status: 200,
+      headers
     });
   }
-  complete() {
+  getSession() { return Promise.resolve(undefined); }
+  startTemporaryAuth0() {
     if (this.failWith !== undefined) return Promise.reject(this.failWith);
-    return Promise.resolve({
-      accountId: 'account_12345678',
-      sessionToken: 's'.repeat(43),
-      returnTo: '/v1/account/session',
-      expiresAt: new Date(Date.now() + 60_000)
-    });
+    return Promise.resolve(new Response(null, {
+      status: 302,
+      headers: {
+        location: 'https://identity.example.test/authorize?request=redacted',
+        'set-cookie': '__Host-wepuu_state=a.b.c; Max-Age=300; Path=/; Secure; HttpOnly; SameSite=Lax'
+      }
+    }));
   }
-  logout(token: string) { this.loggedOutToken = token; return Promise.resolve(); }
+  signOut() {
+    this.signedOut = true;
+    return Promise.resolve(new Response(null, {
+      status: 204,
+      headers: { 'set-cookie': '__Host-wepuu_session=; Max-Age=0; Path=/; Secure; HttpOnly; SameSite=Lax' }
+    }));
+  }
+  close() { return Promise.resolve(); }
 }
+
+void test('Fastify adapter preserves request semantics and separate Set-Cookie headers', async () => {
+  const accountAuth = new StaticAccountAuth();
+  const app = buildControlApi({
+    identityProvider: new StaticIdentity(), store: new StaticStore(), audit: new MemoryAudit(),
+    accountAuth, publicOrigin: 'https://platform.example.test'
+  });
+  const response = await app.inject({
+    method: 'POST',
+    url: '/api/auth/example?mode=test',
+    headers: { 'content-type': 'application/json' },
+    payload: { safe: true }
+  });
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(response.json(), { ok: true });
+  assert.deepEqual(accountAuth.lastRequest, {
+    method: 'POST',
+    url: 'https://platform.example.test/api/auth/example?mode=test',
+    contentType: 'application/json',
+    body: '{"safe":true}'
+  });
+  assert.deepEqual(response.headers['set-cookie'], [
+    '__Host-wepuu_state=state; Secure; HttpOnly; Path=/',
+    '__Host-wepuu_nonce=nonce; Secure; HttpOnly; Path=/'
+  ]);
+  await app.close();
+});
 
 class StaticWorkspace {
   ensuredAccount: string | undefined;
@@ -215,47 +260,37 @@ void test('hashed server-side session authenticates mutations and idempotency ke
   await app.close();
 });
 
-void test('OIDC login and callback use secure host cookies and local redirects', async () => {
-  const login = new StaticAccountLogin();
-  const workspace = new StaticWorkspace();
+void test('Better Auth login uses secure cookies, strict returns and a local bootstrap', async () => {
+  const accountAuth = new StaticAccountAuth();
+  const app = buildControlApi({
+    identityProvider: new StaticIdentity({ accountId: 'account_12345678', authenticationTime: 1, authenticationMethod: 'oidc' }),
+    store: new StaticStore(),
+    audit: new MemoryAudit(),
+    accountAuth,
+    publicOrigin: 'https://platform.example.test'
+  });
+  const alias = await app.inject({ method: 'GET', url: '/v1/account/oidc/login?return_to=%2Fv1%2Faccount%2Fsession' });
+  assert.equal(alias.statusCode, 303);
+  assert.equal(alias.headers.location, '/v1/account/login?return_to=%2Fv1%2Faccount%2Fsession');
+  const start = await app.inject({ method: 'GET', url: '/v1/account/login?return_to=%2Fv1%2Faccount%2Fsession' });
+  assert.equal(start.statusCode, 302);
+  assert.equal(start.headers.location, 'https://identity.example.test/authorize?request=redacted');
+  assert.match(String(start.headers['set-cookie']), /__Host-wepuu_state=.*Secure.*HttpOnly.*SameSite=Lax/u);
+
+  const bootstrap = await app.inject({ method: 'GET', url: '/v1/account/bootstrap?return_to=%2Fv1%2Faccount%2Fsession' });
+  assert.equal(bootstrap.statusCode, 303);
+  assert.equal(bootstrap.headers.location, '/v1/account/session');
+  const external = await app.inject({ method: 'GET', url: '/v1/account/login?return_to=https%3A%2F%2Fevil.example' });
+  assert.equal(external.statusCode, 400);
+  await app.close();
+});
+
+void test('legacy OIDC callback is closed and never reflects provider parameters', async () => {
   const app = buildControlApi({
     identityProvider: new StaticIdentity(),
     store: new StaticStore(),
     audit: new MemoryAudit(),
-    accountLogin: login,
-    workspace,
-    publicOrigin: 'https://platform.example.test'
-  });
-  const start = await app.inject({ method: 'GET', url: '/v1/account/oidc/login?return_to=%2Fv1%2Faccount%2Fsession' });
-  assert.equal(start.statusCode, 302);
-  assert.equal(start.headers.location, 'https://identity.example.test/authorize?request=redacted');
-  assert.match(String(start.headers['set-cookie']), /__Host-wepuu_oidc_tx=.*Secure.*HttpOnly.*SameSite=Lax/u);
-  assert.equal(start.headers['cache-control'], 'no-store');
-
-  const callback = await app.inject({
-    method: 'GET',
-    url: '/v1/account/oidc/callback?code=redacted&state=redacted',
-    headers: { cookie: '__Host-wepuu_oidc_tx=a.b.c.d.e' }
-  });
-  assert.equal(callback.statusCode, 303);
-  assert.equal(callback.headers.location, '/v1/account/session');
-  const cookies = String(callback.headers['set-cookie']);
-  assert.match(cookies, /__Host-wepuu_oidc_tx=; Max-Age=0/u);
-  assert.match(cookies, /__Host-wepuu_session=s{43}/u);
-  assert.equal(callback.body, '');
-  assert.equal(workspace.ensuredAccount, 'account_12345678');
-  await app.close();
-});
-
-void test('OIDC callback errors fail closed without reflecting provider detail', async () => {
-  const login = new StaticAccountLogin();
-  login.failWith = new Error('provider_token_and_subject_must_not_leak');
-  const audit = new MemoryAudit();
-  const app = buildControlApi({
-    identityProvider: new StaticIdentity(),
-    store: new StaticStore(),
-    audit,
-    accountLogin: login,
+    accountAuth: new StaticAccountAuth(),
     publicOrigin: 'https://platform.example.test'
   });
   const response = await app.inject({
@@ -263,19 +298,11 @@ void test('OIDC callback errors fail closed without reflecting provider detail',
     url: '/v1/account/oidc/callback?code=secret-code&state=secret-state',
     headers: { cookie: '__Host-wepuu_oidc_tx=a.b.c.d.e' }
   });
-  assert.equal(response.statusCode, 503);
-  assert.deepEqual(response.json(), { error: 'temporarily_unavailable' });
-  const evidence = `${response.body}${JSON.stringify(audit.events)}`;
+  assert.equal(response.statusCode, 410);
+  assert.deepEqual(response.json(), { error: 'invalid_request' });
+  const evidence = response.body;
   assert.equal(evidence.includes('secret-code'), false);
   assert.equal(evidence.includes('secret-state'), false);
-  assert.equal(evidence.includes('provider_token'), false);
-
-  login.failWith = new AccountLoginError('unauthenticated');
-  const denied = await app.inject({
-    method: 'GET', url: '/v1/account/oidc/callback?error=access_denied',
-    headers: { cookie: '__Host-wepuu_oidc_tx=a.b.c.d.e' }
-  });
-  assert.equal(denied.statusCode, 401);
   await app.close();
 });
 
@@ -283,7 +310,7 @@ void test('SSR workspace redirects unauthenticated users and renders a content-f
   const denied = buildControlApi({ identityProvider: new StaticIdentity(), store: new StaticStore(), audit: new MemoryAudit() });
   const redirect = await denied.inject({ method: 'GET', url: '/app' });
   assert.equal(redirect.statusCode, 303);
-  assert.equal(redirect.headers.location, '/v1/account/oidc/login?return_to=%2Fapp');
+  assert.equal(redirect.headers.location, '/v1/account/login?return_to=%2Fapp');
   await denied.close();
 
   const store = new StaticStore();
@@ -322,28 +349,19 @@ void test('SSR workspace redirects unauthenticated users and renders a content-f
   await app.close();
 });
 
-void test('OIDC callback revokes its new session if personal workspace bootstrap fails', async () => {
-  const login = new StaticAccountLogin();
+void test('bootstrap fails closed when a Better Auth session has no active account mapping', async () => {
   const app = buildControlApi({
     identityProvider: new StaticIdentity(), store: new StaticStore(), audit: new MemoryAudit(),
-    accountLogin: login, publicOrigin: 'https://platform.example.test',
-    workspace: {
-      ensurePersonalWorkspace: () => Promise.reject(new Error('database unavailable')),
-      listMemberships: () => Promise.resolve([])
-    }
+    accountAuth: new StaticAccountAuth(), publicOrigin: 'https://platform.example.test'
   });
-  const callback = await app.inject({
-    method: 'GET', url: '/v1/account/oidc/callback?code=redacted&state=redacted',
-    headers: { cookie: '__Host-wepuu_oidc_tx=a.b.c.d.e' }
-  });
-  assert.equal(callback.statusCode, 503);
-  assert.equal(login.loggedOutToken, 's'.repeat(43));
-  assert.equal(callback.body.includes('database unavailable'), false);
+  const bootstrap = await app.inject({ method: 'GET', url: '/v1/account/bootstrap?return_to=%2Fapp' });
+  assert.equal(bootstrap.statusCode, 401);
+  assert.deepEqual(bootstrap.json(), { error: 'unauthenticated' });
   await app.close();
 });
 
 void test('session status and logout require server session and exact origin', async () => {
-  const login = new StaticAccountLogin();
+  const accountAuth = new StaticAccountAuth();
   let resolveCalls = 0;
   const identity = new SessionAccountIdentityProvider({
     resolve() {
@@ -355,7 +373,7 @@ void test('session status and logout require server session and exact origin', a
     identityProvider: identity,
     store: new StaticStore(),
     audit: new MemoryAudit(),
-    accountLogin: login,
+    accountAuth,
     publicOrigin: 'https://platform.example.test'
   });
   const cookie = `__Host-wepuu_session=${'s'.repeat(43)}`;
@@ -373,7 +391,7 @@ void test('session status and logout require server session and exact origin', a
     method: 'POST', url: '/v1/account/logout', headers: { cookie, origin: 'https://platform.example.test' }
   });
   assert.equal(logout.statusCode, 204);
-  assert.equal(login.loggedOutToken, 's'.repeat(43));
+  assert.equal(accountAuth.signedOut, true);
   assert.match(String(logout.headers['set-cookie']), /__Host-wepuu_session=; Max-Age=0/u);
   await app.close();
 });

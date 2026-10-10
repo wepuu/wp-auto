@@ -20,6 +20,7 @@ const slot = `candidate-${suffix}`;
 const privateKeyPath = '/run/secrets/private.pem';
 const passphrasePath = '/run/secrets/passphrase';
 const keyringPath = '/run/secrets/keyring.json';
+const accountAuthSecretsPath = '/run/secrets/account-auth-secrets.json';
 const containerDatabaseUrl = new URL(containerDatabaseBaseUrl);
 containerDatabaseUrl.pathname = `/${databaseName}`;
 
@@ -101,6 +102,13 @@ try {
     '-e', "require('node:fs').writeFileSync(process.argv[1], process.argv[2], {encoding:'utf8',mode:0o600})",
     keyringPath, keyring
   ], { volume: true, entrypoint: 'node' });
+  const accountAuthSecrets = JSON.stringify({
+    secrets: [{ version: 1, value: randomBytes(32).toString('base64url') }]
+  });
+  dockerRun(authorizationImage, [
+    '-e', "require('node:fs').writeFileSync(process.argv[1], process.argv[2], {encoding:'utf8',mode:0o600})",
+    accountAuthSecretsPath, accountAuthSecrets
+  ], { volume: true, entrypoint: 'node' });
   dockerRun(authorizationImage, ['-ec', 'chown 1000:1000 /run/secrets/* && chmod 0600 /run/secrets/*'], {
     user: '0:0', volume: true, entrypoint: 'sh'
   });
@@ -132,6 +140,7 @@ try {
 
   const secretEnvironment = {
     WEPUU_DATABASE_URL: containerDatabaseUrl.toString(),
+    WEPUU_ACCOUNT_AUTH_SECRETS_FILE: accountAuthSecretsPath,
     WEPUU_COOKIE_KEYS_JSON: JSON.stringify([randomBytes(32).toString('base64url'), randomBytes(32).toString('base64url')]),
     WEPUU_OAUTH_ARTIFACT_KEYS_JSON: JSON.stringify([randomBytes(32).toString('base64url'), randomBytes(32).toString('base64url')]),
     WEPUU_RATE_LIMIT_HMAC_KEY: randomBytes(32).toString('base64url'),

@@ -1,0 +1,10 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "composite": false,
+    "skipLibCheck": true,
+    "lib": ["ES2024", "DOM"]
+  },
+  "include": ["*.ts", "../src/**/*.ts", "../../database/src/**/*.ts"]
+}

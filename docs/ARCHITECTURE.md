@@ -32,6 +32,20 @@ The control plane may know that a tenant paired an exact canonical MCP endpoint.
 - Cannot mint arbitrary user tokens from an administrator console.
 - Uses explicit tenant membership and authorization on every object operation.
 
+### Account authentication boundary
+
+- Better Auth 1.7.7 owns authentication users, linked login methods,
+  verification records and the single browser Session in PostgreSQL schema
+  `auth`.
+- `platform.account_auth_links` maps one Better Auth user to one stable WePuu
+  `platform.accounts.id`; OAuth subjects and tenant/grant ownership therefore
+  do not change when a login provider is linked or replaced.
+- control-api may idempotently bootstrap a missing mapping. The authorization
+  service is read-only and redirects a valid but unmapped Session to that
+  bootstrap route.
+- Auth0 is a temporary upstream provider. Email OTP and future Google login use
+  the same account boundary and do not replace node-oidc-provider.
+
 ### WordPress connector resource server
 
 - Publishes path-specific Protected Resource Metadata.
@@ -54,7 +68,7 @@ Canonicalization happens before pairing is committed. A later endpoint, scheme, 
 
 1. A WordPress administrator explicitly starts pairing from wp-admin.
 2. WordPress creates a high-entropy single-use pairing secret, stores only its hash, and redirects the browser to the platform.
-3. The platform authenticates its account, validates the pairing proof, performs SSRF-safe endpoint verification, and assigns `site_id`.
+3. Better Auth authenticates a login method; the platform resolves it to a stable internal account, validates the pairing proof, performs SSRF-safe endpoint verification, and assigns `site_id`.
 4. An MCP client requests the resource and discovers PRM and AS metadata.
 5. The client begins Authorization Code + PKCE S256 and supplies the exact `resource`.
 6. The platform user selects a paired site, then returns to WordPress for local-user login and explicit consent.

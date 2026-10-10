@@ -1,15 +1,9 @@
 import { createHmac, randomBytes } from 'node:crypto';
-import {
-  AccountLoginService,
-  IdentitySubjectHasher,
-  OidcTransactionCodec,
-  OpenIdClientRelyingParty,
-  loadAccountOidcConfig
-} from '@wepuu/account-identity';
+import { accountAuthFromEnvironment } from '@wepuu/account-auth';
 import type { McpScope, TenantContext } from '@wepuu/contracts';
 import {
   Database,
-  PostgresAccountSessionStore,
+  PostgresAccountAuthLinkStore,
   PostgresAccountWorkspaceStore,
   PostgresGrantRepository,
   PostgresPairingRepository,
@@ -24,29 +18,23 @@ import { GrantService, HttpsSiteVerificationClient, PairingService } from '@wepu
 import { evaluateDeploymentReadiness, loadPublicDeploymentConfig } from '@wepuu/platform-ui';
 import {
   buildControlApi,
-  PostgresControlStore,
-  SessionAccountIdentityProvider
+  BetterAuthAccountIdentityProvider,
+  PostgresControlStore
 } from './server.js';
 
 const databaseUrl = process.env['WEPUU_DATABASE_URL'];
 if (databaseUrl === undefined || databaseUrl.length === 0) throw new Error('WEPUU_DATABASE_URL is required');
 
 const database = new Database({ connectionString: databaseUrl, applicationName: 'wepuu-control-api' });
-const accountOidcConfig = loadAccountOidcConfig(process.env);
-const deployment = loadPublicDeploymentConfig(process.env, accountOidcConfig.publicOrigin.origin);
-const accountSessionStore = new PostgresAccountSessionStore(database);
-const accountLogin = new AccountLoginService({
-  provider: await OpenIdClientRelyingParty.create(accountOidcConfig),
-  codec: new OidcTransactionCodec({
-    keys: accountOidcConfig.transactionKeys,
-    issuer: accountOidcConfig.publicOrigin.href,
-    audience: accountOidcConfig.redirectUri.href,
-    ttlSeconds: accountOidcConfig.transactionTtlSeconds
-  }),
-  hasher: new IdentitySubjectHasher(accountOidcConfig.identitySubjectHmacKey),
-  sessions: accountSessionStore,
-  sessionTtlSeconds: accountOidcConfig.sessionTtlSeconds
+const publicOrigin = process.env['WEPUU_CONTROL_PUBLIC_ORIGIN'];
+if (publicOrigin === undefined) throw new Error('WEPUU_CONTROL_PUBLIC_ORIGIN is required');
+const deployment = loadPublicDeploymentConfig(process.env, publicOrigin);
+const accountAuth = await accountAuthFromEnvironment(process.env, {
+  applicationName: 'wepuu-control-account-auth',
+  databaseRole: 'wepuu_account_auth_writer',
+  includeTemporaryAuth0: true
 });
+const accountAuthLinks = new PostgresAccountAuthLinkStore(database);
 const platformIssuer = process.env['WEPUU_ISSUER'];
 if (platformIssuer !== undefined && !platformIssuer.startsWith('https://')) throw new Error('WEPUU_ISSUER must use HTTPS');
 const pairingVerifier = new HttpsSiteVerificationClient();
@@ -144,17 +132,21 @@ const grants = platformIssuer === undefined || consentSigner === undefined || gr
   }
 };
 const app = buildControlApi({
-  identityProvider: new SessionAccountIdentityProvider(accountSessionStore),
+  identityProvider: new BetterAuthAccountIdentityProvider({
+    auth: accountAuth,
+    links: accountAuthLinks,
+    provisionMissing: true
+  }),
   store: new PostgresControlStore(database),
   audit: new PostgresSecurityAuditSink(database),
   readiness: () => database.checkReady(),
-  accountLogin,
+  accountAuth,
   workspace: new PostgresAccountWorkspaceStore(database),
   deployment,
   deploymentReadiness: evaluateDeploymentReadiness(deployment, process.env),
   ...(process.env['WEPUU_OPERATIONS_METRICS_TOKEN'] === undefined
     ? {} : { operationsMetricsToken: process.env['WEPUU_OPERATIONS_METRICS_TOKEN'] }),
-  publicOrigin: accountOidcConfig.publicOrigin.origin,
+  publicOrigin: new URL(publicOrigin).origin,
   ...(pairing === undefined ? {} : { pairing }),
   ...(grants === undefined ? {} : { grants })
 });
@@ -176,12 +168,14 @@ const host = process.env['WEPUU_CONTROL_HOST'] ?? '127.0.0.1';
 try {
   await app.listen({ port, host });
 } catch (error) {
+  await accountAuth.close();
   await database.close();
   throw error;
 }
 
 async function shutdown(): Promise<void> {
   await app.close();
+  await accountAuth.close();
   await database.close();
 }
 

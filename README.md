@@ -45,6 +45,11 @@ direct-MCP acceptance flow passed by 2026-10-10. This remains an operator
 validation deployment: connector changes, general release expansion and Phase
 2.0.7B2 are not authorized.
 
+The P1 Better Auth account-boundary candidate is implemented and locally
+validated but is not deployed. It preserves `platform.accounts.id` as the
+stable OAuth subject, adds an isolated authentication schema and temporarily
+uses Auth0 through Better Auth until P2 Email OTP is implemented. See ADR-018.
+
 ## Architecture
 
 ```text
@@ -104,10 +109,10 @@ they must not be stored in `.env`, fixtures, logs, evidence, or Git.
 Signing processes start normally through `pnpm start:control` and
 `pnpm start:authorization`; no AWS/OpenSSL provider registration is required.
 
-The control API account login requires the exact external OIDC profile recorded
-in ADR-007: Authorization Code, PKCE S256, `openid` only, RS256 ID tokens, an
-exact HTTPS callback, two rotating 32-byte transaction-cookie keys, and a
-separate 32-byte subject-HMAC key. Grant creation additionally requires a
+The P1 candidate requires a versioned Better Auth secret key ring through the
+protected file path `WEPUU_ACCOUNT_AUTH_SECRETS_FILE`. The temporary Auth0
+provider uses Authorization Code, PKCE and the exact callback
+`/api/auth/callback/auth0`; it requests `openid email profile`. Grant creation additionally requires a
 separate 32-byte `WEPUU_GRANT_IDEMPOTENCY_HMAC_KEY`; it deterministically
 derives retry-safe consent challenges while PostgreSQL stores only their
 digests. Secrets are process environment values or secret-manager injections
@@ -126,6 +131,8 @@ only; they must not be placed in `.env`, logs, or Git.
 - [ADR-008 Node 26 KMS JOSE runtime](docs/ADR-008-NODE-26-KMS-JOSE-RUNTIME.md)
 - [ADR-016 local JOSE signing custody](docs/ADR-016-LOCAL-JOSE-SIGNING-CUSTODY.md)
 - [ADR-017 initial single-VPS deployment](docs/ADR-017-SINGLE-VPS-PRODUCTION-DEPLOYMENT.md)
+- [ADR-018 Better Auth account boundary](docs/ADR-018-BETTER-AUTH-ACCOUNT-BOUNDARY.md)
+- [P1 Better Auth validation](docs/P1_BETTER_AUTH_VALIDATION_2026-10-10.md)
 - [Production deployment validation](docs/PRODUCTION_DEPLOYMENT_2026-10-09.md)
 - [Production OAuth end-to-end validation](docs/PRODUCTION_OAUTH_CONSENT_RESUME_VALIDATION_2026-10-10.md)
 - [ADR-017 operations runbook](docs/ADR_017_OPERATIONS_RUNBOOK.md)

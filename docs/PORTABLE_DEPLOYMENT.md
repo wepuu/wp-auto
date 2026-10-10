@@ -44,6 +44,13 @@ These database commands require `WEPUU_DATABASE_URL`. Public modes also require
 an independent `WEPUU_OPERATIONS_METRICS_TOKEN` of at least 32 characters. The
 token protects only `/internal/metrics`; it is not an OAuth credential.
 
+P1 additionally requires a versioned Better Auth key-ring JSON mounted read-
+only in both services and referenced only by
+`WEPUU_ACCOUNT_AUTH_SECRETS_FILE`. The active secret signs new framework
+artifacts and the previous secret supports bounded rotation. The JSON file and
+its values must not enter environment variables, images, logs or Git. The
+temporary upstream callback is `{public-origin}/api/auth/callback/auth0`.
+
 Liveness is available at `/livez`. Readiness at `/readyz` fails closed when the
 database check is uncertain. The product-shell readiness page reports category
 status only and is not a substitute for these probes.

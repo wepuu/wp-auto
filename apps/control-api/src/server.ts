@@ -1,7 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import Fastify, { LogController, type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { AccountLoginError, type AccountLoginCompletion, type AccountLoginStart } from '@wepuu/account-identity';
+import { ACCOUNT_AUTH_BASE_PATH, accountAuthHeaders, type AccountAuth } from '@wepuu/account-auth';
 import {
   AccountPrincipalSchema,
   McpScopeSetSchema,
@@ -91,6 +91,48 @@ export class DenyAllAccountIdentityProvider implements AccountIdentityProvider {
 
 export interface AccountSessionStore {
   resolve(sessionHash: Uint8Array): Promise<{ accountId: string; authenticationTime: number } | undefined>;
+}
+
+export interface AccountAuthLinkStore {
+  provision(authUserId: string): Promise<{
+    readonly accountId: string;
+    readonly homeTenantId: string;
+    readonly accountStatus: 'active' | 'suspended' | 'deleted';
+  }>;
+  resolve(authUserId: string): Promise<{
+    readonly accountId: string;
+    readonly homeTenantId: string;
+    readonly accountStatus: 'active' | 'suspended' | 'deleted';
+  } | undefined>;
+}
+
+export class BetterAuthAccountIdentityProvider implements AccountIdentityProvider {
+  readonly #auth: Pick<AccountAuth, 'getSession'>;
+  readonly #links: AccountAuthLinkStore;
+  readonly #provisionMissing: boolean;
+
+  constructor(options: Readonly<{
+    auth: Pick<AccountAuth, 'getSession'>;
+    links: AccountAuthLinkStore;
+    provisionMissing?: boolean;
+  }>) {
+    this.#auth = options.auth;
+    this.#links = options.links;
+    this.#provisionMissing = options.provisionMissing ?? false;
+  }
+
+  async authenticate(request: FastifyRequest): Promise<AccountPrincipal | undefined> {
+    const session = await this.#auth.getSession(accountAuthHeaders(request.headers));
+    if (session === undefined || session.expiresAt.getTime() <= Date.now()) return undefined;
+    const existing = await this.#links.resolve(session.userId);
+    const link = existing ?? (this.#provisionMissing ? await this.#links.provision(session.userId) : undefined);
+    if (link === undefined || link.accountStatus !== 'active') return undefined;
+    return AccountPrincipalSchema.parse({
+      accountId: link.accountId,
+      authenticationTime: Math.floor(session.createdAt.getTime() / 1_000),
+      authenticationMethod: 'oidc'
+    });
+  }
 }
 
 function requestCookie(request: FastifyRequest, cookieName: string): string | undefined {
@@ -209,11 +251,7 @@ export interface ControlApiOptions {
   readonly store: ControlStore;
   readonly audit: SecurityAuditSink;
   readonly readiness?: () => Promise<void>;
-  readonly accountLogin?: {
-    start(returnTo?: string): Promise<AccountLoginStart>;
-    complete(currentUrl: URL, transactionCookie: string): Promise<AccountLoginCompletion>;
-    logout(sessionToken: string): Promise<void>;
-  };
+  readonly accountAuth?: AccountAuth;
   readonly publicOrigin?: string;
   readonly pairing?: PairingOperations;
   readonly grants?: GrantOperations;
@@ -222,6 +260,38 @@ export interface ControlApiOptions {
   readonly deploymentReadiness?: DeploymentReadinessReport;
   readonly operationsMetricsToken?: string;
   readonly metrics?: ContentFreeMetrics;
+}
+
+function validatedReturnTo(value: string | undefined): string {
+  const returnTo = value ?? '/app';
+  if (!returnTo.startsWith('/') || returnTo.startsWith('//') || returnTo.includes('\\')) {
+    throw new PlatformError('invalid_request', 400);
+  }
+  const parsed = new URL(returnTo, 'https://return.invalid');
+  if (parsed.origin !== 'https://return.invalid' || parsed.username !== '' || parsed.password !== ''
+    || parsed.hash !== '') throw new PlatformError('invalid_request', 400);
+  return `${parsed.pathname}${parsed.search}`;
+}
+
+function bodyForAccountAuth(request: FastifyRequest): string | Buffer | URLSearchParams | undefined {
+  if (request.method === 'GET' || request.method === 'HEAD' || request.body === undefined) return undefined;
+  const contentType = request.headers['content-type']?.split(';', 1)[0]?.trim().toLowerCase();
+  if (typeof request.body === 'string' || Buffer.isBuffer(request.body)) return request.body;
+  if (contentType === 'application/x-www-form-urlencoded' && typeof request.body === 'object' && request.body !== null) {
+    return new URLSearchParams(Object.entries(request.body as Record<string, unknown>)
+      .map(([key, value]): [string, string] => [key, String(value)]));
+  }
+  return JSON.stringify(request.body);
+}
+
+async function sendAccountAuthResponse(reply: FastifyReply, response: Response): Promise<unknown> {
+  for (const [name, value] of response.headers.entries()) {
+    if (name.toLowerCase() !== 'set-cookie') reply.header(name, value);
+  }
+  const cookies = response.headers.getSetCookie();
+  if (cookies.length > 0) reply.header('set-cookie', cookies);
+  const body = response.body === null ? undefined : Buffer.from(await response.arrayBuffer());
+  return reply.status(response.status).send(body);
 }
 
 export interface AccountWorkspaceOperations {
@@ -272,7 +342,7 @@ const pairingStartScript = `(() => {
       body: JSON.stringify({ resource: input.resource, verifier: input.verifier })
     }).then((response) => {
       if (response.status === 401) {
-        location.assign('/v1/account/oidc/login?return_to=%2Fv1%2Fpairing%2Fstart');
+        location.assign('/v1/account/login?return_to=%2Fv1%2Fpairing%2Fstart');
         return;
       }
       sessionStorage.removeItem(key);
@@ -302,7 +372,7 @@ const consentCompleteScript = `(() => {
       headers: { 'content-type': 'application/json', 'idempotency-key': input.idempotency_key },
       body: JSON.stringify({ proof: input.proof, challenge: input.challenge, decision: input.decision })
     }).then((response) => {
-      if (response.status === 401) { location.assign('/v1/account/oidc/login?return_to=%2Fv1%2Fconsent%2Fcomplete'); return; }
+      if (response.status === 401) { location.assign('/v1/account/login?return_to=%2Fv1%2Fconsent%2Fcomplete'); return; }
       sessionStorage.removeItem(key);
       status.textContent = response.ok ? (input.decision === 'approved' ? 'Consent completed.' : 'Consent denied.') : 'Consent completion failed.';
     }).catch(() => { status.textContent = 'Consent completion failed. You may retry this page.'; });
@@ -338,9 +408,27 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
   });
   app.addContentTypeParser('application/x-www-form-urlencoded', { parseAs: 'string' }, (_request, body, done) => {
     try {
-      done(null, Object.fromEntries(new URLSearchParams(typeof body === 'string' ? body : body.toString('utf8'))));
+      done(null, typeof body === 'string' ? body : body.toString('utf8'));
     } catch (error) {
       done(error as Error);
+    }
+  });
+
+  app.route({
+    method: ['GET', 'POST'],
+    url: '/api/auth/*',
+    handler: async (request, reply) => {
+      if (options.accountAuth === undefined || options.publicOrigin === undefined) {
+        throw new PlatformError('temporarily_unavailable', 503);
+      }
+      const url = new URL(request.raw.url ?? ACCOUNT_AUTH_BASE_PATH, options.publicOrigin);
+      const body = bodyForAccountAuth(request);
+      const webRequest = new Request(url, {
+        method: request.method,
+        headers: accountAuthHeaders(request.headers),
+        ...(body === undefined ? {} : { body })
+      });
+      return sendAccountAuthResponse(reply, await options.accountAuth.handle(webRequest));
     }
   });
 
@@ -395,7 +483,10 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
     if (options.publicOrigin === undefined || request.headers.origin !== options.publicOrigin) {
       throw new PlatformError('forbidden', 403);
     }
-    const form = UiFormSchema.safeParse(request.body);
+    const formInput = typeof request.body === 'string'
+      ? Object.fromEntries(new URLSearchParams(request.body))
+      : request.body;
+    const form = UiFormSchema.safeParse(formInput);
     const cookie = requestCookie(request, CSRF_COOKIE);
     if (!form.success || cookie === undefined || !sameSecret(cookie, form.data.csrf)) {
       throw new PlatformError('forbidden', 403);
@@ -431,7 +522,7 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
       if (error instanceof PlatformError && error.code === 'unauthenticated') {
         const returnTo = new URL(request.raw.url ?? '/app', deployment.publicOrigin).pathname;
         await reply.status(303).header('cache-control', 'no-store')
-          .header('location', `/v1/account/oidc/login?return_to=${encodeURIComponent(returnTo)}`).send();
+          .header('location', `/v1/account/login?return_to=${encodeURIComponent(returnTo)}`).send();
         return undefined;
       }
       throw error;
@@ -546,83 +637,50 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
       }));
   });
 
-  app.get('/v1/account/oidc/login', async (request, reply) => {
-    if (options.accountLogin === undefined || options.publicOrigin === undefined) {
+  app.get('/v1/account/login', async (request, reply) => {
+    if (options.accountAuth === undefined || options.publicOrigin === undefined) {
       throw new PlatformError('temporarily_unavailable', 503);
     }
     const query = AccountLoginQuerySchema.safeParse(request.query);
     if (!query.success) throw new PlatformError('invalid_request', 400);
     try {
-      const result = await options.accountLogin.start(query.data.return_to);
-      return await reply
-        .status(302)
-        .header('cache-control', 'no-store')
-        .header('referrer-policy', 'no-referrer')
-        .header('content-security-policy', "default-src 'none'; frame-ancestors 'none'")
-        .header('set-cookie', secureCookie(TRANSACTION_COOKIE, result.transactionCookie, 300))
-        .header('location', result.authorizationUrl.href)
-        .send();
+      const returnTo = validatedReturnTo(query.data.return_to);
+      const bootstrap = new URL('/v1/account/bootstrap', options.publicOrigin);
+      bootstrap.searchParams.set('return_to', returnTo);
+      const response = await options.accountAuth.startTemporaryAuth0(
+        accountAuthHeaders(request.headers), bootstrap.href
+      );
+      return await sendAccountAuthResponse(reply, response);
     } catch (error) {
-      if (error instanceof AccountLoginError && error.code === 'invalid_request') {
+      if (error instanceof PlatformError && error.code === 'invalid_request') {
         throw new PlatformError('invalid_request', 400);
       }
       throw new PlatformError('temporarily_unavailable', 503);
     }
   });
 
+  app.get('/v1/account/oidc/login', async (request, reply) => {
+    const query = AccountLoginQuerySchema.safeParse(request.query);
+    if (!query.success) throw new PlatformError('invalid_request', 400);
+    const target = new URL('/v1/account/login', options.publicOrigin ?? 'https://return.invalid');
+    if (query.data.return_to !== undefined) target.searchParams.set('return_to', validatedReturnTo(query.data.return_to));
+    return reply.status(303).header('cache-control', 'no-store').header('location', `${target.pathname}${target.search}`).send();
+  });
+
+  app.get('/v1/account/bootstrap', async (request, reply) => {
+    const query = AccountLoginQuerySchema.safeParse(request.query);
+    if (!query.success) throw new PlatformError('invalid_request', 400);
+    const principal = await options.identityProvider.authenticate(request);
+    if (principal === undefined) {
+      return reply.status(401).header('cache-control', 'no-store').send({ error: 'unauthenticated' });
+    }
+    return reply.status(303).header('cache-control', 'no-store')
+      .header('location', validatedReturnTo(query.data.return_to)).send();
+  });
+
   app.get('/v1/account/oidc/callback', async (request, reply) => {
-    if (options.accountLogin === undefined || options.publicOrigin === undefined) {
-      throw new PlatformError('temporarily_unavailable', 503);
-    }
-    const transactionCookie = requestCookie(request, TRANSACTION_COOKIE);
-    if (transactionCookie === undefined) {
-      return await reply
-        .status(401)
-        .header('cache-control', 'no-store')
-        .header('referrer-policy', 'no-referrer')
-        .header('set-cookie', clearCookie(TRANSACTION_COOKIE))
-        .send({ error: 'unauthenticated' });
-    }
-    try {
-      const currentUrl = new URL(request.raw.url ?? '/v1/account/oidc/callback', options.publicOrigin);
-      const result = await options.accountLogin.complete(currentUrl, transactionCookie);
-      try {
-        if (options.workspace === undefined) throw new Error('workspace_not_configured');
-        await options.workspace.ensurePersonalWorkspace(result.accountId);
-      } catch {
-        await options.accountLogin.logout(result.sessionToken);
-        throw new AccountLoginError('temporarily_unavailable');
-      }
-      const maxAge = Math.max(0, Math.floor((result.expiresAt.getTime() - Date.now()) / 1_000));
-      return await reply
-        .status(303)
-        .header('cache-control', 'no-store')
-        .header('referrer-policy', 'no-referrer')
-        .header('content-security-policy', "default-src 'none'; frame-ancestors 'none'")
-        .header('set-cookie', [
-          clearCookie(TRANSACTION_COOKIE),
-          secureCookie(SESSION_COOKIE, result.sessionToken, maxAge)
-        ])
-        .header('location', result.returnTo)
-        .send();
-    } catch (error) {
-      const code = error instanceof AccountLoginError ? error.code : 'temporarily_unavailable';
-      await safeAudit({
-        occurredAt: new Date().toISOString(),
-        eventName: 'account.authentication_denied',
-        outcome: code === 'temporarily_unavailable' ? 'error' : 'denied',
-        reason: code === 'temporarily_unavailable' ? 'identity_missing' : 'invalid_input',
-        correlationId: correlationId(),
-        service: 'control-api',
-        serviceVersion: '0.5.0'
-      });
-      return reply
-        .status(code === 'temporarily_unavailable' ? 503 : 401)
-        .header('cache-control', 'no-store')
-        .header('referrer-policy', 'no-referrer')
-        .header('set-cookie', clearCookie(TRANSACTION_COOKIE))
-        .send({ error: code });
-    }
+    return reply.status(410).header('cache-control', 'no-store')
+      .header('set-cookie', clearCookie(TRANSACTION_COOKIE)).send({ error: 'invalid_request' });
   });
 
   app.get('/v1/account/session', async (request, reply) => {
@@ -639,13 +697,11 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
   });
 
   app.post('/v1/account/logout', async (request, reply) => {
-    if (options.accountLogin === undefined || options.publicOrigin === undefined) {
+    if (options.accountAuth === undefined || options.publicOrigin === undefined) {
       throw new PlatformError('temporarily_unavailable', 503);
     }
     if (request.headers.origin !== options.publicOrigin) throw new PlatformError('forbidden', 403);
-    const token = sessionCookie(request);
-    if (token !== undefined) await options.accountLogin.logout(token);
-    return reply.status(204).header('cache-control', 'no-store').header('set-cookie', clearCookie(SESSION_COOKIE)).send();
+    return sendAccountAuthResponse(reply, await options.accountAuth.signOut(accountAuthHeaders(request.headers)));
   });
 
   app.get('/', async (_request, reply) => reply.status(303).header('cache-control', 'no-store').header('location', '/app').send());
@@ -738,11 +794,11 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
 
   app.post('/app/logout', async (request, reply) => {
     validateUiMutation(request);
-    const token = sessionCookie(request);
-    if (token !== undefined && options.accountLogin !== undefined) await options.accountLogin.logout(token);
+    if (options.accountAuth === undefined) throw new PlatformError('temporarily_unavailable', 503);
+    const response = await options.accountAuth.signOut(accountAuthHeaders(request.headers));
+    const cookies = [...response.headers.getSetCookie(), clearCookie(CSRF_COOKIE)];
     return reply.status(303).header('cache-control', 'no-store')
-      .header('set-cookie', [clearCookie(SESSION_COOKIE), clearCookie(CSRF_COOKIE)])
-      .header('location', '/app').send();
+      .header('set-cookie', cookies).header('location', '/app').send();
   });
 
   app.post('/app/tenants/:tenantId/grants/:objectId/revoke', async (request, reply) => {

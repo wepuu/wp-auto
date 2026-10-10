@@ -162,6 +162,18 @@ and the connector repository remained unchanged. This provisional deployment
 does not close Phase 2.0.7B, authorize connector changes, invite general users
 or start Phase 2.0.7B2.
 
+### P1 - SaaS account authentication boundary
+
+Status: implemented and locally validated on 2026-10-10; not deployed.
+
+P1 pins Better Auth 1.7.7, adds its isolated `auth` schema and maps each
+authentication user to a stable WePuu account. Auth0 is temporarily routed
+through Better Auth while P2 Email OTP remains unimplemented. OAuth issuer,
+PKCE, consent, token lifecycle, local signing, JWKS, tenant/grant isolation and
+the WordPress Connector remain unchanged. See ADR-018 and the P1 validation
+record. Production rollout and any old-session cleanup remain separately
+authorized actions.
+
 ## Deferred and out of scope
 
 ADR-016 replaces AWS KMS runtime signing with encrypted local PKCS#8 RSA-3072

@@ -177,6 +177,38 @@ export class Database {
     }
   }
 
+  async withAccountAuthWriter<T>(operation: (client: PoolClient) => Promise<T>): Promise<T> {
+    const client = await this.#pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SET LOCAL ROLE wepuu_account_auth_writer');
+      const result = await operation(client);
+      await client.query('COMMIT');
+      return result;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async withAccountAuthReader<T>(operation: (client: PoolClient) => Promise<T>): Promise<T> {
+    const client = await this.#pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SET LOCAL ROLE wepuu_account_auth_reader');
+      const result = await operation(client);
+      await client.query('COMMIT');
+      return result;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async withAccountWorkspace<T>(accountId: string, operation: (client: PoolClient) => Promise<T>): Promise<T> {
     if (!/^[A-Za-z0-9_-]{8,128}$/u.test(accountId)) throw new Error('account_context_invalid');
     const client = await this.#pool.connect();
@@ -415,6 +447,66 @@ export class PostgresAccountSessionStore {
        WHERE session_hash = $1`,
       [Buffer.from(sessionHash)]
     ).then(() => undefined));
+  }
+}
+
+export interface AccountAuthLink {
+  readonly accountId: string;
+  readonly homeTenantId: string;
+  readonly accountStatus: 'active' | 'suspended' | 'deleted';
+}
+
+/** Bridges a Better Auth user to the stable WePuu OAuth subject. */
+export class PostgresAccountAuthLinkStore {
+  readonly #database: Database;
+
+  constructor(database: Database) {
+    this.#database = database;
+  }
+
+  async provision(authUserId: string): Promise<AccountAuthLink> {
+    if (authUserId.length < 1 || authUserId.length > 255) throw new Error('auth_user_id_invalid');
+    const proposedAccountId = `account_${randomUUID().replaceAll('-', '')}`;
+    const proposedTenantId = randomUUID();
+    return this.#database.withAccountAuthWriter(async (client) => {
+      const result = await client.query<{ account_id: string; home_tenant_id: string }>(
+        'SELECT * FROM platform.ensure_account_auth_link($1, $2, $3::uuid)',
+        [authUserId, proposedAccountId, proposedTenantId]
+      );
+      const row = result.rows[0];
+      if (row === undefined || result.rowCount !== 1) throw new Error('account_auth_bootstrap_failed');
+      const accountResult = await client.query<{ status: AccountAuthLink['accountStatus'] }>(
+        'SELECT status FROM platform.accounts WHERE id = $1',
+        [row.account_id]
+      );
+      const account = accountResult.rows[0];
+      if (account === undefined || accountResult.rowCount !== 1) throw new Error('account_auth_bootstrap_failed');
+      return { accountId: row.account_id, homeTenantId: row.home_tenant_id, accountStatus: account.status };
+    });
+  }
+
+  async resolve(authUserId: string): Promise<AccountAuthLink | undefined> {
+    if (authUserId.length < 1 || authUserId.length > 255) return undefined;
+    return this.#database.withAccountAuthReader(async (client) => {
+      const result = await client.query<{
+        account_id: string;
+        tenant_id: string;
+        status: AccountAuthLink['accountStatus'];
+      }>(
+        `SELECT link.account_id, home.tenant_id, account_record.status
+         FROM platform.account_auth_links link
+         JOIN platform.accounts account_record ON account_record.id = link.account_id
+         JOIN platform.account_home_tenants home ON home.account_id = link.account_id
+         WHERE link.auth_user_id = $1`,
+        [authUserId]
+      );
+      const row = result.rows[0];
+      return row === undefined ? undefined : {
+        accountId: row.account_id,
+        homeTenantId: row.tenant_id,
+        accountStatus: row.status
+      };
+    });
   }
 }
 
