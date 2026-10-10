@@ -451,7 +451,8 @@ void test('Email OTP login protects return state and reaches Better Auth through
   const transaction = /name="transaction" value="([A-Za-z0-9_-]{43})"/u.exec(start.body)?.[1];
   assert.ok(csrf);
   assert.equal(transaction, transactions.token);
-  const cookie = String(start.headers['set-cookie']).split(';', 1)[0];
+  const csrfCookie = String(start.headers['set-cookie']).split(';', 1)[0];
+  const cookie = `legacy=${'x'.repeat(4_096)}; ${csrfCookie}`;
   const sent = await app.inject({
     method: 'POST', url: '/v1/account/email/send',
     headers: {
