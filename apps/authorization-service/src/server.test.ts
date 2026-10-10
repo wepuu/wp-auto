@@ -10,11 +10,24 @@ import {
   interactionResource,
   interactionSubmissionHeaderRejection,
   normalizeAuthorizationResources,
+  oauthResumeStageDiagnostic,
   safeOAuthFailure,
   serverErrorDiagnostic
 } from './server.js';
 
 const resource = 'https://site.example.test/wp-json/wp-auto/mcp';
+
+test('OAuth resume stage diagnostics contain no request or tenant data', () => {
+  assert.deepEqual(oauthResumeStageDiagnostic('interaction_ended'), {
+    event: 'oauth.interaction_ended'
+  });
+  assert.deepEqual(oauthResumeStageDiagnostic('authorization_accepted'), {
+    event: 'oauth.authorization_accepted'
+  });
+  assert.deepEqual(oauthResumeStageDiagnostic('authorization_success'), {
+    event: 'oauth.authorization_success'
+  });
+});
 
 test('interaction form preserves a verifiable Origin without disclosing its path', () => {
   assert.equal(INTERACTION_REFERRER_POLICY, 'strict-origin');

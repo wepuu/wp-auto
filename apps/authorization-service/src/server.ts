@@ -275,6 +275,17 @@ export function serverErrorDiagnostic(error: unknown): Readonly<{
   return { event: 'oauth.server_error', ...safeOAuthFailure(error) };
 }
 
+type OAuthResumeStage =
+  | 'interaction_ended'
+  | 'authorization_accepted'
+  | 'authorization_success';
+
+export function oauthResumeStageDiagnostic(stage: OAuthResumeStage): Readonly<{
+  event: `oauth.${OAuthResumeStage}`;
+}> {
+  return { event: `oauth.${stage}` };
+}
+
 export function consentInteractionResult(
   existingGrantId: string | undefined,
   savedGrantId: string
@@ -429,6 +440,18 @@ export async function startAuthorizationService(
     });
     provider.on('server_error', (_context, error) => {
       console.error(JSON.stringify(serverErrorDiagnostic(error)));
+    });
+    // These events deliberately record only the protocol stage. They make a
+    // stalled authorization resume observable without logging request
+    // parameters, interaction identifiers, cookies, tokens, or tenant data.
+    provider.on('interaction.ended', () => {
+      console.info(JSON.stringify(oauthResumeStageDiagnostic('interaction_ended')));
+    });
+    provider.on('authorization.accepted', () => {
+      console.info(JSON.stringify(oauthResumeStageDiagnostic('authorization_accepted')));
+    });
+    provider.on('authorization.success', () => {
+      console.info(JSON.stringify(oauthResumeStageDiagnostic('authorization_success')));
     });
     provider.proxy = true;
     const callback = provider.callback();
