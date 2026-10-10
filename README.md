@@ -130,6 +130,7 @@ only; they must not be placed in `.env`, logs, or Git.
 - [Production OAuth end-to-end validation](docs/PRODUCTION_OAUTH_CONSENT_RESUME_VALIDATION_2026-10-10.md)
 - [ADR-017 operations runbook](docs/ADR_017_OPERATIONS_RUNBOOK.md)
 - [ADR-017 operations closeout](docs/ADR_017_OPERATIONS_CLOSEOUT_2026-10-10.md)
+- [ADR-017 operations automation validation](docs/ADR_017_OPERATIONS_AUTOMATION_2026-10-10.md)
 - [Local signing test plan](docs/PHASE_2_0_LOCAL_SIGNING_TEST_PLAN.md)
 - [Local signing validation](docs/PHASE_2_0_LOCAL_SIGNING_VALIDATION.md)
 - [External account OIDC local acceptance](docs/ACCOUNT_OIDC_TEST_SETUP.md)

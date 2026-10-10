@@ -124,11 +124,13 @@ call. Application Password regression also passed in an isolated local
 
 ## Remaining operator and general-release gates
 
-- Confirm Cloudflare SSL/TLS mode is Full (strict).
-- Create two encrypted offline signing-key backups in separate locations and
-  store the passphrase separately. Do not copy old-computer credentials.
 - Confirm the final data-residency/retention wording and obtain any legal review
   the operator considers necessary before inviting general users.
+
+On 2026-10-10 the operator confirmed Cloudflare Full (strict), completed two
+separate encrypted offline copies of the current locally generated signing key,
+stored the passphrase separately, and deleted the temporary combined local
+copy. No old-computer credential or KMS private material was restored.
 
 Until these gates close, the endpoint is an operator validation deployment,
 not a completed Phase 2.0.7B2 or connector-release acceptance.

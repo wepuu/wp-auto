@@ -47,8 +47,10 @@ multi-region availability or formal compliance certification is made.
 
 BaoTa manages ACME renewal. Port 80 exposes only the HTTP-01 challenge path and
 redirects all other traffic to HTTPS. Cloudflare must use Full (strict) origin
-TLS. Two encrypted offline signing-key backups in separate locations, with the
-passphrase stored separately, remain an operator action before general release.
+TLS. The operator confirmed Full (strict) on 2026-10-10. On the same date the
+operator confirmed two encrypted offline signing-key backups in separate
+locations with the passphrase stored separately. No backup location or secret
+fingerprint is recorded in the repository.
 
 ## Rollback
 
