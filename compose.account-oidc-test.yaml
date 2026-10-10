@@ -123,15 +123,9 @@ services:
         condition: service_healthy
     environment:
       WEPUU_DATABASE_URL: postgresql://postgres:conformance@platform-db:5432/wepuu_test
-      WEPUU_ACCOUNT_OIDC_ISSUER: https://dev-o173hfg1cbmd0crj.us.auth0.com/
-      WEPUU_ACCOUNT_OIDC_CLIENT_ID: AY4V93U0IUs6aWPKgLqClwodKWOneQa9
-      WEPUU_ACCOUNT_OIDC_REDIRECT_URI: https://platform.example.test/v1/account/oidc/callback
-      WEPUU_ACCOUNT_OIDC_SCOPES: openid
-      WEPUU_ACCOUNT_OIDC_CLIENT_AUTH_METHOD: client_secret_basic
       WEPUU_CONTROL_PUBLIC_ORIGIN: https://platform.example.test
-      WEPUU_ACCOUNT_OIDC_CLIENT_SECRET: ${WEPUU_ACCOUNT_OIDC_CLIENT_SECRET:-}
-      WEPUU_OIDC_TRANSACTION_KEYS_JSON: ${WEPUU_OIDC_TRANSACTION_KEYS_JSON:-}
-      WEPUU_IDENTITY_SUBJECT_HMAC_KEY: ${WEPUU_IDENTITY_SUBJECT_HMAC_KEY:-}
+      WEPUU_ACCOUNT_AUTH_SECRETS_FILE: /run/secrets/wepuu-account-auth-secrets.json
+      WEPUU_EMAIL_DELIVERY: mock
       WEPUU_GRANT_IDEMPOTENCY_HMAC_KEY: ${WEPUU_GRANT_IDEMPOTENCY_HMAC_KEY:-}
       WEPUU_ISSUER: https://platform.example.test
       WEPUU_CONTROL_HOST: 0.0.0.0
@@ -144,6 +138,7 @@ services:
       - ${WEPUU_SIGNING_KEYRING_HOST_FILE:?set WEPUU_SIGNING_KEYRING_HOST_FILE}:/run/secrets/wepuu-signing-keyring.json:ro
       - ${WEPUU_SIGNING_PRIVATE_KEY_HOST_FILE:?set WEPUU_SIGNING_PRIVATE_KEY_HOST_FILE}:/run/secrets/wepuu-signing-private.pem:ro
       - ${WEPUU_SIGNING_PASSPHRASE_HOST_FILE:?set WEPUU_SIGNING_PASSPHRASE_HOST_FILE}:/run/secrets/wepuu-signing-passphrase:ro
+      - ${WEPUU_ACCOUNT_AUTH_SECRETS_HOST_FILE:?set WEPUU_ACCOUNT_AUTH_SECRETS_HOST_FILE}:/run/secrets/wepuu-account-auth-secrets.json:ro
     networks:
       - default
       - pairing-public
@@ -174,6 +169,8 @@ services:
       WEPUU_COOKIE_KEYS_JSON: ${WEPUU_COOKIE_KEYS_JSON:-}
       WEPUU_OAUTH_ARTIFACT_KEYS_JSON: ${WEPUU_OAUTH_ARTIFACT_KEYS_JSON:-}
       WEPUU_RATE_LIMIT_HMAC_KEY: ${WEPUU_RATE_LIMIT_HMAC_KEY:-}
+      WEPUU_CONTROL_PUBLIC_ORIGIN: https://platform.example.test
+      WEPUU_ACCOUNT_AUTH_SECRETS_FILE: /run/secrets/wepuu-account-auth-secrets.json
       WEPUU_SIGNING_KEYRING_FILE: /run/secrets/wepuu-signing-keyring.json
       WEPUU_SIGNING_KEY_SLOT: account-oidc-test
       NODE_EXTRA_CA_CERTS: /caddy-data/caddy/pki/authorities/local/root.crt
@@ -182,6 +179,7 @@ services:
       - ${WEPUU_SIGNING_KEYRING_HOST_FILE:?set WEPUU_SIGNING_KEYRING_HOST_FILE}:/run/secrets/wepuu-signing-keyring.json:ro
       - ${WEPUU_SIGNING_PRIVATE_KEY_HOST_FILE:?set WEPUU_SIGNING_PRIVATE_KEY_HOST_FILE}:/run/secrets/wepuu-signing-private.pem:ro
       - ${WEPUU_SIGNING_PASSPHRASE_HOST_FILE:?set WEPUU_SIGNING_PASSPHRASE_HOST_FILE}:/run/secrets/wepuu-signing-passphrase:ro
+      - ${WEPUU_ACCOUNT_AUTH_SECRETS_HOST_FILE:?set WEPUU_ACCOUNT_AUTH_SECRETS_HOST_FILE}:/run/secrets/wepuu-account-auth-secrets.json:ro
     networks:
       - default
       - pairing-public

@@ -8,8 +8,8 @@ guide, not production-deployment authorization.
 - OCI/Docker-compatible Linux host outside AWS.
 - External PostgreSQL with encrypted transport and tested backups.
 - TLS reverse proxy forwarding only from explicitly configured CIDRs.
-- Outbound HTTPS to the external account OIDC provider and
-  paired WordPress control endpoints. MCP traffic does not use this host.
+- Outbound HTTPS to Resend for Email OTP delivery and to paired WordPress
+  control endpoints. MCP traffic does not use this host.
 - Read-only containers, non-root users, dropped capabilities and a bounded
   `/tmp` tmpfs.
 
@@ -44,12 +44,16 @@ These database commands require `WEPUU_DATABASE_URL`. Public modes also require
 an independent `WEPUU_OPERATIONS_METRICS_TOKEN` of at least 32 characters. The
 token protects only `/internal/metrics`; it is not an OAuth credential.
 
-P1 additionally requires a versioned Better Auth key-ring JSON mounted read-
+P2 additionally requires a versioned Better Auth key-ring JSON mounted read-
 only in both services and referenced only by
 `WEPUU_ACCOUNT_AUTH_SECRETS_FILE`. The active secret signs new framework
 artifacts and the previous secret supports bounded rotation. The JSON file and
 its values must not enter environment variables, images, logs or Git. The
-temporary upstream callback is `{public-origin}/api/auth/callback/auth0`.
+control service also receives a separate protected Resend API-key file through
+`WEPUU_RESEND_API_KEY_FILE`; the authorization service does not need that key.
+`WEPUU_RESEND_FROM` is non-secret sender metadata. Ordinary local and CI tests
+set `WEPUU_EMAIL_DELIVERY=mock`; production startup accepts only `resend` for
+the writer service.
 
 Liveness is available at `/livez`. Readiness at `/readyz` fails closed when the
 database check is uncertain. The product-shell readiness page reports category

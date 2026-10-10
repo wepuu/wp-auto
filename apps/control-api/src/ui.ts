@@ -3,11 +3,65 @@ import type { GrantView, SiteView, TenantMembershipView } from '@wepuu/contracts
 import type { SecurityEventView } from '@wepuu/database';
 import {
   escapeHtml,
+  renderInteractionPage,
   renderShell,
   type DeploymentReadinessReport,
   type PublicDeploymentConfig,
   type ShellOptions
 } from '@wepuu/platform-ui';
+
+function hidden(name: string, value: string): string {
+  return `<input type="hidden" name="${escapeHtml(name)}" value="${escapeHtml(value)}">`;
+}
+
+export function renderEmailLogin(input: Readonly<{
+  csrfToken: string;
+  transactionToken: string;
+  message?: string;
+}>): string {
+  const notice = input.message === undefined ? '' : `<p class="form-notice" role="alert">${escapeHtml(input.message)}</p>`;
+  return renderInteractionPage({
+    title: 'Sign in to WePuu',
+    heading: 'Welcome Back',
+    message: 'Sign in to manage your WordPress sites and AI connections.',
+    content: `${notice}<form class="auth-form" method="post" action="/v1/account/email/send">${hidden('csrf', input.csrfToken)}${hidden('transaction', input.transactionToken)}<label for="email">Email address</label><input id="email" name="email" type="email" inputmode="email" autocomplete="email" maxlength="254" required autofocus><button type="submit">Continue with Email</button></form>`
+  });
+}
+
+export function renderEmailVerification(input: Readonly<{
+  csrfToken: string;
+  transactionToken: string;
+  email: string;
+  delivery: 'accepted' | 'rejected' | 'unknown';
+  message?: string;
+  retryAfterSeconds?: number;
+}>): string {
+  const status = input.delivery === 'accepted'
+    ? 'The email provider accepted the request. Delivery to your inbox may take a moment.'
+    : input.delivery === 'rejected'
+      ? 'The email provider did not accept this request. You can retry after the countdown.'
+      : 'We could not confirm whether the provider accepted the request. Check your inbox before requesting another code.';
+  const notice = input.message === undefined ? '' : `<p class="form-notice" role="alert">${escapeHtml(input.message)}</p>`;
+  const retry = Math.max(0, Math.trunc(input.retryAfterSeconds ?? 60));
+  return renderInteractionPage({
+    title: 'Verify your email',
+    heading: 'Check Your Inbox',
+    message: 'Enter the 6-digit verification code sent to your email.',
+    content: `<p class="muted">${escapeHtml(input.email)}</p><p class="muted" role="status">${escapeHtml(status)}</p>${notice}<form class="auth-form" method="post" action="/v1/account/email/verify">${hidden('csrf', input.csrfToken)}${hidden('transaction', input.transactionToken)}${hidden('email', input.email)}<label for="otp">Verification code</label><input class="otp-input" id="otp" name="otp" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" minlength="6" maxlength="6" required autofocus><button type="submit">Verify Email</button></form><div class="auth-secondary"><form method="post" action="/v1/account/email/resend">${hidden('csrf', input.csrfToken)}${hidden('transaction', input.transactionToken)}${hidden('email', input.email)}<button class="secondary" type="submit" data-retry-after="${String(retry)}">Resend code in ${String(retry)}s</button></form><form method="post" action="/v1/account/email/change">${hidden('csrf', input.csrfToken)}${hidden('transaction', input.transactionToken)}<button class="link-button" type="submit">Use a different email</button></form></div><script src="/assets/email-otp-v1.js" defer></script>`
+  });
+}
+
+export function renderAccountBootstrapRetry(input: Readonly<{
+  csrfToken: string;
+  transactionToken: string;
+}>): string {
+  return renderInteractionPage({
+    title: 'Finish account setup',
+    heading: 'Your email is verified.',
+    message: 'We could not finish your workspace setup. Your secure session is still valid, so you do not need another code.',
+    content: `<form class="auth-form" method="post" action="/v1/account/bootstrap">${hidden('csrf', input.csrfToken)}${hidden('transaction', input.transactionToken)}<button type="submit">Retry account setup</button></form>`
+  });
+}
 
 type Section = ShellOptions['active'];
 
@@ -41,7 +95,7 @@ function trustRail(model: TenantPageModel): string {
   const activeSites = model.sites.filter((site) => site.status === 'active').length;
   const activeGrants = model.grants.filter((grant) => grant.status === 'active').length;
   const clientCount = new Set(model.grants.filter((grant) => grant.status === 'active').map((grant) => grant.clientId)).size;
-  return `<ol class="trust-rail"><li><span class="trust-dot"></span><div><strong>Platform account</strong><small>Authenticated through external OIDC</small></div></li><li><span class="trust-dot"></span><div><strong>${String(activeSites)} connected site${activeSites === 1 ? '' : 's'}</strong><small>Each site keeps its own WordPress permissions</small></div></li><li><span class="trust-dot"></span><div><strong>${String(activeGrants)} active grant${activeGrants === 1 ? '' : 's'}</strong><small>Scopes limit what a client may request</small></div></li><li><span class="trust-dot"></span><div><strong>${String(clientCount)} authorized client${clientCount === 1 ? '' : 's'}</strong><small>MCP calls travel directly to WordPress</small></div></li></ol>`;
+  return `<ol class="trust-rail"><li><span class="trust-dot"></span><div><strong>Platform account</strong><small>Authenticated with a one-time email code</small></div></li><li><span class="trust-dot"></span><div><strong>${String(activeSites)} connected site${activeSites === 1 ? '' : 's'}</strong><small>Each site keeps its own WordPress permissions</small></div></li><li><span class="trust-dot"></span><div><strong>${String(activeGrants)} active grant${activeGrants === 1 ? '' : 's'}</strong><small>Scopes limit what a client may request</small></div></li><li><span class="trust-dot"></span><div><strong>${String(clientCount)} authorized client${clientCount === 1 ? '' : 's'}</strong><small>MCP calls travel directly to WordPress</small></div></li></ol>`;
 }
 
 export function renderOverview(model: TenantPageModel): string {

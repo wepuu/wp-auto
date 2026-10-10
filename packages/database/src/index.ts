@@ -1,4 +1,4 @@
-import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -505,6 +505,207 @@ export class PostgresAccountAuthLinkStore {
         accountId: row.account_id,
         homeTenantId: row.tenant_id,
         accountStatus: row.status
+      };
+    });
+  }
+}
+
+export interface AccountLoginTransaction {
+  readonly token: string;
+  readonly returnPath: string;
+  readonly expiresAt: Date;
+}
+
+export interface CompletedAccountLogin extends AccountAuthLink {
+  readonly returnPath: string;
+}
+
+function loginTransactionTokenHash(token: string): Buffer {
+  if (!/^[A-Za-z0-9_-]{43}$/u.test(token)) throw new Error('account_login_transaction_invalid');
+  return createHash('sha256').update(token, 'utf8').digest();
+}
+
+function loginTransactionCsrfHash(csrf: string): Buffer {
+  if (!/^[A-Za-z0-9_-]{43}$/u.test(csrf)) throw new Error('account_login_transaction_invalid');
+  return createHash('sha256').update(csrf, 'utf8').digest();
+}
+
+function loginTransactionEmailBinding(token: string, email: string): Buffer {
+  if (email.length < 3 || email.length > 254) throw new Error('account_login_transaction_invalid');
+  return createHmac('sha256', Buffer.from(token, 'utf8')).update(email, 'utf8').digest();
+}
+
+function equalDigest(left: Buffer, right: Buffer): boolean {
+  return left.byteLength === right.byteLength && timingSafeEqual(left, right);
+}
+
+/** Stores only a digest of the browser-held login transaction token. */
+export class PostgresAccountLoginTransactionStore {
+  readonly #database: Database;
+
+  constructor(database: Database) {
+    this.#database = database;
+  }
+
+  async create(returnPath: string, csrf: string, now = new Date()): Promise<AccountLoginTransaction> {
+    if (!returnPath.startsWith('/') || returnPath.startsWith('//') || returnPath.includes('\\')
+      || returnPath.includes('#') || returnPath.length > 2_048) {
+      throw new Error('account_login_return_invalid');
+    }
+    const token = randomBytes(32).toString('base64url');
+    const expiresAt = new Date(now.getTime() + 10 * 60_000);
+    await this.#database.withAccountAuthWriter(async (client) => {
+      await client.query(
+        `DELETE FROM platform.account_login_transactions
+         WHERE token_hash IN (
+           SELECT token_hash FROM platform.account_login_transactions
+           WHERE expires_at < $1::timestamptz - interval '1 day'
+              OR consumed_at < $1::timestamptz - interval '1 day'
+           ORDER BY created_at
+           LIMIT 100
+         )`,
+        [now]
+      );
+      await client.query(
+        `INSERT INTO platform.account_login_transactions
+           (token_hash, return_path, csrf_hash, created_at, expires_at)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [loginTransactionTokenHash(token), returnPath, loginTransactionCsrfHash(csrf), now, expiresAt]
+      );
+    });
+    return { token, returnPath, expiresAt };
+  }
+
+  async bindEmail(token: string, csrf: string, email: string, now = new Date()): Promise<void> {
+    const tokenHash = loginTransactionTokenHash(token);
+    const csrfHash = loginTransactionCsrfHash(csrf);
+    const emailBinding = loginTransactionEmailBinding(token, email);
+    await this.#database.withAccountAuthWriter(async (client) => {
+      const result = await client.query<{
+        csrf_hash: Buffer;
+        email_binding: Buffer | null;
+        expires_at: Date;
+        consumed_at: Date | null;
+      }>(
+        `SELECT csrf_hash, email_binding, expires_at, consumed_at
+         FROM platform.account_login_transactions
+         WHERE token_hash = $1
+         FOR UPDATE`,
+        [tokenHash]
+      );
+      const row = result.rows[0];
+      if (row === undefined || !equalDigest(row.csrf_hash, csrfHash)) throw new Error('account_login_transaction_invalid');
+      if (row.expires_at.getTime() <= now.getTime()) throw new Error('account_login_transaction_expired');
+      if (row.consumed_at !== null) throw new Error('account_login_transaction_consumed');
+      if (row.email_binding !== null && !equalDigest(row.email_binding, emailBinding)) {
+        throw new Error('account_login_email_mismatch');
+      }
+      if (row.email_binding === null) {
+        await client.query(
+          'UPDATE platform.account_login_transactions SET email_binding = $2 WHERE token_hash = $1',
+          [tokenHash, emailBinding]
+        );
+      }
+    });
+  }
+
+  async restart(token: string, csrf: string, now = new Date()): Promise<AccountLoginTransaction> {
+    const oldTokenHash = loginTransactionTokenHash(token);
+    const csrfHash = loginTransactionCsrfHash(csrf);
+    const newToken = randomBytes(32).toString('base64url');
+    const expiresAt = new Date(now.getTime() + 10 * 60_000);
+    return this.#database.withAccountAuthWriter(async (client) => {
+      const result = await client.query<{
+        return_path: string;
+        csrf_hash: Buffer;
+        expires_at: Date;
+        consumed_at: Date | null;
+      }>(
+        `SELECT return_path, csrf_hash, expires_at, consumed_at
+         FROM platform.account_login_transactions
+         WHERE token_hash = $1
+         FOR UPDATE`,
+        [oldTokenHash]
+      );
+      const row = result.rows[0];
+      if (row === undefined || !equalDigest(row.csrf_hash, csrfHash)) throw new Error('account_login_transaction_invalid');
+      if (row.expires_at.getTime() <= now.getTime()) throw new Error('account_login_transaction_expired');
+      if (row.consumed_at !== null) throw new Error('account_login_transaction_consumed');
+      await client.query(
+        'UPDATE platform.account_login_transactions SET consumed_at = $2 WHERE token_hash = $1',
+        [oldTokenHash, now]
+      );
+      await client.query(
+        `INSERT INTO platform.account_login_transactions
+           (token_hash, return_path, csrf_hash, created_at, expires_at)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [loginTransactionTokenHash(newToken), row.return_path, csrfHash, now, expiresAt]
+      );
+      return { token: newToken, returnPath: row.return_path, expiresAt };
+    });
+  }
+
+  async complete(token: string, csrf: string, authUserId: string, now = new Date()): Promise<CompletedAccountLogin> {
+    if (authUserId.length < 1 || authUserId.length > 255) throw new Error('auth_user_id_invalid');
+    const tokenHash = loginTransactionTokenHash(token);
+    const csrfHash = loginTransactionCsrfHash(csrf);
+    const proposedAccountId = `account_${randomUUID().replaceAll('-', '')}`;
+    const proposedTenantId = randomUUID();
+    return this.#database.withAccountAuthWriter(async (client) => {
+      const transactionResult = await client.query<{
+        return_path: string;
+        csrf_hash: Buffer;
+        email_binding: Buffer | null;
+        expires_at: Date;
+        consumed_at: Date | null;
+      }>(
+        `SELECT return_path, csrf_hash, email_binding, expires_at, consumed_at
+         FROM platform.account_login_transactions
+         WHERE token_hash = $1
+         FOR UPDATE`,
+        [tokenHash]
+      );
+      const transaction = transactionResult.rows[0];
+      if (transaction === undefined || !equalDigest(transaction.csrf_hash, csrfHash)) {
+        throw new Error('account_login_transaction_invalid');
+      }
+      if (transaction.expires_at.getTime() <= now.getTime()) throw new Error('account_login_transaction_expired');
+      if (transaction.consumed_at !== null) throw new Error('account_login_transaction_consumed');
+      if (transaction.email_binding !== null) {
+        const authUser = await client.query<{ email: string }>(
+          'SELECT "email" FROM auth."user" WHERE "id" = $1',
+          [authUserId]
+        );
+        const email = authUser.rows[0]?.email;
+        if (email === undefined || !equalDigest(
+          transaction.email_binding,
+          loginTransactionEmailBinding(token, email)
+        )) throw new Error('account_login_email_mismatch');
+      }
+      const linkResult = await client.query<{ account_id: string; home_tenant_id: string }>(
+        'SELECT * FROM platform.ensure_account_auth_link($1, $2, $3::uuid)',
+        [authUserId, proposedAccountId, proposedTenantId]
+      );
+      const link = linkResult.rows[0];
+      if (link === undefined || linkResult.rowCount !== 1) throw new Error('account_auth_bootstrap_failed');
+      const accountResult = await client.query<{ status: AccountAuthLink['accountStatus'] }>(
+        'SELECT status FROM platform.accounts WHERE id = $1',
+        [link.account_id]
+      );
+      const account = accountResult.rows[0];
+      if (account === undefined || account.status !== 'active') throw new Error('account_auth_bootstrap_failed');
+      const consumed = await client.query(
+        `UPDATE platform.account_login_transactions
+         SET consumed_at = $2
+         WHERE token_hash = $1 AND consumed_at IS NULL`,
+        [tokenHash, now]
+      );
+      if (consumed.rowCount !== 1) throw new Error('account_login_transaction_consumed');
+      return {
+        accountId: link.account_id,
+        homeTenantId: link.home_tenant_id,
+        accountStatus: account.status,
+        returnPath: transaction.return_path
       };
     });
   }

@@ -8,7 +8,9 @@ import {
   ACCOUNT_AUTH_SESSION_COOKIE,
   ACCOUNT_AUTH_SESSION_TTL_SECONDS,
   accountAuthSecurityOptions,
-  loadAccountAuthSecrets
+  loadAccountAuthSecrets,
+  normalizeAccountEmail,
+  ResendOtpEmailSender
 } from '../src/index.js';
 
 test('security options produce one exact __Host session cookie with an absolute lifetime', () => {
@@ -27,6 +29,18 @@ test('security options produce one exact __Host session cookie with an absolute 
   assert.equal(options.account.encryptOAuthTokens, true);
   assert.equal(options.account.accountLinking.disableImplicitLinking, true);
   assert.equal(options.verification.storeIdentifier, 'hashed');
+});
+
+test('email normalization and Resend sender metadata reject ambiguous input', () => {
+  assert.equal(normalizeAccountEmail(' User@Example.Test '), 'user@example.test');
+  assert.throws(() => normalizeAccountEmail('Use\u0301r@Example.Test'));
+  assert.throws(() => normalizeAccountEmail('not-an-email'));
+  assert.doesNotThrow(() => new ResendOtpEmailSender({
+    apiKey: 'test-api-key-value-only', from: 'WePuu <login@example.test>'
+  }));
+  assert.throws(() => new ResendOtpEmailSender({
+    apiKey: 'test-api-key-value-only', from: 'WePuu <login@example.test>\r\nBcc: attacker@example.test'
+  }), { message: 'resend_sender_invalid' });
 });
 
 test('secret keyring loader rejects symlinks and duplicate versions without disclosing values', async (t) => {

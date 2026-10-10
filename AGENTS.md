@@ -20,7 +20,10 @@ evidence. Connector changes and
 Phase 2.0.7B2 remain separately gated. The ADR-018 P1 Better Auth
 account-boundary candidate was implemented and
 locally validated on 2026-10-10 but is not deployed. Production still uses the
-ADR-017/ADR-007 callback until a separate rollout is authorized.
+ADR-017/ADR-007 callback until a separate rollout is authorized. The ADR-019
+P2 Email OTP + Resend candidate is implemented and locally validated on
+2026-10-10, removes the Auth0 runtime from the candidate, and is also not
+deployed.
 
 Until another phase is explicitly approved, work may:
 

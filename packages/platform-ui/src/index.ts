@@ -138,9 +138,13 @@ export function evaluateDeploymentReadiness(
   const legalReady = config.legalProviderName !== 'Provider details pending'
     && config.termsUrl !== undefined && config.privacyUrl !== undefined
     && config.supportUrl !== undefined && config.statusUrl !== undefined;
+  const emailDeliveryReady = environment['WEPUU_EMAIL_DELIVERY'] === 'mock'
+    || (environment['WEPUU_EMAIL_DELIVERY'] === 'resend'
+      && (environment['WEPUU_RESEND_API_KEY_FILE']?.length ?? 0) > 0
+      && (environment['WEPUU_RESEND_FROM']?.length ?? 0) > 0);
   const identityReady = config.release.identityProviderLabel !== 'Identity provider pending'
-    && environment['WEPUU_ACCOUNT_OIDC_ISSUER']?.startsWith('https://') === true
-    && (environment['WEPUU_ACCOUNT_OIDC_CLIENT_ID']?.length ?? 0) > 0;
+    && (environment['WEPUU_ACCOUNT_AUTH_SECRETS_FILE']?.length ?? 0) > 0
+    && emailDeliveryReady;
   const residencyReady = config.dataRegionLabel !== 'Not selected'
     && /^\d{4}-\d{2}-\d{2}$/u.test(config.release.retentionPolicyVersion);
   const proxyReady = config.trustedProxyCidrs.length > 0;
@@ -149,7 +153,7 @@ export function evaluateDeploymentReadiness(
   const checks: readonly DeploymentReadinessCheck[] = [
     { id: 'release', label: 'Release identity', status: releaseReady ? 'ready' : 'pending', detail: releaseReady ? 'Version and immutable revision are fixed.' : 'Set a semantic version and immutable Git revision.' },
     { id: 'legal', label: 'Public policies', status: legalReady ? 'ready' : 'pending', detail: legalReady ? 'Provider, policy, support and status links are configured.' : 'Final provider and HTTPS policy links are still required.' },
-    { id: 'identity', label: 'Account identity', status: identityReady ? 'ready' : 'pending', detail: identityReady ? 'External OIDC issuer and client are configured.' : 'Final external OIDC identity is still required.' },
+    { id: 'identity', label: 'Account identity', status: identityReady ? 'ready' : 'pending', detail: identityReady ? 'Better Auth Email OTP and protected Session secrets are configured.' : 'Configure Email OTP delivery and protected Better Auth Session secrets.' },
     { id: 'residency', label: 'Residency and retention', status: residencyReady ? 'ready' : 'pending', detail: residencyReady ? 'Region and retention policy version are fixed.' : 'Choose a data region and publish a retention policy version.' },
     { id: 'proxy', label: 'Trusted proxy boundary', status: proxyReady ? 'ready' : 'pending', detail: proxyReady ? 'Explicit proxy CIDRs are configured.' : 'No trusted proxy CIDR has been selected.' },
     { id: 'signing', label: 'Local signing custody', status: signingReady ? 'ready' : 'pending', detail: signingReady ? 'A protected local PKCS#8 key slot is configured.' : 'Configure the protected signing keyring and active key slot.' }
@@ -172,6 +176,7 @@ body{overflow-x:hidden}button,.button{font-family:inherit;font-size:1rem;font-we
 @media(max-width:800px){.side{overflow:hidden}.side nav{max-width:100%;padding-bottom:.25rem}.side nav a{flex:0 0 auto}.topbar{display:grid;justify-items:start}.content{min-width:0;overflow:hidden;width:100%}.lede{overflow-wrap:anywhere}.panel{min-width:0}.table-wrap{max-width:100%}}
 @media(max-width:800px){.side nav{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));overflow:visible}.side nav a{min-width:0;text-align:center;white-space:normal}}
 @media(prefers-reduced-motion:no-preference){.trust-dot{transition:transform .18s ease}.trust-rail li:hover .trust-dot{transform:scale(1.15)}}
+.auth-form{display:grid;gap:.75rem;margin-top:1.5rem}.auth-form label{font-weight:750}.auth-form input{background:#fff;border:1px solid #91a0a7;border-radius:.35rem;color:var(--ink);font:inherit;min-height:3rem;padding:.7rem .8rem;width:100%}.auth-form input:focus{border-color:var(--signal)}.auth-form .otp-input{font-family:"Cascadia Mono",monospace;font-size:1.5rem;font-weight:700;letter-spacing:.35em;text-align:center}.auth-secondary{border-top:1px solid var(--line);display:grid;gap:.5rem;margin-top:1.5rem;padding-top:1rem}.auth-secondary form{margin:0}.secondary{background:transparent;border:1px solid var(--line);color:var(--ink);width:100%}.secondary:disabled{cursor:not-allowed;opacity:.6}.link-button{background:transparent;color:var(--signal);min-height:2rem;padding:.3rem;text-decoration:underline}.form-notice{background:#fff4dc;border-left:3px solid var(--caution);padding:.75rem}
 `;
 
 export interface ShellOptions {

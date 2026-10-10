@@ -9,7 +9,8 @@ import { Database } from '../../database/src/index.js';
 import {
   ACCOUNT_AUTH_SESSION_TTL_SECONDS,
   accountAuthSecurityOptions,
-  createAccountAuth
+  createAccountAuth,
+  MockOtpEmailSender
 } from '../src/index.js';
 
 const connectionString = process.env['WEPUU_TEST_DATABASE_URL'];
@@ -93,7 +94,8 @@ test('Better Auth session is absolute, authoritative and revocable; sensitive pr
     applicationName: 'wepuu-account-auth-reader-test',
     publicOrigin: 'https://platform.example.test',
     secrets: [{ version: 1, value: 'test-only-better-auth-secret-value-0000000000000000' }],
-    databaseRole: 'wepuu_account_auth_reader'
+    databaseRole: 'wepuu_account_auth_reader',
+    emailSender: new MockOtpEmailSender()
   });
   t.after(() => readerAuth.close());
   assert.equal((await readerAuth.getSession(requestHeaders))?.userId, userId);
@@ -109,13 +111,13 @@ test('Better Auth session is absolute, authoritative and revocable; sensitive pr
   const accessCanary = 'provider-access-token-canary';
   const refreshCanary = 'provider-refresh-token-canary';
   await assert.rejects(context.internalAdapter.createAccount({
-    id: 'account_auth_plaintext_rejected', accountId: 'external-plain', providerId: 'auth0', userId,
+    id: 'account_auth_plaintext_rejected', accountId: 'external-plain', providerId: 'future-oidc', userId,
     accessToken: accessCanary, refreshToken: refreshCanary
   }), { message: 'account_auth_unencrypted_provider_token' });
   await context.internalAdapter.createAccount({
     id: 'account_auth_encryption_test',
     accountId: 'external-subject',
-    providerId: 'auth0',
+    providerId: 'future-oidc',
     userId,
     accessToken: await setTokenUtil(accessCanary, context as unknown as Parameters<typeof setTokenUtil>[1]),
     refreshToken: await setTokenUtil(refreshCanary, context as unknown as Parameters<typeof setTokenUtil>[1]),

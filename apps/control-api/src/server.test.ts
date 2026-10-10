@@ -3,11 +3,13 @@ import { test } from 'node:test';
 import type { AccountPrincipal, GrantView, SiteView, TenantContext, TenantMembershipView, TenantView } from '@wepuu/contracts';
 import type { SecurityEventView } from '@wepuu/database';
 import type { SecurityAuditEvent, SecurityAuditSink } from '@wepuu/security-audit';
-import type { AccountAuth } from '@wepuu/account-auth';
+import { createAccountAuth, MockOtpEmailSender, type AccountAuth } from '@wepuu/account-auth';
+import { Database, PostgresAccountLoginTransactionStore } from '@wepuu/database';
 import {
   buildControlApi,
   SessionAccountIdentityProvider,
   type AccountIdentityProvider,
+  type AccountLoginTransactionStore,
   type ControlStore,
   type PairingOperations
 } from './server.js';
@@ -56,34 +58,33 @@ class StaticStore implements ControlStore {
 
 class StaticAccountAuth implements AccountAuth {
   signedOut = false;
-  failWith: Error | undefined;
-  lastRequest: { method: string; url: string; contentType?: string; body: string } | undefined;
+  session: Awaited<ReturnType<AccountAuth['getSession']>> = undefined;
+  sessionAfterHandle: Awaited<ReturnType<AccountAuth['getSession']>> = undefined;
+  deliveryOutcome: ReturnType<AccountAuth['takeDeliveryOutcome']> = 'accepted';
+  lastRequest: { method: string; url: string; contentType?: string; clientIp?: string; origin?: string; body: string } | undefined;
   async handle(request: Request) {
     this.lastRequest = {
       method: request.method,
       url: request.url,
       ...(request.headers.get('content-type') === null ? {} : { contentType: request.headers.get('content-type') ?? '' }),
+      ...(request.headers.get('x-wepuu-client-ip') === null ? {} : { clientIp: request.headers.get('x-wepuu-client-ip') ?? '' }),
+      ...(request.headers.get('origin') === null ? {} : { origin: request.headers.get('origin') ?? '' }),
       body: await request.text()
     };
     const headers = new Headers({ 'content-type': 'application/json' });
     headers.append('set-cookie', '__Host-wepuu_state=state; Secure; HttpOnly; Path=/');
     headers.append('set-cookie', '__Host-wepuu_nonce=nonce; Secure; HttpOnly; Path=/');
+    if (request.url.endsWith('/sign-in/email-otp') && this.sessionAfterHandle !== undefined) {
+      this.session = this.sessionAfterHandle;
+      headers.append('set-cookie', '__Host-wepuu_session=new-session; Secure; HttpOnly; SameSite=Lax; Path=/');
+    }
     return new Response('{"ok":true}', {
       status: 200,
       headers
     });
   }
-  getSession() { return Promise.resolve(undefined); }
-  startTemporaryAuth0() {
-    if (this.failWith !== undefined) return Promise.reject(this.failWith);
-    return Promise.resolve(new Response(null, {
-      status: 302,
-      headers: {
-        location: 'https://identity.example.test/authorize?request=redacted',
-        'set-cookie': '__Host-wepuu_state=a.b.c; Max-Age=300; Path=/; Secure; HttpOnly; SameSite=Lax'
-      }
-    }));
-  }
+  getSession() { return Promise.resolve(this.session); }
+  takeDeliveryOutcome() { return this.deliveryOutcome; }
   signOut() {
     this.signedOut = true;
     return Promise.resolve(new Response(null, {
@@ -94,7 +95,36 @@ class StaticAccountAuth implements AccountAuth {
   close() { return Promise.resolve(); }
 }
 
-void test('Fastify adapter preserves request semantics and separate Set-Cookie headers', async () => {
+class MemoryLoginTransactions implements AccountLoginTransactionStore {
+  token = 't'.repeat(43);
+  returnPath = '/app';
+  boundEmail: string | undefined;
+  completed = false;
+  failCompletion = false;
+  create(returnPath: string) {
+    this.returnPath = returnPath;
+    return Promise.resolve({ token: this.token, returnPath, expiresAt: new Date(Date.now() + 600_000) });
+  }
+  bindEmail(_token: string, _csrf: string, email: string) {
+    this.boundEmail = email;
+    return Promise.resolve();
+  }
+  restart() {
+    this.token = 'r'.repeat(43);
+    this.boundEmail = undefined;
+    return Promise.resolve({ token: this.token, returnPath: this.returnPath, expiresAt: new Date(Date.now() + 600_000) });
+  }
+  complete() {
+    if (this.failCompletion) return Promise.reject(new Error('bootstrap_failed'));
+    this.completed = true;
+    return Promise.resolve({
+      accountId: 'account_12345678', homeTenantId: tenantId, accountStatus: 'active' as const,
+      returnPath: this.returnPath
+    });
+  }
+}
+
+void test('raw Better Auth routes are not public', async () => {
   const accountAuth = new StaticAccountAuth();
   const app = buildControlApi({
     identityProvider: new StaticIdentity(), store: new StaticStore(), audit: new MemoryAudit(),
@@ -106,19 +136,161 @@ void test('Fastify adapter preserves request semantics and separate Set-Cookie h
     headers: { 'content-type': 'application/json' },
     payload: { safe: true }
   });
-  assert.equal(response.statusCode, 200);
-  assert.deepEqual(response.json(), { ok: true });
-  assert.deepEqual(accountAuth.lastRequest, {
-    method: 'POST',
-    url: 'https://platform.example.test/api/auth/example?mode=test',
-    contentType: 'application/json',
-    body: '{"safe":true}'
-  });
-  assert.deepEqual(response.headers['set-cookie'], [
-    '__Host-wepuu_state=state; Secure; HttpOnly; Path=/',
-    '__Host-wepuu_nonce=nonce; Secure; HttpOnly; Path=/'
-  ]);
+  assert.equal(response.statusCode, 404);
+  assert.equal(accountAuth.lastRequest, undefined);
   await app.close();
+});
+
+void test('real Fastify HTTP ingress enforces Better Auth database limits and completes Email OTP', {
+  skip: process.env['WEPUU_TEST_DATABASE_URL'] === undefined
+}, async (t) => {
+  const connectionString = process.env['WEPUU_TEST_DATABASE_URL'];
+  assert.ok(connectionString);
+  const database = new Database({ connectionString, applicationName: 'wepuu-email-otp-http-test' });
+  t.after(() => database.close());
+  await database.migrate();
+  const admin = database.poolForMigrationsAndTests;
+  await admin.query('TRUNCATE platform.account_login_transactions');
+  await admin.query('TRUNCATE platform.accounts CASCADE');
+  await admin.query('TRUNCATE auth."user" CASCADE');
+  await admin.query('TRUNCATE auth."rateLimit"');
+  let deliveredOtp: string | undefined;
+  let deliveryCount = 0;
+  const accountAuth = createAccountAuth({
+    databaseUrl: connectionString,
+    applicationName: 'wepuu-email-otp-http-auth-test',
+    publicOrigin: 'https://platform.example.test',
+    secrets: [{ version: 1, value: 'email-otp-http-test-secret-value-000000000000000000' }],
+    databaseRole: 'wepuu_account_auth_writer',
+    emailSender: new MockOtpEmailSender(({ otp }) => {
+      deliveryCount += 1;
+      deliveredOtp = otp;
+      return Promise.resolve('accepted');
+    }),
+    rateLimit: { sendWindowSeconds: 60, sendMax: 1, verifyWindowSeconds: 300, verifyMax: 5 }
+  });
+  t.after(() => accountAuth.close());
+  const app = buildControlApi({
+    identityProvider: new StaticIdentity(), store: new StaticStore(), audit: new MemoryAudit(),
+    accountAuth,
+    loginTransactions: new PostgresAccountLoginTransactionStore(database),
+    publicOrigin: 'https://platform.example.test'
+  });
+  let observedError: Error | undefined;
+  app.addHook('onError', (_request, _reply, error, done) => {
+    observedError = error;
+    done();
+  });
+  const address = await app.listen({ host: '127.0.0.1', port: 0 });
+  t.after(() => app.close());
+
+  const start = await fetch(`${address}/v1/account/login?return_to=%2Fapp`, { redirect: 'manual' });
+  assert.equal(start.status, 200, observedError?.stack);
+  const page = await start.text();
+  const transaction = /name="transaction" value="([A-Za-z0-9_-]{43})"/u.exec(page)?.[1];
+  const csrfToken = /name="csrf" value="([A-Za-z0-9_-]{43})"/u.exec(page)?.[1];
+  assert.ok(transaction);
+  assert.ok(csrfToken);
+  const csrfCookie = start.headers.getSetCookie().find((value) => value.startsWith('__Host-wepuu_csrf='));
+  assert.ok(csrfCookie);
+  const cookie = csrfCookie.split(';', 1)[0] ?? '';
+  const sendBody = new URLSearchParams({ transaction, csrf: csrfToken, email: ' Http@Test.Example ' });
+  const send = await fetch(`${address}/v1/account/email/send`, {
+    method: 'POST', redirect: 'manual',
+    headers: {
+      origin: 'https://platform.example.test', cookie,
+      'content-type': 'application/x-www-form-urlencoded',
+      'x-forwarded-for': '203.0.113.99'
+    },
+    body: sendBody
+  });
+  assert.equal(send.status, 200);
+  assert.equal(deliveryCount, 1);
+  assert.match(deliveredOtp ?? '', /^\d{6}$/u);
+
+  const concurrent = await Promise.all(Array.from({ length: 6 }, () => fetch(
+    `${address}/v1/account/email/resend`, {
+      method: 'POST', redirect: 'manual',
+      headers: {
+        origin: 'https://platform.example.test', cookie,
+        'content-type': 'application/x-www-form-urlencoded',
+        'x-forwarded-for': `${Math.floor(Math.random() * 200) + 1}.0.0.1`
+      },
+      body: sendBody
+    }
+  )));
+  assert.deepEqual(concurrent.map((response) => response.status), [429, 429, 429, 429, 429, 429]);
+  assert.equal(deliveryCount, 1);
+  const persistedLimit = await admin.query<{ key: string; count: number }>(
+    'SELECT "key", "count" FROM auth."rateLimit" WHERE "key" LIKE $1',
+    ['127.0.0.1|%send-verification-otp']
+  );
+  assert.equal(persistedLimit.rowCount, 1);
+
+  const verify = await fetch(`${address}/v1/account/email/verify`, {
+    method: 'POST', redirect: 'manual',
+    headers: {
+      origin: 'https://platform.example.test', cookie,
+      'content-type': 'application/x-www-form-urlencoded'
+    },
+    body: new URLSearchParams({ transaction, csrf: csrfToken, email: 'http@test.example', otp: deliveredOtp ?? '' })
+  });
+  assert.equal(verify.status, 303);
+  assert.equal(verify.headers.get('location'), '/app');
+  const sessionCookie = verify.headers.getSetCookie().find((value) => value.startsWith('__Host-wepuu_session='));
+  assert.ok(sessionCookie);
+  assert.match(sessionCookie, /Secure/u);
+  assert.match(sessionCookie, /HttpOnly/u);
+  assert.match(sessionCookie, /SameSite=Lax/ui);
+  assert.doesNotMatch(sessionCookie, /Domain=/ui);
+  assert.equal(JSON.stringify((await admin.query('SELECT "identifier", "value" FROM auth."verification"')).rows)
+    .includes(deliveredOtp ?? 'missing'), false);
+  assert.equal((await admin.query('SELECT 1 FROM platform.account_auth_links')).rowCount, 1);
+
+  await admin.query('TRUNCATE auth."rateLimit"');
+  const secondStart = await fetch(`${address}/v1/account/login?return_to=%2Finteraction%2Fretry`, { redirect: 'manual' });
+  const secondPage = await secondStart.text();
+  const secondTransaction = /name="transaction" value="([A-Za-z0-9_-]{43})"/u.exec(secondPage)?.[1];
+  const secondCsrf = /name="csrf" value="([A-Za-z0-9_-]{43})"/u.exec(secondPage)?.[1];
+  const secondCookieHeader = secondStart.headers.getSetCookie()
+    .find((value) => value.startsWith('__Host-wepuu_csrf='));
+  assert.ok(secondTransaction);
+  assert.ok(secondCsrf);
+  assert.ok(secondCookieHeader);
+  const secondCookie = secondCookieHeader.split(';', 1)[0] ?? '';
+  const secondEmail = 'attempt-limit@example.test';
+  const secondSend = await fetch(`${address}/v1/account/email/send`, {
+    method: 'POST', redirect: 'manual',
+    headers: {
+      origin: 'https://platform.example.test', cookie: secondCookie,
+      'content-type': 'application/x-www-form-urlencoded'
+    },
+    body: new URLSearchParams({ transaction: secondTransaction, csrf: secondCsrf, email: secondEmail })
+  });
+  assert.equal(secondSend.status, 200);
+  const verificationLifetime = await admin.query<{ lifetime: string }>(
+    `SELECT extract(epoch FROM ("expiresAt" - "createdAt"))::text AS lifetime
+     FROM auth."verification" ORDER BY "createdAt" DESC LIMIT 1`
+  );
+  const lifetimeSeconds = Number(verificationLifetime.rows[0]?.lifetime);
+  assert.ok(lifetimeSeconds >= 299 && lifetimeSeconds <= 300);
+  const wrongBody = new URLSearchParams({
+    transaction: secondTransaction, csrf: secondCsrf, email: secondEmail,
+    otp: deliveredOtp === '000000' ? '111111' : '000000'
+  });
+  const wrongStatuses: number[] = [];
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    wrongStatuses.push((await fetch(`${address}/v1/account/email/verify`, {
+      method: 'POST', redirect: 'manual',
+      headers: {
+        origin: 'https://platform.example.test', cookie: secondCookie,
+        'content-type': 'application/x-www-form-urlencoded'
+      },
+      body: wrongBody
+    })).status);
+  }
+  assert.deepEqual(wrongStatuses.slice(0, 5), [400, 400, 400, 400, 400]);
+  assert.equal(wrongStatuses[5], 429);
 });
 
 class StaticWorkspace {
@@ -260,32 +432,56 @@ void test('hashed server-side session authenticates mutations and idempotency ke
   await app.close();
 });
 
-void test('Better Auth login uses secure cookies, strict returns and a local bootstrap', async () => {
+void test('Email OTP login protects return state and reaches Better Auth through the HTTP handler', async () => {
   const accountAuth = new StaticAccountAuth();
+  const transactions = new MemoryLoginTransactions();
   const app = buildControlApi({
     identityProvider: new StaticIdentity({ accountId: 'account_12345678', authenticationTime: 1, authenticationMethod: 'oidc' }),
     store: new StaticStore(),
     audit: new MemoryAudit(),
     accountAuth,
+    loginTransactions: transactions,
     publicOrigin: 'https://platform.example.test'
   });
-  const alias = await app.inject({ method: 'GET', url: '/v1/account/oidc/login?return_to=%2Fv1%2Faccount%2Fsession' });
-  assert.equal(alias.statusCode, 303);
-  assert.equal(alias.headers.location, '/v1/account/login?return_to=%2Fv1%2Faccount%2Fsession');
   const start = await app.inject({ method: 'GET', url: '/v1/account/login?return_to=%2Fv1%2Faccount%2Fsession' });
-  assert.equal(start.statusCode, 302);
-  assert.equal(start.headers.location, 'https://identity.example.test/authorize?request=redacted');
-  assert.match(String(start.headers['set-cookie']), /__Host-wepuu_state=.*Secure.*HttpOnly.*SameSite=Lax/u);
-
-  const bootstrap = await app.inject({ method: 'GET', url: '/v1/account/bootstrap?return_to=%2Fv1%2Faccount%2Fsession' });
-  assert.equal(bootstrap.statusCode, 303);
-  assert.equal(bootstrap.headers.location, '/v1/account/session');
+  assert.equal(start.statusCode, 200);
+  assert.match(start.body, /Welcome Back/u);
+  assert.equal(start.body.includes('return_to'), false);
+  const csrf = /name="csrf" value="([A-Za-z0-9_-]{43})"/u.exec(start.body)?.[1];
+  const transaction = /name="transaction" value="([A-Za-z0-9_-]{43})"/u.exec(start.body)?.[1];
+  assert.ok(csrf);
+  assert.equal(transaction, transactions.token);
+  const cookie = String(start.headers['set-cookie']).split(';', 1)[0];
+  const sent = await app.inject({
+    method: 'POST', url: '/v1/account/email/send',
+    headers: {
+      origin: 'https://platform.example.test', cookie,
+      'content-type': 'application/x-www-form-urlencoded',
+      'x-forwarded-for': '203.0.113.77'
+    },
+    payload: new URLSearchParams({ csrf, transaction, email: ' User@Example.Test ' }).toString()
+  });
+  assert.equal(sent.statusCode, 200);
+  assert.match(sent.body, /Check Your Inbox/u);
+  assert.equal(transactions.boundEmail, 'user@example.test');
+  assert.deepEqual(accountAuth.lastRequest, {
+    method: 'POST',
+    url: 'https://platform.example.test/api/auth/email-otp/send-verification-otp',
+    contentType: 'application/json',
+    clientIp: '127.0.0.1',
+    origin: 'https://platform.example.test',
+    body: '{"email":"user@example.test","type":"sign-in"}'
+  });
+  assert.deepEqual(sent.headers['set-cookie'], [
+    '__Host-wepuu_state=state; Secure; HttpOnly; Path=/',
+    '__Host-wepuu_nonce=nonce; Secure; HttpOnly; Path=/'
+  ]);
   const external = await app.inject({ method: 'GET', url: '/v1/account/login?return_to=https%3A%2F%2Fevil.example' });
   assert.equal(external.statusCode, 400);
   await app.close();
 });
 
-void test('legacy OIDC callback is closed and never reflects provider parameters', async () => {
+void test('removed Auth0 routes are absent and never reflect provider parameters', async () => {
   const app = buildControlApi({
     identityProvider: new StaticIdentity(),
     store: new StaticStore(),
@@ -298,8 +494,7 @@ void test('legacy OIDC callback is closed and never reflects provider parameters
     url: '/v1/account/oidc/callback?code=secret-code&state=secret-state',
     headers: { cookie: '__Host-wepuu_oidc_tx=a.b.c.d.e' }
   });
-  assert.equal(response.statusCode, 410);
-  assert.deepEqual(response.json(), { error: 'invalid_request' });
+  assert.equal(response.statusCode, 404);
   const evidence = response.body;
   assert.equal(evidence.includes('secret-code'), false);
   assert.equal(evidence.includes('secret-state'), false);
@@ -349,14 +544,38 @@ void test('SSR workspace redirects unauthenticated users and renders a content-f
   await app.close();
 });
 
-void test('bootstrap fails closed when a Better Auth session has no active account mapping', async () => {
+void test('bootstrap failure preserves the Better Auth session and offers an idempotent retry', async () => {
+  const accountAuth = new StaticAccountAuth();
+  accountAuth.sessionAfterHandle = {
+    userId: 'auth_user_retry', createdAt: new Date(), expiresAt: new Date(Date.now() + 60_000)
+  };
+  const transactions = new MemoryLoginTransactions();
+  transactions.failCompletion = true;
   const app = buildControlApi({
     identityProvider: new StaticIdentity(), store: new StaticStore(), audit: new MemoryAudit(),
-    accountAuth: new StaticAccountAuth(), publicOrigin: 'https://platform.example.test'
+    accountAuth, loginTransactions: transactions, publicOrigin: 'https://platform.example.test'
   });
-  const bootstrap = await app.inject({ method: 'GET', url: '/v1/account/bootstrap?return_to=%2Fapp' });
-  assert.equal(bootstrap.statusCode, 401);
-  assert.deepEqual(bootstrap.json(), { error: 'unauthenticated' });
+  const start = await app.inject({ method: 'GET', url: '/v1/account/login?return_to=%2Fapp' });
+  const csrfToken = /name="csrf" value="([A-Za-z0-9_-]{43})"/u.exec(start.body)?.[1];
+  const transaction = /name="transaction" value="([A-Za-z0-9_-]{43})"/u.exec(start.body)?.[1];
+  assert.ok(csrfToken);
+  assert.ok(transaction);
+  const cookie = String(start.headers['set-cookie']).split(';', 1)[0];
+  const failed = await app.inject({
+    method: 'POST', url: '/v1/account/email/verify',
+    headers: {
+      origin: 'https://platform.example.test', cookie,
+      'content-type': 'application/x-www-form-urlencoded'
+    },
+    payload: new URLSearchParams({
+      csrf: csrfToken, transaction, email: 'retry@example.test', otp: '123456'
+    }).toString()
+  });
+  assert.equal(failed.statusCode, 503);
+  assert.match(failed.body, /do not need another code/u);
+  assert.match(failed.body, /Retry account setup/u);
+  assert.match(String(failed.headers['set-cookie']), /__Host-wepuu_session=new-session/u);
+  assert.equal(transactions.completed, false);
   await app.close();
 });
 

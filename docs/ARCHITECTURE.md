@@ -41,10 +41,12 @@ The control plane may know that a tenant paired an exact canonical MCP endpoint.
   `platform.accounts.id`; OAuth subjects and tenant/grant ownership therefore
   do not change when a login provider is linked or replaced.
 - control-api may idempotently bootstrap a missing mapping. The authorization
-  service is read-only and redirects a valid but unmapped Session to that
-  bootstrap route.
-- Auth0 is a temporary upstream provider. Email OTP and future Google login use
-  the same account boundary and do not replace node-oidc-provider.
+  service is read-only and redirects a valid but unmapped Session into the
+  protected login transaction so control-api can retry bootstrap.
+- Better Auth's official Email OTP plugin authenticates and registers users.
+  Resend is only the delivery adapter; it is not an identity store. A future
+  Google login can use the same account boundary without replacing
+  node-oidc-provider or automatically linking accounts by matching email.
 
 ### WordPress connector resource server
 

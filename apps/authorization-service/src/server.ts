@@ -386,8 +386,7 @@ export async function startAuthorizationService(
   try {
     const configuredAccountAuth = await accountAuthFromEnvironment(environment, {
       applicationName: 'wepuu-authorization-account-auth',
-      databaseRole: 'wepuu_account_auth_reader',
-      includeTemporaryAuth0: false
+      databaseRole: 'wepuu_account_auth_reader'
     });
     accountAuth = configuredAccountAuth;
     const signingKeys = new PostgresSigningKeyRepository(database);
@@ -535,7 +534,7 @@ export async function startAuthorizationService(
         const link = await accountAuthLinks.resolve(accountSession.userId);
         if (link === undefined) {
           response.writeHead(303, {
-            location: `/v1/account/bootstrap?return_to=${encodeURIComponent(path)}`,
+            location: `/v1/account/login?return_to=${encodeURIComponent(path)}`,
             'cache-control': 'no-store'
           });
           response.end();

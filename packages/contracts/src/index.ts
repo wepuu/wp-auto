@@ -59,7 +59,7 @@ export type TenantContext = z.infer<typeof TenantContextSchema>;
 export const AccountPrincipalSchema = z.object({
   accountId: OpaqueIdSchema,
   authenticationTime: z.number().int().nonnegative(),
-  authenticationMethod: z.enum(['oidc'])
+  authenticationMethod: z.enum(['oidc', 'email_otp'])
 }).strict();
 export type AccountPrincipal = z.infer<typeof AccountPrincipalSchema>;
 
