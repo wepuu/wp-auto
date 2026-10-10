@@ -5,11 +5,13 @@ import {
   CONSENT_INTERACTION_CSP,
   CONSENT_SUBMISSION_SCRIPT,
   authorizationErrorDiagnostic,
+  consentInteractionResult,
   consentGrantUpdatePlan,
   interactionResource,
   interactionSubmissionHeaderRejection,
   normalizeAuthorizationResources,
-  safeOAuthFailure
+  safeOAuthFailure,
+  serverErrorDiagnostic
 } from './server.js';
 
 const resource = 'https://site.example.test/wp-json/wp-auto/mcp';
@@ -113,6 +115,21 @@ test('authorization error diagnostics remain content-free and omit error detail'
     oauthError: 'invalid_request'
   });
   assert.doesNotMatch(JSON.stringify(diagnostic), /token|redirect|attacker/u);
+});
+
+test('server error diagnostics remain content-free and omit internal detail', () => {
+  const diagnostic = serverErrorDiagnostic(new Error('database, account and request detail must not be logged'));
+  assert.deepEqual(diagnostic, { event: 'oauth.server_error', name: 'Error' });
+  assert.doesNotMatch(JSON.stringify(diagnostic), /database|account|request/u);
+});
+
+test('consent result follows the oidc-provider example for new and existing grants', () => {
+  assert.deepEqual(consentInteractionResult(undefined, 'grant_new'), {
+    consent: { grantId: 'grant_new' }
+  });
+  assert.deepEqual(consentInteractionResult('grant_existing', 'grant_existing'), {
+    consent: {}
+  });
 });
 
 test('consent grant update reuses the exactly bound grant and only missing approved values', () => {

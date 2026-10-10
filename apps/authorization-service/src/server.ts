@@ -265,6 +265,27 @@ export function authorizationErrorDiagnostic(error: unknown): Readonly<{
   return { event: 'oauth.authorization_error', ...safeOAuthFailure(error) };
 }
 
+export function serverErrorDiagnostic(error: unknown): Readonly<{
+  event: 'oauth.server_error';
+  name: string;
+  code?: string;
+  oauthError?: string;
+  reason?: OAuthSessionFailureReason;
+}> {
+  return { event: 'oauth.server_error', ...safeOAuthFailure(error) };
+}
+
+export function consentInteractionResult(
+  existingGrantId: string | undefined,
+  savedGrantId: string
+): Readonly<{ consent: Readonly<{ grantId?: string }> }> {
+  // Follow oidc-provider's official interaction example: an existing grant is
+  // already bound to the session, so only a newly created grant is returned.
+  return existingGrantId === undefined
+    ? { consent: { grantId: savedGrantId } }
+    : { consent: {} };
+}
+
 export interface ConsentGrantUpdatePlan {
   readonly existingGrantId?: string;
   readonly oidcScopes: readonly ('openid' | 'offline_access')[];
@@ -405,6 +426,9 @@ export async function startAuthorizationService(
     runWorker();
     provider.on('authorization.error', (_context, error) => {
       console.warn(JSON.stringify(authorizationErrorDiagnostic(error)));
+    });
+    provider.on('server_error', (_context, error) => {
+      console.error(JSON.stringify(serverErrorDiagnostic(error)));
     });
     provider.proxy = true;
     const callback = provider.callback();
@@ -571,9 +595,12 @@ export async function startAuthorizationService(
         }
         const savedGrantId = await grant.save();
         if (savedGrantId !== binding.grantId) throw new Error('grant_binding_mismatch');
-        await provider.interactionFinished(request, response, {
-          consent: { grantId: binding.grantId }
-        }, { mergeWithLastSubmission: true });
+        await provider.interactionFinished(
+          request,
+          response,
+          consentInteractionResult(update.existingGrantId, savedGrantId),
+          { mergeWithLastSubmission: true }
+        );
         return;
       }
       if (request.method === 'GET' && path === '/auth') {
