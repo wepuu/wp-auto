@@ -40,6 +40,25 @@ state, image references and confidential PostgreSQL backup files. It does not
 receive, inspect, store or relay WordPress content, MCP tool input/output,
 Bearer tokens, cookies, authorization codes, signing-key bytes or passphrases.
 
+## Production installation evidence
+
+- PR #26 passed hosted validation, merged to `main` at `10f69ae`, and the
+  post-merge Phase 2 Platform run `38032982494` passed.
+- The three scripts were copied from that merged worktree to
+  `/opt/wpauto/bin`, their local and remote SHA-256 values matched, and each is
+  root-owned with mode `0700`.
+- The installed health script returned `WEPUU_MONITOR_OK` with disk use at 77%.
+  PostgreSQL, control and authorization remained healthy with zero restarts,
+  and public readiness remained ready.
+- The installed backup script created the protected daily dump and checksum,
+  then a second same-day invocation validated and reused that backup without
+  overwriting it.
+- `/etc/cron.d/wpauto` is root-owned mode `0644`, exactly matched the reviewed
+  two-entry schedule by SHA-256, and the cron service was active. It runs the
+  health check every five minutes and the database backup at 03:17 UTC daily.
+- `deploy-service` was installed but was not invoked; production image digests
+  and containers were not changed by this installation.
+
 ## Remaining boundary
 
 The host-local database retention set is not an offline encrypted
