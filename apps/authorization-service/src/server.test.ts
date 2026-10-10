@@ -4,6 +4,7 @@ import {
   INTERACTION_REFERRER_POLICY,
   CONSENT_INTERACTION_CSP,
   CONSENT_SUBMISSION_SCRIPT,
+  authorizationErrorDiagnostic,
   consentGrantUpdatePlan,
   interactionResource,
   interactionSubmissionHeaderRejection,
@@ -98,6 +99,20 @@ test('OAuth failure diagnostics expose only bounded class and machine code', () 
   })), { name: 'SessionNotFound' });
   assert.deepEqual(safeOAuthFailure(Object.assign(new Error('secret'), { code: 'unsafe-detail' })), { name: 'Error' });
   assert.deepEqual(safeOAuthFailure({ message: 'secret' }), { name: 'UnknownError' });
+});
+
+test('authorization error diagnostics remain content-free and omit error detail', () => {
+  const error = Object.assign(new TypeError('token, redirect URI and request detail must not be logged'), {
+    code: 'ERR_SAFE_CODE', error: 'invalid_request', error_description: 'attacker-controlled detail'
+  });
+  const diagnostic = authorizationErrorDiagnostic(error);
+  assert.deepEqual(diagnostic, {
+    event: 'oauth.authorization_error',
+    name: 'TypeError',
+    code: 'ERR_SAFE_CODE',
+    oauthError: 'invalid_request'
+  });
+  assert.doesNotMatch(JSON.stringify(diagnostic), /token|redirect|attacker/u);
 });
 
 test('consent grant update reuses the exactly bound grant and only missing approved values', () => {

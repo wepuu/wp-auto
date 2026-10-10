@@ -255,6 +255,16 @@ export function safeOAuthFailure(error: unknown): Readonly<{
   };
 }
 
+export function authorizationErrorDiagnostic(error: unknown): Readonly<{
+  event: 'oauth.authorization_error';
+  name: string;
+  code?: string;
+  oauthError?: string;
+  reason?: OAuthSessionFailureReason;
+}> {
+  return { event: 'oauth.authorization_error', ...safeOAuthFailure(error) };
+}
+
 export interface ConsentGrantUpdatePlan {
   readonly existingGrantId?: string;
   readonly oidcScopes: readonly ('openid' | 'offline_access')[];
@@ -393,6 +403,9 @@ export async function startAuthorizationService(
     const workerTimer = setInterval(runWorker, 2_000);
     workerTimer.unref();
     runWorker();
+    provider.on('authorization.error', (_context, error) => {
+      console.warn(JSON.stringify(authorizationErrorDiagnostic(error)));
+    });
     provider.proxy = true;
     const callback = provider.callback();
     const server = createServer((request, response) => {
