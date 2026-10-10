@@ -8,7 +8,7 @@ existing Docker network or the BaoTa Nginx main configuration.
 ## Public origin
 
 - Origin and OAuth issuer: `https://auth.wpauto.cc`
-- Auth0 callback: `https://auth.wpauto.cc/v1/account/oidc/callback`
+- P1 candidate Auth0 callback: `https://auth.wpauto.cc/api/auth/callback/auth0`
 - Auth0 logout/origin: `https://auth.wpauto.cc`
 
 The Nginx vhost routes only the established OAuth/JWKS paths to port 3001 and
@@ -22,6 +22,7 @@ routes the control shell to port 3000. `/internal/metrics` is not public.
 /opt/wpauto/secrets/signing_keyring.json
 /opt/wpauto/secrets/signing_private_key.pem
 /opt/wpauto/secrets/signing_passphrase
+/opt/wpauto/secrets/account_auth_secrets.json
 /opt/wpauto/legal/{terms,privacy,support,status}.html
 /opt/wpauto/backups/
 /opt/wpauto/bin/{check-health,backup-database,deploy-service}.sh
@@ -29,7 +30,8 @@ routes the control shell to port 3000. `/internal/metrics` is not public.
 /opt/wpauto/acme-webroot/.well-known/acme-challenge/
 ```
 
-The three signing files are protected host files mounted read-only. They must
+The three signing files and the separate Better Auth active/previous secret
+key ring are protected host files mounted read-only. They must
 be owned by UID/GID 1000 and mode 0400; the deployment does not rely on
 Compose file-secret ownership emulation.
 The completed runtime environment file, generated keys, database dumps and
@@ -78,7 +80,9 @@ BaoTa-managed certificate can renew without changing another site.
 - no private key, passphrase, Auth0 secret or WordPress content appears in
   logs, images, PostgreSQL metadata or public responses.
 
-The bounded production acceptance passed on 2026-10-10. For ongoing checks,
+The bounded ADR-017 production acceptance passed on 2026-10-10 using the old
+ADR-007 callback. The P1 callback and account schema are not deployed by this
+repository change. For ongoing checks,
 run `pnpm check:production:public` from a trusted workstation and follow
 `docs/ADR_017_OPERATIONS_RUNBOOK.md`. The public probe is content-free and does
 not replace the VPS file-permission, certificate, disk, backup-restore or

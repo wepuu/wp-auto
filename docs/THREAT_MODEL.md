@@ -46,7 +46,7 @@ compromise can still copy the key and is an accepted residual risk.
 | T03 | Domain ownership transfer | bind exact canonical endpoint; suspend and re-pair on any material URI change | domain-change and stale-proof tests |
 | T04 | Redirect URI manipulation | exact registration and comparison; narrow RFC 8252 loopback-port exception | alternate scheme/host/path/query/port tests |
 | T05 | Authorization code interception | PKCE S256, single-use short code, exact client/redirect/resource binding | wrong verifier, reuse and race tests |
-| T06 | Login CSRF, mix-up, or account correlation leak | encrypted five-minute transaction cookie, unpredictable state/nonce, PKCE S256, fixed issuer metadata, exact callback, RS256 ID token, issuer-bound subject HMAC, no silent issuer fallback | tampered/expired transaction, missing/mismatched state/nonce/issuer, unsafe return path, outage and raw-sub absence tests |
+| T06 | Login CSRF, mix-up, or account-link takeover | Better Auth state/nonce and PKCE, fixed discovery, exact callback and trusted origin, explicit account linking, no same-email implicit merge, stable internal account mapping | state/nonce/issuer, unsafe return path, missing mapping and cross-account tests |
 | T07 | Audience confusion/confused deputy | exact RFC 8707 resource in both requests and exact single `aud` at RS | origin, sibling path, slash, case, alias, array and wildcard tests |
 | T08 | Token passthrough | platform has no MCP proxy route; outbound allow-list; architecture/data-flow checks | route inventory and egress tests |
 | T09 | Access-token replay | short expiry, TLS, unique `jti`, no logging, optional local denylist; evaluate sender constraint later | duplicate/high-risk revoke tests |
@@ -63,7 +63,8 @@ compromise can still copy the key and is an accepted residual risk.
 | T20 | Deletion leakage | tombstone workflow, outbox purge, backup expiry, verified deletion report | deletion and restore tests |
 | T21 | Supply-chain compromise | pinned packages, lockfile review, provenance/SBOM, vulnerability response, no remote executable code | CI policy and release evidence |
 | T22 | Platform outage | cached JWKS safety window, short token lifetime, local revoke, AP independence, fail-closed unsafe cache | outage/failover exercises |
-| T23 | Platform session theft or fixation | 256-bit opaque value, digest-only storage, `__Host-` Secure HttpOnly SameSite cookie, 12-hour absolute expiry, rotation on login, exact-origin logout | plaintext absence, malformed/expired/revoked cookie, fixation and logout-CSRF tests |
+| T23 | Platform session theft or fixation | Better Auth opaque server Session, `__Host-` Secure HttpOnly SameSite cookie, 12-hour absolute expiry, no refresh/cache, immediate database revocation, exact-origin logout | cookie attributes, read-only validation, expiry, revocation and logout-CSRF tests |
+| T27 | Authentication database disclosure | isolated `auth` schema roles, short absolute Session, encrypted access/refresh tokens, discarded ID tokens, hashed verification identifiers/OTP, no provider tokens in logs | role denial, token canaries, OTP canary and leakage tests |
 | T24 | Release placeholder presented as production fact | public-mode schema rejects placeholders, mutable revisions and missing policy metadata | staging/production configuration tests |
 | T25 | Operations endpoint leaks tenant/content data | dedicated secret, generic denial, aggregate fixed-label metrics only | token denial and content-canary tests |
 | T26 | Metrics token reused as OAuth authority | separate environment value and endpoint-only comparison; never enters session/token code | route and secret-absence review |
@@ -117,3 +118,4 @@ Scope and token validity do not preserve old privileges. The connector maps the 
 - Platform-originated revocation is not globally instantaneous during site outage; local revoke is immediate and central exposure is bounded by access-token lifetime.
 - Client registration ecosystems are evolving. CIMD and WorkBuddy behavior require continuous compatibility tests.
 - Compromise of an active signing key remains severe; encrypted files, strict permissions, short tokens, rotation, key denylisting, offline backups and incident drills reduce but do not remove the risk.
+- Better Auth 1.7.7 stores its opaque Session token rather than a digest. A database reader can replay it until revocation or the twelve-hour absolute expiry; ADR-018 records acceptance and compensating controls.

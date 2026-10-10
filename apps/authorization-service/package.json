@@ -6,6 +6,7 @@
   "exports": { ".": "./dist/server.js" },
   "types": "./dist/server.d.ts",
   "dependencies": {
+    "@wepuu/account-auth": "workspace:*",
     "@wepuu/database": "workspace:*",
     "@wepuu/key-custody": "workspace:*",
     "@wepuu/oauth-provider": "workspace:*",

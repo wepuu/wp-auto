@@ -1,10 +1,11 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { z } from 'zod';
+import { accountAuthFromEnvironment, accountAuthHeaders } from '@wepuu/account-auth';
 import {
   Database,
+  PostgresAccountAuthLinkStore,
   PostgresAccountRegistry,
-  PostgresAccountSessionStore,
   PostgresAuthorizationGrantRepository,
   PostgresGrantClaimsResolver,
   PostgresOAuthRateLimiter,
@@ -31,7 +32,6 @@ import {
   UI_STYLES
 } from '@wepuu/platform-ui';
 
-const SESSION_COOKIE = '__Host-wepuu_session';
 export const INTERACTION_REFERRER_POLICY = 'strict-origin';
 export const CONSENT_SUBMISSION_SCRIPT = `(() => {
   for (const form of document.querySelectorAll('form[data-wepuu-consent]')) {
@@ -118,16 +118,6 @@ export interface RunningAuthorizationService {
   close(): Promise<void>;
 }
 
-function requestCookie(request: IncomingMessage, name: string): string | undefined {
-  const header = request.headers.cookie;
-  if (header === undefined || header.length > 4_096) return undefined;
-  for (const part of header.split(';')) {
-    const [candidate, ...value] = part.trim().split('=');
-    if (candidate === name) return value.join('=');
-  }
-  return undefined;
-}
-
 function interactionScopes(params: Record<string, unknown>): readonly string[] | undefined {
   if (typeof params['scope'] !== 'string') return undefined;
   const scopes = [...new Set(params['scope'].split(' ').filter((scope) => mcpScopes.has(scope)))].sort();
@@ -194,6 +184,7 @@ type InteractionRejectionReason =
   | 'origin_missing'
   | 'origin_null'
   | 'origin_unexpected'
+  | 'account_inactive'
   | 'csrf_binding_mismatch';
 
 export function interactionSubmissionHeaderRejection(input: Readonly<{
@@ -391,7 +382,14 @@ export async function startAuthorizationService(
   const config = ServiceConfigSchema.parse(configInput);
   const deployment = loadPublicDeploymentConfig(environment, new URL(config.issuer).origin);
   const database = new Database({ connectionString: config.databaseUrl, applicationName: 'wepuu-authorization-service' });
+  let accountAuth: Awaited<ReturnType<typeof accountAuthFromEnvironment>> | undefined;
   try {
+    const configuredAccountAuth = await accountAuthFromEnvironment(environment, {
+      applicationName: 'wepuu-authorization-account-auth',
+      databaseRole: 'wepuu_account_auth_reader',
+      includeTemporaryAuth0: false
+    });
+    accountAuth = configuredAccountAuth;
     const signingKeys = new PostgresSigningKeyRepository(database);
     const lifecycle = await signingKeys.loadUsable();
     if (lifecycle.active.custodyProvider !== 'local-pkcs8') throw new Error('local_active_signing_key_required');
@@ -428,7 +426,7 @@ export async function startAuthorizationService(
       accountRegistry: new PostgresAccountRegistry(database),
       clients
     });
-    const sessions = new PostgresAccountSessionStore(database);
+    const accountAuthLinks = new PostgresAccountAuthLinkStore(database);
     const authorizationGrants = new PostgresAuthorizationGrantRepository(database);
     const rateLimiter = new PostgresOAuthRateLimiter(database, rateLimitCodec);
     const revocationSigner = activeCustody.revocationEventSigner();
@@ -525,18 +523,32 @@ export async function startAuthorizationService(
       }
       if (path.startsWith('/interaction/')) {
         const details = await provider.interactionDetails(request, response);
-        const sessionToken = requestCookie(request, SESSION_COOKIE);
-        const session = sessionToken === undefined || !/^[A-Za-z0-9_-]{43,128}$/u.test(sessionToken)
-          ? undefined
-          : await sessions.resolve(createHash('sha256').update(sessionToken, 'utf8').digest());
-        if (session === undefined) {
+        const accountSession = await configuredAccountAuth.getSession(accountAuthHeaders(request.headers));
+        if (accountSession === undefined || accountSession.expiresAt.getTime() <= Date.now()) {
           response.writeHead(303, {
-            location: `/v1/account/oidc/login?return_to=${encodeURIComponent(path)}`,
+            location: `/v1/account/login?return_to=${encodeURIComponent(path)}`,
             'cache-control': 'no-store'
           });
           response.end();
           return;
         }
+        const link = await accountAuthLinks.resolve(accountSession.userId);
+        if (link === undefined) {
+          response.writeHead(303, {
+            location: `/v1/account/bootstrap?return_to=${encodeURIComponent(path)}`,
+            'cache-control': 'no-store'
+          });
+          response.end();
+          return;
+        }
+        if (link.accountStatus !== 'active') {
+          writeInteractionError(response, 403, 'account_inactive');
+          return;
+        }
+        const session = {
+          accountId: link.accountId,
+          authenticationTime: Math.floor(accountSession.createdAt.getTime() / 1_000)
+        };
         if (details.prompt.name === 'login') {
           await provider.interactionFinished(request, response, {
             login: { accountId: session.accountId, ts: session.authenticationTime }
@@ -681,10 +693,12 @@ export async function startAuthorizationService(
           if (error === undefined) resolve();
           else reject(error);
         }));
+        await configuredAccountAuth.close();
         await database.close();
       }
     };
   } catch (error) {
+    await accountAuth?.close();
     await database.close();
     throw error;
   }

@@ -55,6 +55,16 @@ Implemented Phase 2.0.3A routes additionally include:
 - `POST /v1/tenants/{tenant_id}/grants/{grant_id}/revoke`;
 - `POST /v1/tenants/{tenant_id}/sites/{site_id}/disconnect`.
 
+ADR-018 P1 supersedes the active account-login routes in its local candidate:
+
+- `GET|POST /api/auth/*` is the Better Auth Fetch handler surface;
+- `GET /v1/account/login?return_to={local_path}` starts temporary Auth0 login;
+- `GET /api/auth/callback/auth0` is the Better Auth callback;
+- `GET /v1/account/bootstrap?return_to={local_path}` atomically projects the
+  authenticated user to a stable WePuu account and resumes the local path;
+- `GET /v1/account/oidc/login` is a 303 compatibility alias;
+- `GET /v1/account/oidc/callback` is closed and cannot issue a Session.
+
 Phase 2.0.7A adds `GET /v1/account/tenants`, returning only active tenant
 memberships derived from the authenticated server-side account session. It
 also adds server-rendered `/app` routes over the same repositories. Browser
@@ -74,7 +84,8 @@ return in a fragment and are removed from browser history before same-origin
 completion; proofs and challenges are never placed in query strings or audit
 records.
 
-Account login uses a five-minute encrypted and authenticated transaction cookie
+The following paragraph describes the retained ADR-007 rollback implementation,
+not the ADR-018 P1 runtime. Account login used a five-minute encrypted and authenticated transaction cookie
 containing state, nonce, PKCE verifier, and a validated local return path. The
 callback validates the configured issuer, code response, state, nonce, PKCE,
 RS256 ID token, and exact callback before creating a 12-hour opaque session.

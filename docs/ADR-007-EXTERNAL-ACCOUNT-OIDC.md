@@ -1,6 +1,6 @@
 # ADR-007: External OIDC account login and hashed sessions
 
-- Status: accepted for Phase 2.0.3A implementation
+- Status: accepted historical contract; partially superseded by ADR-018 for the P1 candidate
 - Date: 2026-09-22
 
 ## Context
