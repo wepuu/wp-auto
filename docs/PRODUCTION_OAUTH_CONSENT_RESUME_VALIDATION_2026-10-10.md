@@ -2,10 +2,10 @@
 
 ## Status
 
-The production WordPress end-to-end release gate remains open. This record
-covers the bounded investigation and pre-deployment validation of the OAuth
-consent resume path only. It does not approve connector changes, general
-release, or Phase 2.0.7B2.
+The production WordPress end-to-end release gate passed on 2026-10-10. This
+record covers the bounded investigation, correction, deployment, and
+validation of the OAuth consent resume path. It does not approve connector
+changes, general release expansion, or Phase 2.0.7B2.
 
 ## Observed production failure
 
@@ -74,16 +74,40 @@ are never copied into the CSP or logs.
   metadata only.
 - Connector repository changes: none.
 
-## Remaining gate
+## Production gate result
 
-After CI and bounded authorization-service deployment, repeat the production
-Authorization Code with PKCE test and require all of the following before this
-record can be marked complete:
+After CI and the bounded authorization-service deployment, the production
+Authorization Code with PKCE test passed all required assertions:
 
-- authorization callback received with exact state;
-- authorization code exchanged once with PKCE S256;
-- RS256 access-token signature and issuer, audience, site, grant, tenant and
-  scope bindings validated;
-- refresh-token rotation and revocation validated;
-- direct WordPress MCP request succeeds without content traversing WePuu;
-- Application Password direct access remains unaffected.
+- `OAUTH_AUTHORIZATION_CODE_PKCE=True`;
+- `OAUTH_ACCESS_TOKEN_RS256=True`;
+- `OAUTH_ACCESS_TOKEN_BINDINGS=True`;
+- `OAUTH_REFRESH_ROTATION=True`;
+- `OAUTH_REFRESH_REVOCATION=True`;
+- `OAUTH_DIRECT_WORDPRESS_MCP=True`.
+
+The verifier applies the same 60-second bounded clock tolerance configured by
+the authorization server while continuing to require and validate `iat`,
+`nbf`, and `exp`. This accommodated the measured local Windows/VPS clock skew
+without weakening time validation.
+
+The independent Application Password regression ran in a disposable local
+`wp-env` environment using isolated Node.js 24 tooling:
+
+- MCP protocol negotiation, the frozen 23-tool order, authentication, and site
+  health passed;
+- connector PHPUnit passed 530 tests and 3,621 assertions;
+- the disposable Application Password and WordPress environment were removed;
+- connector commit `92971ceacebf557eaedbf11bccb06c8b4e6ba5c2`
+  and its clean working tree were preserved.
+
+The deployed authorization container remained healthy on the immutable image
+digest recorded by the deployment operation. Control and PostgreSQL container
+start times did not change. No connector repository or production WordPress
+plugin files were changed, and no WordPress content traversed the control
+plane.
+
+Post-validation read-only checks found zero private-key, Bearer, token-secret,
+client-secret, or passphrase patterns in the authorization and control service
+logs for the validation window. No unexpired rows remained in
+`oauth.secret_artifacts` after refresh-token revocation.

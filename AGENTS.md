@@ -13,7 +13,10 @@ under ADR-013 and is not represented as a pass. ADR-016 local signing was
 merged at `7007caf`. The operator explicitly authorized the provisional
 single-VPS production deployment recorded by ADR-017 on 2026-10-09. The
 production Auth0 interactive login and callback gate passed on 2026-10-09;
-the WordPress end-to-end release gate remains open. Connector changes and
+the production WordPress end-to-end release gate passed on 2026-10-10 with
+Authorization Code plus PKCE, local RS256 signing, refresh rotation and
+revocation, direct WordPress MCP, and isolated Application Password regression
+evidence. Connector changes and
 Phase 2.0.7B2 remain separately gated. Until another phase is explicitly
 approved, work may:
 
