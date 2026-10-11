@@ -48,12 +48,15 @@ validation deployment: connector changes, general release expansion and Phase
 The P1 Better Auth account boundary and P2 Email OTP + Resend runtime are
 deployed in the bounded operator environment. Real email delivery, OTP
 verification, stable account mapping and `/app` entry passed on 2026-10-11.
-P3-A is not closed: the first-authorization fix in PR #33 is merged but not yet
-deployed and the current Email OTP OAuth/MCP production regression remains
-incomplete. P4-A is a local candidate that separates the SaaS console onto
+P3-A is not closed: the first-authorization fix in PR #33 is deployed from its
+exact images and the positive Email OTP OAuth/PKCE/Consent/direct-MCP browser
+regression passed. Refresh Replay and revocation remain separately gated. P4-A
+is a local candidate that separates the SaaS console onto
 `app.wpauto.cc` while retaining Better Auth and the OAuth issuer on
 `auth.wpauto.cc`; no P4-A production change is authorized. See ADR-018 through
-ADR-020 and the corresponding validation records.
+ADR-020, `docs/P3A_PRODUCTION_POSITIVE_ACCEPTANCE_2026-10-11.md`,
+`docs/P3A_TOKEN_LIFECYCLE_PREFLIGHT_2026-10-11.md` and the corresponding
+validation records.
 
 ## Architecture
 

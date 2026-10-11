@@ -192,9 +192,15 @@ ordinary CI. See ADR-019 and the P2 validation records.
 ### P3 - Email OTP OAuth and MCP production acceptance
 
 Status: incomplete. P3-A remains false in the repository validation record.
-PR #33 and hosted CI passed, but its first-authorization fix is not yet deployed
-and the current Email OTP OAuth/PKCE/Consent/WordPress MCP production chain has
-not been closed. P3-B has not started.
+PR #33 and hosted CI passed. Exact `bb71226` control and authorization images
+were published, a fresh project backup was verified and the bounded production
+deployment, health smoke and positive Email OTP OAuth/PKCE/Consent/direct-MCP
+browser regression passed on 2026-10-11. Refresh Replay and revocation remain
+separately gated. The sole active client/Grant cannot safely isolate either
+destructive test; two dedicated pre-registered clients and Grants are required.
+See `P3A_PRODUCTION_POSITIVE_ACCEPTANCE_2026-10-11.md` and
+`P3A_TOKEN_LIFECYCLE_PREFLIGHT_2026-10-11.md`. P3-A is not closed and P3-B has
+not started.
 
 ### P4-A - SaaS console domain separation
 

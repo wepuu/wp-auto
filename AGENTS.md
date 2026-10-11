@@ -20,8 +20,14 @@ evidence. Connector changes and Phase 2.0.7B2 remain separately gated.
 ADR-018 P1 Better Auth and ADR-019 P2 Email OTP + Resend are deployed on the
 bounded operator environment; real email delivery, OTP verification, stable
 account mapping and `/app` entry were recorded on 2026-10-11. P3-A remains
-incomplete: PR #33 is merged and CI is green, but its first-authorization fix
-is not yet deployed and the production OAuth/MCP regression has not closed.
+incomplete: PR #33 is merged and CI is green. Exact `bb71226` control and
+authorization images were published, a fresh project backup was verified and
+the bounded deployment, health smoke and positive production
+OAuth/PKCE/Consent/direct-MCP browser regression passed on 2026-10-11. Refresh
+Replay and revocation remain separately gated, so P3-A is not yet closed.
+The positive evidence and the lifecycle isolation blocker are recorded in
+`docs/P3A_PRODUCTION_POSITIVE_ACCEPTANCE_2026-10-11.md` and
+`docs/P3A_TOKEN_LIFECYCLE_PREFLIGHT_2026-10-11.md`.
 ADR-020 P4-A console-domain separation is a locally validated candidate only.
 It is not deployed and does not authorize DNS, Nginx or production database
 changes.
