@@ -25,7 +25,8 @@ authorization images were published, a fresh project backup was verified and
 the bounded deployment, health smoke and positive production
 OAuth/PKCE/Consent/direct-MCP browser regression passed on 2026-10-11. Refresh
 Replay and revocation remain separately gated, so P3-A is not yet closed.
-The positive evidence and the lifecycle isolation blocker are recorded in
+The positive evidence and corrected lifecycle provisioning preflight are
+recorded in
 `docs/P3A_PRODUCTION_POSITIVE_ACCEPTANCE_2026-10-11.md` and
 `docs/P3A_TOKEN_LIFECYCLE_PREFLIGHT_2026-10-11.md`.
 ADR-020 P4-A console-domain separation is a locally validated candidate only.

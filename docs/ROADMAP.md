@@ -196,8 +196,11 @@ PR #33 and hosted CI passed. Exact `bb71226` control and authorization images
 were published, a fresh project backup was verified and the bounded production
 deployment, health smoke and positive Email OTP OAuth/PKCE/Consent/direct-MCP
 browser regression passed on 2026-10-11. Refresh Replay and revocation remain
-separately gated. The sole active client/Grant cannot safely isolate either
-destructive test; two dedicated pre-registered clients and Grants are required.
+separately gated. Migration 004 permits a revoked Grant to be followed by a
+fresh Grant for the same account/site/client tuple. A locally tested,
+fixed-purpose `wepuu-e2e-lifecycle` provisioning command therefore supports
+the two destructive scenarios with sequential Grants while preserving the
+existing positive client and Grant; it has not been run in production.
 See `P3A_PRODUCTION_POSITIVE_ACCEPTANCE_2026-10-11.md` and
 `P3A_TOKEN_LIFECYCLE_PREFLIGHT_2026-10-11.md`. P3-A is not closed and P3-B has
 not started.

@@ -1978,7 +1978,58 @@ export class PostgresOAuthClientRepository {
       });
     });
   }
+
+  async provisionP3aLifecycleTestClient(): Promise<Readonly<{
+    created: boolean;
+    clientId: string;
+    redirectUri: string;
+  }>> {
+    const clientId = P3A_LIFECYCLE_TEST_CLIENT_ID;
+    const redirectUri = P3A_LIFECYCLE_TEST_REDIRECT_URI;
+    const redirectUris = [redirectUri];
+    const metadataDigest = createHash('sha256').update(JSON.stringify({
+      client_id: clientId,
+      redirect_uris: redirectUris,
+      token_endpoint_auth_method: 'none',
+      code_challenge_method: 'S256'
+    }), 'utf8').digest('hex');
+    const created = await this.#database.withAuthorizationService(async (client) => {
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [clientId]);
+      const existing = await client.query<{
+        registration_mode: string;
+        redirect_uris: unknown;
+        metadata_digest: string;
+        status: string;
+      }>(
+        `SELECT registration_mode, redirect_uris, metadata_digest, status
+         FROM oauth.clients WHERE client_id = $1`,
+        [clientId]
+      );
+      const row = existing.rows[0];
+      if (row !== undefined) {
+        const exactRedirects = Array.isArray(row.redirect_uris)
+          && row.redirect_uris.length === 1
+          && row.redirect_uris[0] === redirectUri;
+        if (row.registration_mode !== 'pre-registered' || !exactRedirects
+          || row.metadata_digest !== metadataDigest || row.status !== 'active') {
+          throw new Error('p3a_lifecycle_client_conflict');
+        }
+        return false;
+      }
+      await client.query(
+        `INSERT INTO oauth.clients
+          (client_id, registration_mode, redirect_uris, metadata_digest, status)
+         VALUES ($1, 'pre-registered', $2::jsonb, $3, 'active')`,
+        [clientId, JSON.stringify(redirectUris), metadataDigest]
+      );
+      return true;
+    });
+    return { created, clientId, redirectUri };
+  }
 }
+
+export const P3A_LIFECYCLE_TEST_CLIENT_ID = 'wepuu-e2e-lifecycle';
+export const P3A_LIFECYCLE_TEST_REDIRECT_URI = 'http://127.0.0.1/callback';
 
 export interface SigningKeyLifecycleRecord {
   readonly kid: string;

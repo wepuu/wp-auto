@@ -118,7 +118,10 @@ WordPress response content or secret value is stored in this record.
 Refresh Token Replay, explicit Grant/Token Revocation, outbox delivery and
 Connector denial before access-token expiry have not been executed in this
 P3-A run. The existing positive Grant must not be used for those destructive
-checks. The isolation findings and required follow-up are recorded in
+checks. One separately provisioned fixed test client can use sequential fresh
+Grants for Replay and Revocation because revoked Grants do not occupy the live
+tuple uniqueness index. The corrected isolation findings and required
+follow-up are recorded in
 `P3A_TOKEN_LIFECYCLE_PREFLIGHT_2026-10-11.md`.
 
 P3-A remains incomplete until both isolated lifecycle scenarios actually pass.
