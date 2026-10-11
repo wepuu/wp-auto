@@ -42,6 +42,11 @@ recorded in
 recorded in `docs/P3A6_PRODUCTION_CLIENT_PREREGISTRATION_2026-10-11.md`; the
 failed G1 attempt is recorded in
 `docs/P3A7_G1_REFRESH_REPLAY_PRODUCTION_ACCEPTANCE_2026-10-11.md`.
+A local, undeployed platform repair candidate now removes the Fetch body
+double-consumption, distinguishes Provider replay from RFC 7009 using isolated
+request context, and records bounded outbox failure codes. Its incomplete
+validation and the independent Connector pairing-sequence defect are recorded
+in `docs/P3A7_REPLAY_FIX_VALIDATION_2026-10-11.md`.
 ADR-020 P4-A console-domain separation is a locally validated candidate only.
 It is not deployed and does not authorize DNS, Nginx or production database
 changes.

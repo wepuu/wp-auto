@@ -1253,17 +1253,28 @@ const secretArtifactModels = new Set([
   'RegistrationAccessToken'
 ]);
 
+export type GrantRevocationReason = 'refresh_replay' | 'token_revoked';
+export type GrantRevocationReasonResolver = () => GrantRevocationReason;
+
 export class PostgresOidcAdapter {
   readonly #model: string;
   readonly #database: Database;
   readonly #codec: SecretArtifactCodec;
   readonly #rateLimitCodec: RateLimitSubjectCodec | undefined;
+  readonly #grantRevocationReason: GrantRevocationReasonResolver;
 
-  constructor(model: string, database: Database, codec: SecretArtifactCodec, rateLimitCodec?: RateLimitSubjectCodec) {
+  constructor(
+    model: string,
+    database: Database,
+    codec: SecretArtifactCodec,
+    rateLimitCodec?: RateLimitSubjectCodec,
+    grantRevocationReason: GrantRevocationReasonResolver = () => 'token_revoked'
+  ) {
     this.#model = model;
     this.#database = database;
     this.#codec = codec;
     this.#rateLimitCodec = rateLimitCodec;
+    this.#grantRevocationReason = grantRevocationReason;
   }
 
   async upsert(id: string, payload: ProviderPayload, expiresIn?: number): Promise<void> {
@@ -1444,8 +1455,8 @@ export class PostgresOidcAdapter {
     await this.#database.withAuthorizationService(async (client) => {
       if (this.#model === 'RefreshToken') {
         await client.query(
-          "SELECT oauth.revoke_refresh_grant($1, now(), 'token_revoked')",
-          [grantId]
+          'SELECT oauth.revoke_refresh_grant($1, now(), $2)',
+          [grantId, this.#grantRevocationReason()]
         );
       }
       await client.query("DELETE FROM oauth.secret_artifacts WHERE payload->>'grantId' = $1", [grantId]);
@@ -1457,11 +1468,12 @@ export class PostgresOidcAdapter {
 export function createOidcAdapterFactory(
   database: Database,
   codec: SecretArtifactCodec,
-  rateLimitCodec?: RateLimitSubjectCodec
+  rateLimitCodec?: RateLimitSubjectCodec,
+  grantRevocationReason?: GrantRevocationReasonResolver
 ): new (model: string) => PostgresOidcAdapter {
   return class BoundPostgresOidcAdapter extends PostgresOidcAdapter {
     constructor(model: string) {
-      super(model, database, codec, rateLimitCodec);
+      super(model, database, codec, rateLimitCodec, grantRevocationReason);
     }
   };
 }

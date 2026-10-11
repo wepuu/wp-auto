@@ -290,10 +290,10 @@ export async function waitForMcpDenial(resource, token, exp, options = {}) {
   }
 }
 
-async function expectInvalidGrant(tokenUrl, form) {
+export async function expectInvalidGrant(tokenUrl, form, request = fetch) {
   let response;
   try {
-    response = await fetch(tokenUrl, {
+    response = await request(tokenUrl, {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams(form),
@@ -304,9 +304,8 @@ async function expectInvalidGrant(tokenUrl, form) {
       ? 'oauth_invalid_grant_probe_timeout' : 'oauth_invalid_grant_probe_network');
   }
   const body = await response.json().catch(() => undefined);
-  await response.body?.cancel();
   if (response.status !== 400 || body?.error !== 'invalid_grant') {
-    throw new Error(`oauth_invalid_grant_expected_${response.status}_${body?.error ?? 'missing'}`);
+    throw new Error(`oauth_invalid_grant_expected_${response.status}`);
   }
 }
 

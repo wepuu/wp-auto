@@ -22,6 +22,32 @@ export interface RevocationDelivery {
 export type RevocationAddressResolver = (hostname: string) => Promise<readonly string[]>;
 export type RevocationRequest = (endpoint: URL, body: Buffer, pinnedAddress: string) => Promise<void>;
 
+export class RevocationDeliveryFailure extends Error {
+  readonly code: string;
+
+  constructor(code: string) {
+    super(code);
+    this.code = code;
+  }
+}
+
+const tlsErrorCodes = new Set([
+  'CERT_HAS_EXPIRED', 'DEPTH_ZERO_SELF_SIGNED_CERT', 'ERR_TLS_CERT_ALTNAME_INVALID',
+  'SELF_SIGNED_CERT_IN_CHAIN', 'UNABLE_TO_GET_ISSUER_CERT_LOCALLY', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE'
+]);
+
+export function revocationErrorCode(error: unknown): string {
+  if (error instanceof RevocationDeliveryFailure) return error.code;
+  if (error instanceof Error) {
+    const code: unknown = (error as Error & { code?: unknown }).code;
+    if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') return 'dns.failed';
+    if (code === 'ETIMEDOUT' || code === 'UND_ERR_CONNECT_TIMEOUT') return 'network.timeout';
+    if (typeof code === 'string' && tlsErrorCodes.has(code)) return 'tls.failed';
+    if (error.message === 'unsafe_destination') return 'destination.unsafe';
+  }
+  return 'network.failed';
+}
+
 async function sendPinnedHttpsRequest(endpoint: URL, body: Buffer, pinnedAddress: string): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const request = httpsRequest({
@@ -35,9 +61,11 @@ async function sendPinnedHttpsRequest(endpoint: URL, body: Buffer, pinnedAddress
     }, (response) => {
       response.resume();
       if (response.statusCode === 204) resolve();
-      else reject(new Error('revocation_delivery_rejected'));
+      else reject(new RevocationDeliveryFailure(`http.${String(response.statusCode ?? 0)}`));
     });
-    request.setTimeout(5_000, () => request.destroy(new Error('revocation_delivery_timeout')));
+    request.setTimeout(5_000, () => request.destroy(Object.assign(
+      new Error('revocation_delivery_timeout'), { code: 'ETIMEDOUT' }
+    )));
     request.once('error', reject);
     request.end(body);
   });
@@ -91,14 +119,22 @@ export class RevocationWorker {
     let delivered = 0;
     let deferred = 0;
     for (const record of records) {
+      let compact: string;
       try {
-        const compact = await this.#sign(record);
+        compact = await this.#sign(record);
+      } catch {
+        const delay = Math.min(3600, 2 ** Math.min(record.attempts, 11));
+        await this.#outbox.reschedule(record.id, 'signing.failed', delay);
+        deferred += 1;
+        continue;
+      }
+      try {
         await this.#delivery.send(record.resource, compact);
         await this.#outbox.markDelivered(record.id);
         delivered += 1;
-      } catch {
+      } catch (error) {
         const delay = Math.min(3600, 2 ** Math.min(record.attempts, 11));
-        await this.#outbox.reschedule(record.id, 'delivery_failed', delay);
+        await this.#outbox.reschedule(record.id, revocationErrorCode(error), delay);
         deferred += 1;
       }
     }
