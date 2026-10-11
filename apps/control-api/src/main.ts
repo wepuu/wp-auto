@@ -13,6 +13,7 @@ import {
   SiteRepository
 } from '@wepuu/database';
 import {
+  JoseOAuthConsentBootstrapVerifier,
   localPkcs8KeyCustodyFromEnvironment
 } from '@wepuu/key-custody';
 import { GrantService, HttpsSiteVerificationClient, PairingService } from '@wepuu/pairing';
@@ -52,6 +53,8 @@ const custody = platformIssuer === undefined || signingSlot === undefined
   ? undefined : await localPkcs8KeyCustodyFromEnvironment(process.env, signingSlot, signingLifecycle?.active.kid);
 const signingKey = custody === undefined ? undefined : await custody.describeSigningKey();
 const consentSigner = custody?.consentRequestSigner();
+const oauthConsentBootstrap = signingKey === undefined
+  ? undefined : new JoseOAuthConsentBootstrapVerifier(signingKey.publicKey, signingKey.kid);
 const grantIdempotencyKey = platformIssuer === undefined ? undefined
   : decodeRuntimeKey(process.env['WEPUU_GRANT_IDEMPOTENCY_HMAC_KEY'], 'WEPUU_GRANT_IDEMPOTENCY_HMAC_KEY');
 const platformSigningKeyPem = signingKey?.publicKey.export({ format: 'pem', type: 'spki' }).toString();
@@ -149,6 +152,8 @@ const app = buildControlApi({
   ...(process.env['WEPUU_OPERATIONS_METRICS_TOKEN'] === undefined
     ? {} : { operationsMetricsToken: process.env['WEPUU_OPERATIONS_METRICS_TOKEN'] }),
   publicOrigin: new URL(publicOrigin).origin,
+  ...(platformIssuer === undefined ? {} : { oauthIssuer: platformIssuer }),
+  ...(oauthConsentBootstrap === undefined ? {} : { oauthConsentBootstrap }),
   ...(pairing === undefined ? {} : { pairing }),
   ...(grants === undefined ? {} : { grants })
 });

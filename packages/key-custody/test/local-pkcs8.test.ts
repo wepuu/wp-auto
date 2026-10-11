@@ -7,6 +7,7 @@ import test from 'node:test';
 import { decodeProtectedHeader, jwtVerify } from 'jose';
 import {
   KeyCustodyUnavailableError,
+  JoseOAuthConsentBootstrapVerifier,
   LocalPkcs8KeyCustody,
   localPkcs8KeyCustodyFromEnvironment,
   signingKeyDescriptorFromPublicJwk
@@ -93,4 +94,48 @@ test('revocation signer preserves the exact RS256 content-free profile', async (
     audience: 'https://site.example.test/wp-json/wp-auto/mcp', currentDate: now
   });
   assert.equal(verified.payload['kind'], 'revocation');
+});
+
+test('OAuth consent bootstrap is short-lived and bound to account, issuer, audience and fixed key', async () => {
+  const files = await fixture();
+  const custody = await LocalPkcs8KeyCustody.load({ privateKeyFile: files.key, passphraseFile: files.passphrase });
+  const descriptor = await custody.describeSigningKey();
+  const verifier = new JoseOAuthConsentBootstrapVerifier(descriptor.publicKey, descriptor.kid);
+  const now = new Date('2026-10-11T00:00:00Z');
+  const token = await custody.oauthConsentBootstrapSigner().sign({
+    issuer: 'https://auth.example.test', audience: 'https://auth.example.test/v1/oauth/consent/start',
+    subjectId: 'account_12345678', interactionUid: 'interaction_12345678', clientId: 'client_00000001',
+    resource: 'https://site.example.test/wp-json/wp-auto/mcp', scopes: ['mcp:read']
+  }, now);
+  assert.deepEqual(decodeProtectedHeader(token), {
+    alg: 'RS256', typ: 'wepuu-oauth-consent-bootstrap+jwt', kid: descriptor.kid
+  });
+  const claims = await verifier.verify(token, {
+    issuer: 'https://auth.example.test', audience: 'https://auth.example.test/v1/oauth/consent/start',
+    subjectId: 'account_12345678', now
+  });
+  assert.deepEqual({ ...claims, jwtId: undefined }, {
+    interactionUid: 'interaction_12345678', clientId: 'client_00000001',
+    resource: 'https://site.example.test/wp-json/wp-auto/mcp', scopes: ['mcp:read'],
+    subjectId: 'account_12345678', jwtId: undefined
+  });
+  assert.match(claims.jwtId, /^[A-Za-z0-9_-]{32}$/u);
+  await assert.rejects(verifier.verify(token, {
+    issuer: 'https://auth.example.test', audience: 'https://auth.example.test/v1/oauth/consent/start',
+    subjectId: 'account_other000', now
+  }), KeyCustodyUnavailableError);
+  await assert.rejects(verifier.verify(token, {
+    issuer: 'https://auth.example.test', audience: 'https://auth.example.test/v1/oauth/consent/start',
+    subjectId: 'account_12345678', now: new Date(now.getTime() + 301_000)
+  }), KeyCustodyUnavailableError);
+  const [protectedPart, payloadPart, signaturePart] = token.split('.');
+  assert.ok(protectedPart && payloadPart && signaturePart);
+  const tamperedPayload = Buffer.from(JSON.stringify({
+    ...JSON.parse(Buffer.from(payloadPart, 'base64url').toString('utf8')) as Record<string, unknown>,
+    client_id: 'client_attacker1'
+  })).toString('base64url');
+  await assert.rejects(verifier.verify(`${protectedPart}.${tamperedPayload}.${signaturePart}`, {
+    issuer: 'https://auth.example.test', audience: 'https://auth.example.test/v1/oauth/consent/start',
+    subjectId: 'account_12345678', now
+  }), KeyCustodyUnavailableError);
 });

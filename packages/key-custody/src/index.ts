@@ -1,7 +1,7 @@
 import { lstat, readFile } from 'node:fs/promises';
-import { createPrivateKey, createPublicKey, sign as rsaSign, type JsonWebKey, type KeyObject } from 'node:crypto';
+import { createPrivateKey, createPublicKey, randomBytes, sign as rsaSign, type JsonWebKey, type KeyObject } from 'node:crypto';
 import { isAbsolute } from 'node:path';
-import { calculateJwkThumbprint, SignJWT } from 'jose';
+import { calculateJwkThumbprint, decodeProtectedHeader, jwtVerify, SignJWT } from 'jose';
 import { z } from 'zod';
 
 const KidSchema = z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u);
@@ -140,6 +140,10 @@ export class LocalPkcs8KeyCustody implements KeyCustody {
     return new JoseConsentRequestSigner(this.#privateKey, this.#descriptor.kid);
   }
 
+  oauthConsentBootstrapSigner(): JoseOAuthConsentBootstrapSigner {
+    return new JoseOAuthConsentBootstrapSigner(this.#privateKey, this.#descriptor.kid);
+  }
+
   revocationEventSigner(): JoseRevocationEventSigner {
     return new JoseRevocationEventSigner(this.#privateKey, this.#descriptor.kid);
   }
@@ -176,6 +180,95 @@ export class JoseConsentRequestSigner {
       return await new SignJWT({ ...payload })
         .setProtectedHeader({ alg: 'RS256', typ: 'wepuu-consent-request+jwt', kid: this.kid })
         .sign(this.privateKey);
+    } catch { throw new KeyCustodyUnavailableError(); }
+  }
+}
+
+const OAuthConsentBootstrapSchema = z.object({
+  kind: z.literal('oauth_consent_bootstrap'),
+  interaction_uid: z.string().regex(/^[A-Za-z0-9_-]{8,256}$/u),
+  client_id: z.string().regex(/^[A-Za-z0-9._~-]{8,256}$/u),
+  resource: z.url().refine((value) => value.startsWith('https://')),
+  scope: z.array(z.string().regex(/^mcp:[a-z.]+$/u)).min(1).max(8),
+  sub: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u),
+  iss: z.url().refine((value) => value.startsWith('https://')),
+  aud: z.union([z.string(), z.array(z.string()).min(1)]),
+  iat: z.number().int(),
+  nbf: z.number().int(),
+  exp: z.number().int(),
+  jti: z.string().regex(/^[A-Za-z0-9_-]{32}$/u)
+}).loose();
+
+export interface OAuthConsentBootstrapClaims {
+  readonly interactionUid: string;
+  readonly clientId: string;
+  readonly resource: string;
+  readonly scopes: readonly string[];
+  readonly subjectId: string;
+  readonly jwtId: string;
+}
+
+/** Signs a short-lived, account-bound handoff from node-oidc-provider to control-api. */
+export class JoseOAuthConsentBootstrapSigner {
+  constructor(private readonly privateKey: KeyObject, private readonly kid: string) {
+    if (privateKey.type !== 'private' || !KidSchema.safeParse(kid).success) throw new KeyCustodyUnavailableError();
+  }
+
+  async sign(input: Readonly<{
+    issuer: string;
+    audience: string;
+    subjectId: string;
+    interactionUid: string;
+    clientId: string;
+    resource: string;
+    scopes: readonly string[];
+  }>, now = new Date()): Promise<string> {
+    const issuedAt = Math.floor(now.getTime() / 1_000);
+    try {
+      return await new SignJWT({
+        kind: 'oauth_consent_bootstrap', interaction_uid: input.interactionUid,
+        client_id: input.clientId, resource: input.resource, scope: [...input.scopes]
+      })
+        .setProtectedHeader({ alg: 'RS256', typ: 'wepuu-oauth-consent-bootstrap+jwt', kid: this.kid })
+        .setIssuer(input.issuer).setAudience(input.audience).setSubject(input.subjectId)
+        .setIssuedAt(issuedAt).setNotBefore(issuedAt - 5).setExpirationTime(issuedAt + 300)
+        .setJti(randomBytes(24).toString('base64url')).sign(this.privateKey);
+    } catch { throw new KeyCustodyUnavailableError(); }
+  }
+}
+
+/** Verifies the fixed-key internal consent handoff without trusting embedded key headers. */
+export class JoseOAuthConsentBootstrapVerifier {
+  constructor(private readonly publicKey: KeyObject, private readonly kid: string) {
+    if (publicKey.type !== 'public' || !KidSchema.safeParse(kid).success) throw new KeyCustodyUnavailableError();
+  }
+
+  async verify(token: string, expected: Readonly<{
+    issuer: string;
+    audience: string;
+    subjectId: string;
+    now?: Date;
+  }>): Promise<OAuthConsentBootstrapClaims> {
+    try {
+      if (token.length < 1 || token.length > 8192) throw new KeyCustodyUnavailableError();
+      const header = decodeProtectedHeader(token);
+      if (Object.keys(header).sort().join(',') !== 'alg,kid,typ'
+        || header.alg !== 'RS256' || header.typ !== 'wepuu-oauth-consent-bootstrap+jwt'
+        || header.kid !== this.kid) throw new KeyCustodyUnavailableError();
+      const verified = await jwtVerify(token, this.publicKey, {
+        algorithms: ['RS256'], issuer: expected.issuer, audience: expected.audience,
+        subject: expected.subjectId, typ: 'wepuu-oauth-consent-bootstrap+jwt',
+        ...(expected.now === undefined ? {} : { currentDate: expected.now })
+      });
+      const payload = OAuthConsentBootstrapSchema.parse(verified.payload);
+      return {
+        interactionUid: payload.interaction_uid,
+        clientId: payload.client_id,
+        resource: payload.resource,
+        scopes: payload.scope,
+        subjectId: payload.sub,
+        jwtId: payload.jti
+      };
     } catch { throw new KeyCustodyUnavailableError(); }
   }
 }

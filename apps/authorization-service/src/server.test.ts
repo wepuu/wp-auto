@@ -5,12 +5,14 @@ import {
   CONSENT_INTERACTION_CSP,
   CONSENT_SUBMISSION_SCRIPT,
   authorizationErrorDiagnostic,
+  consentBootstrapLocation,
   consentInteractionCsp,
   consentInteractionResult,
   consentGrantUpdatePlan,
   interactionResource,
   interactionSubmissionHeaderRejection,
   normalizeAuthorizationResources,
+  oauthConsentBootstrapMatches,
   oauthResumeStageDiagnostic,
   safeOAuthFailure,
   serverErrorDiagnostic
@@ -163,6 +165,24 @@ test('consent result follows the oidc-provider example for new and existing gran
   assert.deepEqual(consentInteractionResult('grant_existing', 'grant_existing'), {
     consent: {}
   });
+});
+
+test('missing platform consent carries only an opaque signed request in the URL fragment', () => {
+  const request = 'eyJhbGciOiJSUzI1NiJ9.eyJraW5kIjoib2F1dGhfY29uc2VudF9ib290c3RyYXAifQ.signature';
+  const location = consentBootstrapLocation(request);
+  assert.equal(location, `/v1/consent/start#request=${request}`);
+  assert.equal(location.includes(resource), false);
+});
+
+test('local WordPress denial can resume only the exact originating OAuth interaction', () => {
+  const expected = {
+    interactionUid: 'interaction_12345678', clientId: 'client_00000001', resource, scopes: ['mcp:read']
+  };
+  assert.equal(oauthConsentBootstrapMatches(expected, expected), true);
+  assert.equal(oauthConsentBootstrapMatches({ ...expected, interactionUid: 'interaction_other1' }, expected), false);
+  assert.equal(oauthConsentBootstrapMatches({ ...expected, clientId: 'client_other001' }, expected), false);
+  assert.equal(oauthConsentBootstrapMatches({ ...expected, resource: 'https://other.example.test/mcp' }, expected), false);
+  assert.equal(oauthConsentBootstrapMatches({ ...expected, scopes: ['mcp:content.write'] }, expected), false);
 });
 
 test('consent grant update reuses the exactly bound grant and only missing approved values', () => {

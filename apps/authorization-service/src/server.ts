@@ -18,6 +18,7 @@ import {
   secretArtifactCodecFromEnvironment
 } from '@wepuu/database';
 import {
+  JoseOAuthConsentBootstrapVerifier,
   localPkcs8KeyCustodyFromEnvironment,
   signingKeyDescriptorFromPublicJwk,
   type KeyCustody
@@ -82,9 +83,10 @@ export function consentInteractionCsp(redirectUri: unknown): string | undefined 
     return undefined;
   }
 }
-const mcpScopes = new Set([
+const mcpScopeOrder = [
   'mcp:read', 'mcp:content.write', 'mcp:media.write', 'mcp:taxonomy.write', 'mcp:seo.write'
-]);
+] as const;
+const mcpScopes = new Set<string>(mcpScopeOrder);
 const CsrfPayloadSchema = z.object({
   uid: z.string().min(8).max(256),
   accountId: z.string().min(8).max(128),
@@ -120,7 +122,9 @@ export interface RunningAuthorizationService {
 
 function interactionScopes(params: Record<string, unknown>): readonly string[] | undefined {
   if (typeof params['scope'] !== 'string') return undefined;
-  const scopes = [...new Set(params['scope'].split(' ').filter((scope) => mcpScopes.has(scope)))].sort();
+  const scopes = [...new Set(params['scope'].split(' ').filter((scope) => mcpScopes.has(scope)))]
+    .sort((left, right) => mcpScopeOrder.indexOf(left as typeof mcpScopeOrder[number])
+      - mcpScopeOrder.indexOf(right as typeof mcpScopeOrder[number]));
   return scopes.length === 0 ? undefined : scopes;
 }
 
@@ -185,7 +189,8 @@ type InteractionRejectionReason =
   | 'origin_null'
   | 'origin_unexpected'
   | 'account_inactive'
-  | 'csrf_binding_mismatch';
+  | 'csrf_binding_mismatch'
+  | 'oauth_consent_bootstrap_invalid';
 
 export function interactionSubmissionHeaderRejection(input: Readonly<{
   method: string | undefined;
@@ -304,6 +309,27 @@ export function consentInteractionResult(
     : { consent: {} };
 }
 
+export function consentBootstrapLocation(request: string): string {
+  return `/v1/consent/start#request=${encodeURIComponent(request)}`;
+}
+
+export function oauthConsentBootstrapMatches(input: Readonly<{
+  interactionUid: string;
+  clientId: string;
+  resource: string;
+  scopes: readonly string[];
+}>, expected: Readonly<{
+  interactionUid: string;
+  clientId: string;
+  resource: string;
+  scopes: readonly string[];
+}>): boolean {
+  return input.interactionUid === expected.interactionUid && input.clientId === expected.clientId
+    && input.resource === expected.resource
+    && input.scopes.length === expected.scopes.length
+    && input.scopes.every((scope, index) => scope === expected.scopes[index]);
+}
+
 export interface ConsentGrantUpdatePlan {
   readonly existingGrantId?: string;
   readonly oidcScopes: readonly ('openid' | 'offline_access')[];
@@ -395,6 +421,7 @@ export async function startAuthorizationService(
     const activeCustody = await localPkcs8KeyCustodyFromEnvironment(
       environment, lifecycle.active.custodyReference, lifecycle.active.kid
     );
+    const oauthConsentBootstrapSigner = activeCustody.oauthConsentBootstrapSigner();
     const custody: KeyCustody = {
       describeSigningKey: () => activeCustody.describeSigningKey(),
       async sign(input) {
@@ -410,6 +437,9 @@ export async function startAuthorizationService(
       };
     }));
     const activeDescriptor = await custody.describeSigningKey();
+    const oauthConsentBootstrapVerifier = new JoseOAuthConsentBootstrapVerifier(
+      activeDescriptor.publicKey, activeDescriptor.kid
+    );
     if (activeDescriptor.publicJwk.n !== lifecycle.active.publicJwk['n']
       || activeDescriptor.publicJwk.e !== lifecycle.active.publicJwk['e']) throw new Error('local_public_key_metadata_mismatch');
     const rateLimitCodec = rateLimitSubjectCodecFromEnvironment(environment);
@@ -568,13 +598,63 @@ export async function startAuthorizationService(
           writeInteractionError(response);
           return;
         }
+        let submittedForm: URLSearchParams | undefined;
+        if (request.method === 'POST') {
+          const headerRejection = interactionSubmissionHeaderRejection({
+            method: request.method,
+            contentType: request.headers['content-type'],
+            origin: request.headers.origin,
+            expectedOrigin: new URL(config.issuer).origin
+          });
+          if (headerRejection !== undefined) {
+            writeInteractionError(response, headerRejection.status, headerRejection.reason);
+            return;
+          }
+          submittedForm = await readForm(request);
+          const localConsentRequest = submittedForm.get('local_consent_request');
+          if (submittedForm.get('decision') === 'deny' && localConsentRequest !== null) {
+            let bootstrapValid = false;
+            try {
+              const claims = await oauthConsentBootstrapVerifier.verify(localConsentRequest, {
+                issuer: config.issuer,
+                audience: `${new URL(config.issuer).origin}/v1/oauth/consent/start`,
+                subjectId: session.accountId
+              });
+              if (!oauthConsentBootstrapMatches(claims, {
+                interactionUid: details.uid, clientId, resource, scopes
+              })) {
+                throw new Error('oauth_consent_bootstrap_mismatch');
+              }
+              bootstrapValid = true;
+            } catch {
+              writeInteractionError(response, 400, 'oauth_consent_bootstrap_invalid');
+            }
+            if (bootstrapValid) {
+              await provider.interactionFinished(request, response, {
+                error: 'access_denied', error_description: 'The resource owner denied the request.'
+              }, { mergeWithLastSubmission: false });
+            }
+            return;
+          }
+        }
         const binding = await authorizationGrants.resolveExact({
           subjectId: session.accountId, clientId, resource, scopes
         });
         if (binding === undefined) {
-          await provider.interactionFinished(request, response, {
-            error: 'access_denied', error_description: 'No exact active consent binding.'
-          }, { mergeWithLastSubmission: false });
+          const bootstrapRequest = await oauthConsentBootstrapSigner.sign({
+            issuer: config.issuer,
+            audience: `${new URL(config.issuer).origin}/v1/oauth/consent/start`,
+            subjectId: session.accountId,
+            interactionUid: details.uid,
+            clientId,
+            resource,
+            scopes
+          });
+          response.writeHead(303, {
+            location: consentBootstrapLocation(bootstrapRequest),
+            'cache-control': 'no-store'
+          });
+          response.end();
           return;
         }
         if (request.method === 'GET') {
@@ -605,17 +685,11 @@ export async function startAuthorizationService(
           }));
           return;
         }
-        const headerRejection = interactionSubmissionHeaderRejection({
-          method: request.method,
-          contentType: request.headers['content-type'],
-          origin: request.headers.origin,
-          expectedOrigin: new URL(config.issuer).origin
-        });
-        if (headerRejection !== undefined) {
-          writeInteractionError(response, headerRejection.status, headerRejection.reason);
+        const form = submittedForm;
+        if (form === undefined) {
+          writeInteractionError(response, 405, 'method_or_content_type');
           return;
         }
-        const form = await readForm(request);
         const csrf = verifyCsrf(form.get('csrf') ?? '', config.cookieKeys[0] ?? '');
         if (csrf === undefined || csrf.uid !== details.uid || csrf.accountId !== session.accountId
           || csrf.grantId !== binding.grantId) {
