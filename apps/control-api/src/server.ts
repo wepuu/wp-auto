@@ -672,7 +672,9 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
 
   function htmlHeaders(reply: FastifyReply, setCookie?: string): FastifyReply {
     reply.header('cache-control', 'no-store')
-      .header('referrer-policy', 'no-referrer')
+      // Native same-origin form POSTs need a tuple Origin for the exact-Origin
+      // CSRF gate. Fetch serializes it as `null` under `no-referrer`.
+      .header('referrer-policy', 'same-origin')
       .header('content-security-policy', UI_CSP)
       .header('x-content-type-options', 'nosniff')
       .header('x-frame-options', 'DENY');
