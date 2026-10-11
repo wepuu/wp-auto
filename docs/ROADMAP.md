@@ -200,10 +200,14 @@ separately gated. Migration 004 permits a revoked Grant to be followed by a
 fresh Grant for the same account/site/client tuple. A locally tested,
 fixed-purpose `wepuu-e2e-lifecycle` provisioning command therefore supports
 the two destructive scenarios with sequential Grants while preserving the
-existing positive client and Grant; it has not been run in production.
+existing positive client and Grant. The fixed client was provisioned on
+2026-10-11 through the digest-pinned one-shot CLI; the production service
+remains on the accepted pre-P4-A image and the database remains at migrations
+001 through 013. No lifecycle destructive test was run.
 See `P3A_PRODUCTION_POSITIVE_ACCEPTANCE_2026-10-11.md` and
-`P3A_TOKEN_LIFECYCLE_PREFLIGHT_2026-10-11.md`. P3-A is not closed and P3-B has
-not started.
+`P3A_TOKEN_LIFECYCLE_PREFLIGHT_2026-10-11.md`, plus
+`P3A6_PRODUCTION_CLIENT_PREREGISTRATION_2026-10-11.md`. P3-A is not closed and
+P3-B has not started.
 
 ### P4-A - SaaS console domain separation
 

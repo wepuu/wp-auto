@@ -55,8 +55,11 @@ is a local candidate that separates the SaaS console onto
 `app.wpauto.cc` while retaining Better Auth and the OAuth issuer on
 `auth.wpauto.cc`; no P4-A production change is authorized. See ADR-018 through
 ADR-020, `docs/P3A_PRODUCTION_POSITIVE_ACCEPTANCE_2026-10-11.md`,
-`docs/P3A_TOKEN_LIFECYCLE_PREFLIGHT_2026-10-11.md` and the corresponding
-validation records.
+`docs/P3A_TOKEN_LIFECYCLE_PREFLIGHT_2026-10-11.md`,
+`docs/P3A6_PRODUCTION_CLIENT_PREREGISTRATION_2026-10-11.md` and the
+corresponding validation records. The lifecycle test client is now
+pre-registered, but no production Refresh Replay or revocation acceptance has
+been run.
 
 ## Architecture
 
