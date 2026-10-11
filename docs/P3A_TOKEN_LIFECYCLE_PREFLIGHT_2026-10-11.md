@@ -125,9 +125,9 @@ probe now supports `--mode replay` and `--mode revocation`: it distinguishes
 OAuth `invalid_grant`, checks Connector `401` with `invalid_token`, and polls
 only while the JWT is still unexpired. Grant status, reason and revocation
 outbox delivery remain a separate content-free VPS read-only check; the probe
-never prints tokens or secrets. The complete repository check must be rerun
-after this change; the previous hosted run covered commit `e65eac6` before
-these lifecycle-mode additions.
+never prints tokens or secrets. The complete repository check passed after
+these additions: 103 tests, 87 passed, 16 environment-dependent tests skipped
+and 0 failures. The hosted CI for commit `15537a2` also passed.
 
 ## Separately authorized execution
 

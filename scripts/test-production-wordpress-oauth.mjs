@@ -230,8 +230,8 @@ async function probeMcp(resource, token) {
   if (!health?.result || health.result.isError) throw new Error('mcp_site_health_failed');
 }
 
-async function probeMcpDenied(resource, token) {
-  const response = await fetch(resource, {
+export async function probeMcpRevocationState(resource, token, request = fetch) {
+  const response = await request(resource, {
     method: 'POST',
     headers: {
       accept: 'application/json, text/event-stream',
@@ -247,24 +247,46 @@ async function probeMcpDenied(resource, token) {
   });
   const challenge = response.headers.get('www-authenticate') ?? '';
   await response.body?.cancel();
-  if (response.status !== 401 || !/invalid_token/u.test(challenge)) {
-    throw new Error(`mcp_revocation_contract_${response.status}`);
+  if (response.status === 401 && /\binvalid_token\b/u.test(challenge)) {
+    return 'denied';
   }
+  if (response.ok) return 'pending';
+  throw new Error(`mcp_revocation_protocol_${response.status}`);
 }
 
-async function waitForMcpDenial(resource, token, exp) {
+export async function waitForMcpDenial(resource, token, exp, options = {}) {
+  const now = options.now ?? Date.now;
+  const probe = options.probe ?? probeMcpRevocationState;
+  const sleep = options.sleep ?? ((milliseconds) => new Promise(
+    (resolve) => setTimeout(resolve, milliseconds),
+  ));
+  const deadline = now() + 60_000;
   for (;;) {
-    if (Math.floor(Date.now() / 1_000) >= exp) {
+    const startedAt = now();
+    if (Math.floor(startedAt / 1_000) >= exp) {
       throw new Error('access_token_expired_before_revocation_observed');
     }
-    try {
-      await probeMcpDenied(resource, token);
-      return;
-    } catch (error) {
-      if (error instanceof Error && error.message.startsWith('mcp_revocation_contract_')) throw error;
-      if (!(error instanceof TypeError) && !(error instanceof DOMException && error.name === 'TimeoutError')) throw error;
+    if (startedAt >= deadline) {
+      throw new Error('connector_revocation_timeout');
     }
-    await new Promise((resolve) => setTimeout(resolve, 2_000));
+    let state;
+    try {
+      state = await probe(resource, token);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'TimeoutError') {
+        throw new Error('connector_revocation_request_timeout');
+      }
+      if (error instanceof TypeError) throw new Error('connector_revocation_network');
+      throw error;
+    }
+    const completedAt = now();
+    if (Math.floor(completedAt / 1_000) >= exp) {
+      throw new Error('access_token_expired_before_revocation_observed');
+    }
+    if (completedAt >= deadline) throw new Error('connector_revocation_timeout');
+    if (state === 'denied') return;
+    if (state !== 'pending') throw new Error('connector_revocation_invalid_probe_state');
+    await sleep(Math.min(2_000, deadline - completedAt));
   }
 }
 
@@ -288,6 +310,7 @@ async function expectInvalidGrant(tokenUrl, form) {
   }
 }
 
+async function main() {
 const args = readArguments(process.argv.slice(2));
 const issuerUrl = assertHttpsUrl(args.issuer, 'issuer');
 const resourceUrl = assertHttpsUrl(args.resource, 'resource');
@@ -445,3 +468,8 @@ console.log('OAUTH_REFRESH_REVOCATION=True');
 console.log('OAUTH_DIRECT_WORDPRESS_MCP=True');
 console.log(`OAUTH_GRANT_ID=${firstBinding.grantId}`);
 console.log(`OAUTH_SIGNING_KID=${firstBinding.kid}`);
+}
+
+if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  await main();
+}
