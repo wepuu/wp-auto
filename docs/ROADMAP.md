@@ -203,11 +203,20 @@ the two destructive scenarios with sequential Grants while preserving the
 existing positive client and Grant. The fixed client was provisioned on
 2026-10-11 through the digest-pinned one-shot CLI; the production service
 remains on the accepted pre-P4-A image and the database remains at migrations
-001 through 013. No lifecycle destructive test was run.
+001 through 013. At the time of client provisioning, no lifecycle destructive
+test had been run.
 See `P3A_PRODUCTION_POSITIVE_ACCEPTANCE_2026-10-11.md` and
 `P3A_TOKEN_LIFECYCLE_PREFLIGHT_2026-10-11.md`, plus
-`P3A6_PRODUCTION_CLIENT_PREREGISTRATION_2026-10-11.md`. P3-A is not closed and
-P3-B has not started.
+`P3A6_PRODUCTION_CLIENT_PREREGISTRATION_2026-10-11.md`.
+
+The separately authorized first G1 production attempt on 2026-10-11 did not
+pass. R0-to-R1 rotation completed, but a Node 26 locked-stream error stopped
+the script while processing the first replay response. The isolated Grant was
+revoked with `token_revoked` rather than `refresh_replay`; its outbox event was
+not delivered, and R1 invalidation plus Connector denial were not verified.
+The existing positive `wepuu-e2e-codex` Grant remained unchanged. See
+`P3A7_G1_REFRESH_REPLAY_PRODUCTION_ACCEPTANCE_2026-10-11.md`. A repeat G1 and
+G2 remain separately gated. P3-A is not closed and P3-B has not started.
 
 ### P4-A - SaaS console domain separation
 

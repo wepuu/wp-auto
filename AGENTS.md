@@ -23,17 +23,25 @@ account mapping and `/app` entry were recorded on 2026-10-11. P3-A remains
 incomplete: PR #33 is merged and CI is green. Exact `bb71226` control and
 authorization images were published, a fresh project backup was verified and
 the bounded deployment, health smoke and positive production
-OAuth/PKCE/Consent/direct-MCP browser regression passed on 2026-10-11. Refresh
-Replay and revocation remain separately gated, so P3-A is not yet closed. The
+OAuth/PKCE/Consent/direct-MCP browser regression passed on 2026-10-11. G1
+Refresh Replay and G2 revocation remain incomplete, so P3-A is not yet closed. The
 fixed-purpose `wepuu-e2e-lifecycle` client was provisioned in production on
 2026-10-11 from a digest-pinned one-shot image without deploying that image or
 running migration 014; the existing Authorization image was restarted and
 returned healthy with both clients recognized.
+The first production G1 Refresh Replay acceptance attempt on 2026-10-11 did
+not pass. R0-to-R1 rotation completed, but the validation script stopped on a
+Node 26 locked-stream error while processing the first replay response. The
+new isolated Grant was revoked with `token_revoked`, its outbox delivery
+failed, and R1 plus Connector denial were not verified. The original
+`wepuu-e2e-codex` Grant was unchanged. No repeat attempt is authorized.
 The positive evidence and corrected lifecycle provisioning preflight are
 recorded in
 `docs/P3A_PRODUCTION_POSITIVE_ACCEPTANCE_2026-10-11.md` and
 `docs/P3A_TOKEN_LIFECYCLE_PREFLIGHT_2026-10-11.md`; the production operation is
-recorded in `docs/P3A6_PRODUCTION_CLIENT_PREREGISTRATION_2026-10-11.md`.
+recorded in `docs/P3A6_PRODUCTION_CLIENT_PREREGISTRATION_2026-10-11.md`; the
+failed G1 attempt is recorded in
+`docs/P3A7_G1_REFRESH_REPLAY_PRODUCTION_ACCEPTANCE_2026-10-11.md`.
 ADR-020 P4-A console-domain separation is a locally validated candidate only.
 It is not deployed and does not authorize DNS, Nginx or production database
 changes.
