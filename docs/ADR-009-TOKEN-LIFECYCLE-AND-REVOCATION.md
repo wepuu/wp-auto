@@ -50,6 +50,22 @@ into the MCP request path; that remains Phase 2.0.5.
   denies matching tokens; recovery activates a pre-published replacement, not
   an application-held private key.
 
+### 2026-10-11 replay-context clarification
+
+`oidc-provider` 9.12.2 revokes a Grant through `revokeByGrantId()` both when a
+consumed refresh token is replayed and when RFC 7009 revocation is requested.
+The Authorization Service therefore supplies the database adapter with a
+request-scoped reason resolver. It returns `refresh_replay` only for the token
+endpoint's `refresh_token` grant when the Provider has loaded that exact token
+as consumed. RFC 7009, logout and calls without a Provider request context
+remain `token_revoked`. The context is isolated with `AsyncLocalStorage`; the
+database function, token format, outbox payload and public endpoints are
+unchanged.
+
+Outbox failures persist only bounded machine codes: signing, DNS, destination
+policy, TLS, timeout, generic network, or `http.<status>`. URLs, addresses,
+response bodies and exception messages are not persisted.
+
 ## Compatibility and migration
 
 Migration `005_token_lifecycle.sql` adds new versioned lifecycle storage. It

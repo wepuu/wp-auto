@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { HttpsRevocationDelivery, revocationEndpoint, RevocationWorker } from './revocation-worker.js';
+import {
+  HttpsRevocationDelivery,
+  RevocationDeliveryFailure,
+  revocationEndpoint,
+  revocationErrorCode,
+  RevocationWorker
+} from './revocation-worker.js';
 import { FailureInjector, ManualFaultClock, assertContentFreeEvidence } from './phase-2-0-6-fixtures.js';
 
 test('revocation endpoint is fixed to the paired resource origin', () => {
@@ -109,7 +115,46 @@ test('worker defers a failed delivery without acknowledging the event', async ()
   });
   assert.deepEqual(await worker.runOnce(), { delivered: 0, deferred: 1 });
   assert.deepEqual(acknowledged, []);
-  assert.deepEqual(deferred, [{ id: '8', code: 'delivery_failed', delay: 8 }]);
+  assert.deepEqual(deferred, [{ id: '8', code: 'network.failed', delay: 8 }]);
+});
+
+test('delivery failures are reduced to fixed content-free codes', () => {
+  assert.equal(revocationErrorCode(new RevocationDeliveryFailure('http.401')), 'http.401');
+  assert.equal(revocationErrorCode(Object.assign(new Error('secret'), { code: 'ENOTFOUND' })), 'dns.failed');
+  assert.equal(revocationErrorCode(Object.assign(new Error('secret'), { code: 'EAI_AGAIN' })), 'dns.failed');
+  assert.equal(revocationErrorCode(Object.assign(new Error('secret'), { code: 'ETIMEDOUT' })), 'network.timeout');
+  assert.equal(revocationErrorCode(Object.assign(new Error('secret'), {
+    code: 'ERR_TLS_CERT_ALTNAME_INVALID'
+  })), 'tls.failed');
+  assert.equal(revocationErrorCode(new Error('unsafe_destination')), 'destination.unsafe');
+  assert.equal(revocationErrorCode(new Error('connector response body secret')), 'network.failed');
+});
+
+test('worker distinguishes signing failures from HTTP rejection', async () => {
+  const record = {
+    id: '10', tenantId: '11111111-1111-4111-8111-111111111111', siteId: 'site_00000001',
+    resource: 'https://site.example.test/wp-json/wp-auto/mcp', sequence: 7,
+    eventType: 'grant' as const, grantId: 'grant_00000001', reason: 'token_revoked', attempts: 1
+  };
+  for (const scenario of [
+    { signer: async () => { throw new Error('private signing detail'); }, delivery: async () => undefined,
+      expected: 'signing.failed' },
+    { signer: async () => 'header.payload.signature',
+      delivery: async () => { throw new RevocationDeliveryFailure('http.401'); }, expected: 'http.401' }
+  ]) {
+    const codes: string[] = [];
+    const worker = new RevocationWorker({
+      outbox: {
+        claim: async () => [record], markDelivered: async () => undefined,
+        reschedule: async (_id: string, code: string) => { codes.push(code); }
+      } as never,
+      signer: { sign: scenario.signer } as never,
+      delivery: { send: scenario.delivery },
+      issuer: 'https://auth.example.test'
+    });
+    assert.deepEqual(await worker.runOnce(), { delivered: 0, deferred: 1 });
+    assert.deepEqual(codes, [scenario.expected]);
+  }
 });
 
 test('fault injection retries a transient delivery without changing the content-free event contract', async () => {
