@@ -50,7 +50,7 @@ deployed in the bounded operator environment. Real email delivery, OTP
 verification, stable account mapping and `/app` entry passed on 2026-10-11.
 P3-A is not closed: the first-authorization fix in PR #33 is deployed from its
 exact images and the positive Email OTP OAuth/PKCE/Consent/direct-MCP browser
-regression passed. Refresh Replay and revocation remain separately gated. P4-A
+regression passed. G1 Refresh Replay and G2 revocation remain incomplete. P4-A
 is a local candidate that separates the SaaS console onto
 `app.wpauto.cc` while retaining Better Auth and the OAuth issuer on
 `auth.wpauto.cc`; no P4-A production change is authorized. See ADR-018 through
@@ -58,8 +58,12 @@ ADR-020, `docs/P3A_PRODUCTION_POSITIVE_ACCEPTANCE_2026-10-11.md`,
 `docs/P3A_TOKEN_LIFECYCLE_PREFLIGHT_2026-10-11.md`,
 `docs/P3A6_PRODUCTION_CLIENT_PREREGISTRATION_2026-10-11.md` and the
 corresponding validation records. The lifecycle test client is now
-pre-registered, but no production Refresh Replay or revocation acceptance has
-been run.
+pre-registered. The first production G1 attempt rotated R0 to R1 but did not
+pass: a Node 26 response-stream error stopped validation, the isolated Grant
+was revoked with the wrong `token_revoked` reason, and its outbox delivery
+failed. See
+`docs/P3A7_G1_REFRESH_REPLAY_PRODUCTION_ACCEPTANCE_2026-10-11.md`. G1 remains
+failed and G2 has not been run.
 
 ## Architecture
 
