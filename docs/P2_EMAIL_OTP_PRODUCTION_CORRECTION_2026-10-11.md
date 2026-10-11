@@ -54,9 +54,17 @@ parser can locate the target CSRF cookie alongside unrelated legacy cookies.
   immutable control image.
 - Production rollout is limited to `wpauto-control` and uses the existing
   health-checked automatic rollback command.
-- A real browser Email OTP send, verification, account bootstrap and OAuth
-  interaction resume remain required before this production correction is
-  marked accepted.
+- Production browser validation on 2026-10-11 confirmed that a fresh login
+  transaction submitted `POST /v1/account/email/send` with status 200, Resend
+  delivered the message to the operator-designated test mailbox, the operator
+  verified the OTP without disclosing it, Better Auth established the Session,
+  account bootstrap completed and the browser entered the WePuu `/app` page.
+- The temporary content-free route diagnostic recorded only method, path,
+  status and upstream status. It was removed with its log and backup after the
+  observation, and the dedicated Nginx configuration passed `nginx -t` before
+  reload.
+- OAuth interaction resume, consent, PKCE code exchange and direct WordPress
+  MCP remain separate P3 acceptance items and are not claimed by this record.
 
 ## Data-flow review
 
