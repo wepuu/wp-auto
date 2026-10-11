@@ -446,6 +446,7 @@ void test('Email OTP login protects return state and reaches Better Auth through
   const start = await app.inject({ method: 'GET', url: '/v1/account/login?return_to=%2Fv1%2Faccount%2Fsession' });
   assert.equal(start.statusCode, 200);
   assert.match(start.body, /Welcome Back/u);
+  assert.equal(start.headers['referrer-policy'], 'same-origin');
   assert.equal(start.body.includes('return_to'), false);
   const csrf = /name="csrf" value="([A-Za-z0-9_-]{43})"/u.exec(start.body)?.[1];
   const transaction = /name="transaction" value="([A-Za-z0-9_-]{43})"/u.exec(start.body)?.[1];
@@ -625,7 +626,7 @@ void test('pairing start page consumes fragment client-side without reflecting v
   assert.match(response.headers['content-security-policy'] ?? '', /script-src 'self'/u);
   const script = await app.inject({ method: 'GET', url: '/assets/pairing-v1.js' });
   assert.match(script.body, /history\.replaceState/u);
-  assert.equal(response.headers['referrer-policy'], 'no-referrer');
+  assert.equal(response.headers['referrer-policy'], 'same-origin');
   await app.close();
 });
 
