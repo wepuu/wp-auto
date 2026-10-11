@@ -33,6 +33,8 @@ source commit:
 
 - Local fixed tag: `wepuu-authorization:p3a7-hotfix-bb71226-faf9bbd`.
 - Local image digest: `sha256:d63768332319035d363fa337c64e33ba476763bd555886b7dcd180f0691e08d0`.
+- Published immutable reference:
+  `ghcr.io/wepuu/wp-auto-authorization@sha256:d63768332319035d363fa337c64e33ba476763bd555886b7dcd180f0691e08d0`.
 - The image runs as `node`, retains the normal Authorization entrypoint and
   contains migrations 001 through 013 only.
 - The local-signing OCI gate passed with zero private JWKS members and no AWS
