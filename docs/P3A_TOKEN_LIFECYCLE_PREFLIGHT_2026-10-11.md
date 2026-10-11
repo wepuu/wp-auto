@@ -94,14 +94,16 @@ cover signed proof verification around the repository activation boundary.
 
 ## Minimum isolated client path
 
-One additional pre-registered client is sufficient. The local candidate adds a
-non-HTTP, fixed-purpose provisioning command for `wepuu-e2e-lifecycle` with
-only `http://127.0.0.1/callback`. It is a public client; the existing provider
-still enforces PKCE S256 and `token_endpoint_auth_method=none`. Provisioning is
+One additional pre-registered client is sufficient. The local candidate adds
+non-HTTP, fixed-purpose commands for `wepuu-e2e-lifecycle` with only
+`http://127.0.0.1/callback`: `provision-p3a-lifecycle` and the compensating
+`suspend-p3a-lifecycle`. It is a public client; the existing provider still
+enforces PKCE S256 and `token_endpoint_auth_method=none`. Provisioning is
 idempotent, obtains a transaction advisory lock and fails closed if an existing
-row differs in registration mode, redirect URI, digest or status. It cannot
-accept an arbitrary client ID or redirect URI and does not update a conflicting
-row.
+row differs in registration mode, redirect URI, digest or status. Suspension
+only accepts an exact matching row and is idempotent; neither command accepts
+an arbitrary client ID or redirect URI, and neither can update
+`wepuu-e2e-codex`.
 
 No schema migration is needed. Dynamic client registration remains disabled.
 Authorization loads active clients at process startup, so a future separately
@@ -117,9 +119,15 @@ row is provisioned, restarting the existing fixed production Authorization
 container is sufficient to reload clients. Any one-shot image use and that
 restart remain separately authorized production operations.
 
-Local verification passed all 16 PostgreSQL integration tests. The complete
-repository check passed 98 tests with 82 passed and 16 environment-dependent
-tests skipped; no failure was reported.
+Local verification passed all 16 PostgreSQL integration tests, including
+provision/suspend idempotency and the re-consent lifecycle. The production
+probe now supports `--mode replay` and `--mode revocation`: it distinguishes
+OAuth `invalid_grant`, checks Connector `401` with `invalid_token`, and polls
+only while the JWT is still unexpired. Grant status, reason and revocation
+outbox delivery remain a separate content-free VPS read-only check; the probe
+never prints tokens or secrets. The complete repository check must be rerun
+after this change; the previous hosted run covered commit `e65eac6` before
+these lifecycle-mode additions.
 
 ## Separately authorized execution
 

@@ -1987,12 +1987,7 @@ export class PostgresOAuthClientRepository {
     const clientId = P3A_LIFECYCLE_TEST_CLIENT_ID;
     const redirectUri = P3A_LIFECYCLE_TEST_REDIRECT_URI;
     const redirectUris = [redirectUri];
-    const metadataDigest = createHash('sha256').update(JSON.stringify({
-      client_id: clientId,
-      redirect_uris: redirectUris,
-      token_endpoint_auth_method: 'none',
-      code_challenge_method: 'S256'
-    }), 'utf8').digest('hex');
+    const metadataDigest = p3aLifecycleClientMetadataDigest();
     const created = await this.#database.withAuthorizationService(async (client) => {
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [clientId]);
       const existing = await client.query<{
@@ -2026,10 +2021,59 @@ export class PostgresOAuthClientRepository {
     });
     return { created, clientId, redirectUri };
   }
+
+  async suspendP3aLifecycleTestClient(): Promise<Readonly<{
+    changed: boolean;
+    clientId: string;
+  }>> {
+    const clientId = P3A_LIFECYCLE_TEST_CLIENT_ID;
+    const redirectUri = P3A_LIFECYCLE_TEST_REDIRECT_URI;
+    const metadataDigest = p3aLifecycleClientMetadataDigest();
+    const changed = await this.#database.withAuthorizationService(async (client) => {
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [clientId]);
+      const existing = await client.query<{
+        registration_mode: string;
+        redirect_uris: unknown;
+        metadata_digest: string;
+        status: string;
+      }>(
+        `SELECT registration_mode, redirect_uris, metadata_digest, status
+         FROM oauth.clients WHERE client_id = $1`,
+        [clientId]
+      );
+      const row = existing.rows[0];
+      if (row === undefined) return false;
+      const exactRedirects = Array.isArray(row.redirect_uris)
+        && row.redirect_uris.length === 1
+        && row.redirect_uris[0] === redirectUri;
+      if (row.registration_mode !== 'pre-registered' || !exactRedirects
+        || row.metadata_digest !== metadataDigest
+        || !['active', 'suspended', 'revoked'].includes(row.status)) {
+        throw new Error('p3a_lifecycle_client_conflict');
+      }
+      if (row.status !== 'active') return false;
+      const result = await client.query(
+        `UPDATE oauth.clients SET status = 'suspended', updated_at = now()
+         WHERE client_id = $1 AND status = 'active'`,
+        [clientId]
+      );
+      return result.rowCount === 1;
+    });
+    return { changed, clientId };
+  }
 }
 
 export const P3A_LIFECYCLE_TEST_CLIENT_ID = 'wepuu-e2e-lifecycle';
 export const P3A_LIFECYCLE_TEST_REDIRECT_URI = 'http://127.0.0.1/callback';
+
+function p3aLifecycleClientMetadataDigest(): string {
+  return createHash('sha256').update(JSON.stringify({
+    client_id: P3A_LIFECYCLE_TEST_CLIENT_ID,
+    redirect_uris: [P3A_LIFECYCLE_TEST_REDIRECT_URI],
+    token_endpoint_auth_method: 'none',
+    code_challenge_method: 'S256'
+  }), 'utf8').digest('hex');
+}
 
 export interface SigningKeyLifecycleRecord {
   readonly kid: string;

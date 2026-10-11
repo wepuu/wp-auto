@@ -165,6 +165,19 @@ test('revoked Grant permits same-tuple re-consent without reviving old tokens', 
     resource
   }), undefined);
 
+  assert.deepEqual(await clients.suspendP3aLifecycleTestClient(), {
+    changed: true,
+    clientId: P3A_LIFECYCLE_TEST_CLIENT_ID
+  });
+  assert.deepEqual(await clients.suspendP3aLifecycleTestClient(), {
+    changed: false,
+    clientId: P3A_LIFECYCLE_TEST_CLIENT_ID
+  });
+  assert.equal(
+    (await clients.loadActivePublicClients()).some((client) => client.clientId === P3A_LIFECYCLE_TEST_CLIENT_ID),
+    false
+  );
+
   await admin.query(
     "UPDATE oauth.clients SET redirect_uris = '[\"http://127.0.0.1/wrong\"]'::jsonb WHERE client_id = $1",
     [P3A_LIFECYCLE_TEST_CLIENT_ID]

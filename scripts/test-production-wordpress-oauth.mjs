@@ -143,7 +143,8 @@ async function verifyAccessToken(token, context) {
   if (typeof claims.grant_id !== 'string' || claims.grant_id.length < 8) {
     throw new Error('access_token_grant_missing');
   }
-  return { grantId: claims.grant_id, kid: header.kid };
+  if (typeof claims.exp !== 'number') throw new Error('access_token_exp_missing');
+  return { grantId: claims.grant_id, kid: header.kid, exp: claims.exp };
 }
 
 function parseEvent(event) {
@@ -229,12 +230,74 @@ async function probeMcp(resource, token) {
   if (!health?.result || health.result.isError) throw new Error('mcp_site_health_failed');
 }
 
+async function probeMcpDenied(resource, token) {
+  const response = await fetch(resource, {
+    method: 'POST',
+    headers: {
+      accept: 'application/json, text/event-stream',
+      authorization: `Bearer ${token}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      jsonrpc: '2.0', id: 1, method: 'initialize',
+      params: { protocolVersion: '2025-06-18', capabilities: {},
+        clientInfo: { name: 'wepuu-lifecycle-deny-probe', version: '0.1.0' } }
+    }),
+    signal: AbortSignal.timeout(20_000),
+  });
+  const challenge = response.headers.get('www-authenticate') ?? '';
+  await response.body?.cancel();
+  if (response.status !== 401 || !/invalid_token/u.test(challenge)) {
+    throw new Error(`mcp_revocation_contract_${response.status}`);
+  }
+}
+
+async function waitForMcpDenial(resource, token, exp) {
+  for (;;) {
+    if (Math.floor(Date.now() / 1_000) >= exp) {
+      throw new Error('access_token_expired_before_revocation_observed');
+    }
+    try {
+      await probeMcpDenied(resource, token);
+      return;
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith('mcp_revocation_contract_')) throw error;
+      if (!(error instanceof TypeError) && !(error instanceof DOMException && error.name === 'TimeoutError')) throw error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+  }
+}
+
+async function expectInvalidGrant(tokenUrl, form) {
+  let response;
+  try {
+    response = await fetch(tokenUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams(form),
+      signal: AbortSignal.timeout(20_000),
+    });
+  } catch (error) {
+    throw new Error(error instanceof DOMException && error.name === 'TimeoutError'
+      ? 'oauth_invalid_grant_probe_timeout' : 'oauth_invalid_grant_probe_network');
+  }
+  const body = await response.json().catch(() => undefined);
+  await response.body?.cancel();
+  if (response.status !== 400 || body?.error !== 'invalid_grant') {
+    throw new Error(`oauth_invalid_grant_expected_${response.status}_${body?.error ?? 'missing'}`);
+  }
+}
+
 const args = readArguments(process.argv.slice(2));
 const issuerUrl = assertHttpsUrl(args.issuer, 'issuer');
 const resourceUrl = assertHttpsUrl(args.resource, 'resource');
 const issuer = issuerUrl.href.replace(/\/$/u, '');
 const resource = resourceUrl.href;
 const accessOnly = args['access-only'] === 'true';
+const mode = args.mode ?? 'normal';
+if (!['normal', 'replay', 'revocation'].includes(mode) || (mode !== 'normal' && accessOnly)) {
+  throw new Error('invalid_lifecycle_mode');
+}
 const state = base64url(randomBytes(32));
 const verifier = base64url(randomBytes(64));
 const challenge = base64url(createHash('sha256').update(verifier, 'ascii').digest());
@@ -297,6 +360,34 @@ if (accessOnly) {
 
 if (typeof first.body.refresh_token !== 'string') throw new Error('refresh_token_missing');
 
+if (mode === 'revocation') {
+  if (Math.floor(Date.now() / 1_000) >= firstBinding.exp) {
+    throw new Error('access_token_expired_before_revocation_started');
+  }
+  await probeMcp(resource, first.body.access_token);
+  const revoked = await fetch(new URL('/token/revocation', issuer), {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      token: first.body.refresh_token, token_type_hint: 'refresh_token', client_id: args['client-id'],
+    }),
+    signal: AbortSignal.timeout(20_000),
+  });
+  if (!revoked.ok) throw new Error(`revocation_http_${revoked.status}`);
+  await revoked.body?.cancel();
+  await expectInvalidGrant(tokenUrl, {
+    grant_type: 'refresh_token', refresh_token: first.body.refresh_token,
+    client_id: args['client-id'], resource,
+  });
+  await waitForMcpDenial(resource, first.body.access_token, firstBinding.exp);
+  console.log('OAUTH_LIFECYCLE_MODE=revocation');
+  console.log('OAUTH_GRANT_REVOCATION=True');
+  console.log('OAUTH_CONNECTOR_DENIAL_BEFORE_EXP=True');
+  console.log(`OAUTH_GRANT_ID=${firstBinding.grantId}`);
+  console.log(`OAUTH_SIGNING_KID=${firstBinding.kid}`);
+  process.exit(0);
+}
+
 const refreshed = await fetchJson(tokenUrl, {
   method: 'POST',
   headers: { 'content-type': 'application/x-www-form-urlencoded' },
@@ -314,6 +405,25 @@ if (refreshedBinding.grantId !== firstBinding.grantId || refreshedBinding.kid !=
   throw new Error('refresh_binding_changed');
 }
 await probeMcp(resource, refreshed.body.access_token);
+
+if (mode === 'replay') {
+  await expectInvalidGrant(tokenUrl, {
+    grant_type: 'refresh_token', refresh_token: first.body.refresh_token,
+    client_id: args['client-id'], resource,
+  });
+  await expectInvalidGrant(tokenUrl, {
+    grant_type: 'refresh_token', refresh_token: refreshed.body.refresh_token,
+    client_id: args['client-id'], resource,
+  });
+  await waitForMcpDenial(resource, refreshed.body.access_token, refreshedBinding.exp);
+  console.log('OAUTH_LIFECYCLE_MODE=replay');
+  console.log('OAUTH_REFRESH_REPLAY=True');
+  console.log('OAUTH_REFRESH_FAMILY_REVOKED=True');
+  console.log('OAUTH_CONNECTOR_DENIAL_BEFORE_EXP=True');
+  console.log(`OAUTH_GRANT_ID=${firstBinding.grantId}`);
+  console.log(`OAUTH_SIGNING_KID=${firstBinding.kid}`);
+  process.exit(0);
+}
 
 const revocationUrl = new URL('/token/revocation', issuer);
 const revoked = await fetch(revocationUrl, {
