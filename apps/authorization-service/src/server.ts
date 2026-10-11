@@ -1,4 +1,5 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { z } from 'zod';
 import { accountAuthFromEnvironment, accountAuthHeaders } from '@wepuu/account-auth';
@@ -67,6 +68,41 @@ export const CONSENT_INTERACTION_CSP = UI_CSP.replace(
   "script-src 'self'",
   `script-src 'self' 'sha256-${consentScriptHash}'`
 );
+
+type ProviderRequestContext = Readonly<{
+  oidc?: Readonly<{
+    route?: unknown;
+    params?: Readonly<Record<string, unknown>>;
+    entities?: Readonly<Record<string, unknown>>;
+  }>;
+}>;
+
+export function providerGrantRevocationReason(
+  context: ProviderRequestContext | undefined
+): 'refresh_replay' | 'token_revoked' {
+  const refreshToken = context?.oidc?.entities?.['RefreshToken'];
+  const consumed = typeof refreshToken === 'object' && refreshToken !== null
+    ? (refreshToken as { consumed?: unknown }).consumed
+    : undefined;
+  return context?.oidc?.route === 'token'
+    && context.oidc.params?.['grant_type'] === 'refresh_token'
+    && typeof consumed === 'number'
+    && Number.isSafeInteger(consumed)
+    && consumed > 0
+    ? 'refresh_replay'
+    : 'token_revoked';
+}
+
+export function createGrantRevocationContext(): Readonly<{
+  run<T>(context: ProviderRequestContext, callback: () => T): T;
+  resolve(): 'refresh_replay' | 'token_revoked';
+}> {
+  const storage = new AsyncLocalStorage<ProviderRequestContext>();
+  return {
+    run: (context, callback) => storage.run(context, callback),
+    resolve: () => providerGrantRevocationReason(storage.getStore())
+  };
+}
 
 export function consentInteractionCsp(redirectUri: unknown): string | undefined {
   if (typeof redirectUri !== 'string') return undefined;
@@ -444,16 +480,28 @@ export async function startAuthorizationService(
       || activeDescriptor.publicJwk.e !== lifecycle.active.publicJwk['e']) throw new Error('local_public_key_metadata_mismatch');
     const rateLimitCodec = rateLimitSubjectCodecFromEnvironment(environment);
     const clients = await new PostgresOAuthClientRepository(database).loadActivePublicClients();
+    const providerRequestContext = createGrantRevocationContext();
     const provider = await createAuthorizationProvider({
       issuer: config.issuer,
       cookieKeys: config.cookieKeys,
       keyCustody: custody,
       verificationKeys,
-      adapter: createOidcAdapterFactory(database, secretArtifactCodecFromEnvironment(environment), rateLimitCodec),
+      adapter: createOidcAdapterFactory(
+        database,
+        secretArtifactCodecFromEnvironment(environment),
+        rateLimitCodec,
+        providerRequestContext.resolve
+      ),
       resourceRegistry: new PostgresResourceRegistry(database),
       grantClaimsResolver: new PostgresGrantClaimsResolver(database),
       accountRegistry: new PostgresAccountRegistry(database),
       clients
+    });
+    provider.use(async (context, next): Promise<void> => {
+      await providerRequestContext.run(
+        context as unknown as ProviderRequestContext,
+        async (): Promise<void> => { await next(); }
+      );
     });
     const accountAuthLinks = new PostgresAccountAuthLinkStore(database);
     const authorizationGrants = new PostgresAuthorizationGrantRepository(database);
