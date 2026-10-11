@@ -177,7 +177,8 @@ authorized actions.
 
 ### P2 - Email OTP account login
 
-Status: implemented as a local candidate on 2026-10-10; not deployed.
+Status: deployed to the bounded operator environment and real Email OTP browser
+entry passed on 2026-10-11. This does not close the later OAuth/MCP P3-A gate.
 
 P2 uses the Better Auth 1.7.7 Email OTP plugin with hashed verification
 records, a six-digit five-minute code, five verification attempts, database
@@ -185,10 +186,24 @@ rate limiting, and a Resend delivery adapter. Protected ten-minute login
 transactions preserve OAuth interaction return paths across the two-step form,
 and account bootstrap remains atomic and retryable without obtaining another
 code. The temporary Auth0 runtime and its `openid-client` package were removed.
-Production continues to run the prior ADR-017 image until a separately
-authorized migration and rollout. Real Resend delivery is an explicit opt-in
-validation and is not exercised by ordinary CI. See ADR-019 and the P2
-validation record.
+Real Resend delivery is an explicit opt-in validation and is not exercised by
+ordinary CI. See ADR-019 and the P2 validation records.
+
+### P3 - Email OTP OAuth and MCP production acceptance
+
+Status: incomplete. P3-A remains false in the repository validation record.
+PR #33 and hosted CI passed, but its first-authorization fix is not yet deployed
+and the current Email OTP OAuth/PKCE/Consent/WordPress MCP production chain has
+not been closed. P3-B has not started.
+
+### P4-A - SaaS console domain separation
+
+Status: locally implemented and validated as a candidate on 2026-10-11; not
+deployed. ADR-020 keeps Better Auth and the OAuth issuer at `auth.wpauto.cc`,
+places the server-rendered console at `app.wpauto.cc`, and uses a short-lived
+one-time handoff to create a hash-only derived app Session. Migration 014 adds
+only handoff and console Session state. OAuth, Connector and direct MCP data
+flow are unchanged. Production cutover is gated on P3-A and separate approval.
 
 ## Deferred and out of scope
 

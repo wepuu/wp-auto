@@ -16,14 +16,15 @@ production Auth0 interactive login and callback gate passed on 2026-10-09;
 the production WordPress end-to-end release gate passed on 2026-10-10 with
 Authorization Code plus PKCE, local RS256 signing, refresh rotation and
 revocation, direct WordPress MCP, and isolated Application Password regression
-evidence. Connector changes and
-Phase 2.0.7B2 remain separately gated. The ADR-018 P1 Better Auth
-account-boundary candidate was implemented and
-locally validated on 2026-10-10 but is not deployed. Production still uses the
-ADR-017/ADR-007 callback until a separate rollout is authorized. The ADR-019
-P2 Email OTP + Resend candidate is implemented and locally validated on
-2026-10-10, removes the Auth0 runtime from the candidate, and is also not
-deployed.
+evidence. Connector changes and Phase 2.0.7B2 remain separately gated.
+ADR-018 P1 Better Auth and ADR-019 P2 Email OTP + Resend are deployed on the
+bounded operator environment; real email delivery, OTP verification, stable
+account mapping and `/app` entry were recorded on 2026-10-11. P3-A remains
+incomplete: PR #33 is merged and CI is green, but its first-authorization fix
+is not yet deployed and the production OAuth/MCP regression has not closed.
+ADR-020 P4-A console-domain separation is a locally validated candidate only.
+It is not deployed and does not authorize DNS, Nginx or production database
+changes.
 
 Until another phase is explicitly approved, work may:
 

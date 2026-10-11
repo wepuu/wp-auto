@@ -164,6 +164,21 @@ These records are WordPress-local and protected using WordPress authorization an
 
 ## Tenant-isolation constraints
 
+### Console authentication boundary
+
+`platform.console_auth_transactions` stores a five-minute login/logout
+transaction: request ID, SHA-256 browser-secret digest, validated app-local
+return path, optional Better Auth Session/account binding, optional SHA-256
+handoff-code digest, expiry and consumption time.
+
+`platform.console_sessions` stores only a SHA-256 digest of the opaque app
+Session token, stable account ID, authoritative Better Auth Session ID,
+authentication/expiry timestamps and revocation time. A foreign key with
+`ON DELETE CASCADE` invalidates derived Sessions when the authority Session is
+deleted. Resolution also requires the authority Session to be unexpired and the
+platform account to remain active. Neither table stores email, OTP, OAuth
+provider tokens, Better Auth Session tokens or WordPress content.
+
 - Tenant-owned tables carry `tenant_id` even when it appears derivable through another relationship.
 - Unique constraints include tenant where global uniqueness is not required.
 - Queries cannot accept a tenant ID from the request as proof of membership.

@@ -79,13 +79,22 @@ database limiter is reached through its HTTP handler; current test-stage
 quotas are keyed by trusted client IP plus route. Email-targeted abuse controls
 must be reassessed before public registration.
 
-Phase 2.0.7A adds `GET /v1/account/tenants`, returning only active tenant
+Phase 2.0.7A adds app-domain `GET /v1/account/tenants`, returning only active tenant
 memberships derived from the authenticated server-side account session. It
 also adds server-rendered `/app` routes over the same repositories. Browser
 mutation forms require the existing session and membership checks plus an
 exact trusted Origin, a double-submit `__Host-wepuu_csrf` value and a bounded
 idempotency key. Existing JSON endpoint payloads remain compatible; revoke and
 disconnect now enforce the same exact-Origin rule as other browser mutations.
+
+ADR-020 assigns the server-rendered `/app/**` surface and its business
+mutations to `https://app.wpauto.cc`. Better Auth, Email OTP, pairing, consent
+and OAuth interaction routes remain at `https://auth.wpauto.cc`. App login uses
+`GET /v1/console/login`, auth-side `GET /v1/account/console/authorize`, and an
+app-side fragment callback followed by `POST /v1/session/exchange`. The query
+contains only an opaque request ID; the one-time code is never placed in a
+query, and the exchange requires the matching host-only browser cookie and
+exact app Origin. Raw Better Auth Session tokens are never returned to app.
 
 Mutations require a bounded `Idempotency-Key`; revoke and disconnect are
 naturally idempotent and return no object-existence signal.
@@ -209,7 +218,7 @@ Metrics are operational/security measurements, not product content telemetry. An
   bounded, content-free pagination. `outcome` is limited to `success`, `denied`
   or `error`.
 - `GET /app/compatibility` publishes evidence-backed client support only.
-- `GET /app/readiness` and authenticated
+- `GET /app/readiness` and authenticated app-domain
   `GET /v1/account/deployment-readiness` return release categories and status;
   they never return environment values, secrets, credential paths or custody references.
 - `GET /livez` proves process liveness. `GET /readyz` performs the existing

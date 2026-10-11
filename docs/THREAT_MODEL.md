@@ -68,6 +68,7 @@ compromise can still copy the key and is an accepted residual risk.
 | T24 | Release placeholder presented as production fact | public-mode schema rejects placeholders, mutable revisions and missing policy metadata | staging/production configuration tests |
 | T25 | Operations endpoint leaks tenant/content data | dedicated secret, generic denial, aggregate fixed-label metrics only | token denial and content-canary tests |
 | T26 | Metrics token reused as OAuth authority | separate environment value and endpoint-only comparison; never enters session/token code | route and secret-absence review |
+| T28 | Cross-subdomain Session theft or handoff replay | no parent-domain cookie, host-only `__Host-` cookies, five-minute transaction, fragment-only one-time code, hash-only storage, exact Host/Origin, authority-Session linkage and atomic consumption | cross-host, tamper, expiry, replay, cascade and suspended-account tests |
 
 Phase 2.0.6 adds an internal content-free deletion lifecycle. It revokes
 sessions, grants, refresh families, and site trust immediately, waits through

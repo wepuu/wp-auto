@@ -45,12 +45,15 @@ direct-MCP acceptance flow passed by 2026-10-10. This remains an operator
 validation deployment: connector changes, general release expansion and Phase
 2.0.7B2 are not authorized.
 
-The P1 Better Auth account boundary is implemented and locally validated. The
-P2 Email OTP candidate replaces its temporary Auth0 runtime with Better Auth's
-official Email OTP plugin and a Resend adapter while preserving
-`platform.accounts.id` as the stable OAuth subject. P2 is not deployed;
-production continues to run the separately authorized ADR-017 image until a
-rollout is explicitly approved. See ADR-018 and ADR-019.
+The P1 Better Auth account boundary and P2 Email OTP + Resend runtime are
+deployed in the bounded operator environment. Real email delivery, OTP
+verification, stable account mapping and `/app` entry passed on 2026-10-11.
+P3-A is not closed: the first-authorization fix in PR #33 is merged but not yet
+deployed and the current Email OTP OAuth/MCP production regression remains
+incomplete. P4-A is a local candidate that separates the SaaS console onto
+`app.wpauto.cc` while retaining Better Auth and the OAuth issuer on
+`auth.wpauto.cc`; no P4-A production change is authorized. See ADR-018 through
+ADR-020 and the corresponding validation records.
 
 ## Architecture
 
