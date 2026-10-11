@@ -101,6 +101,7 @@ export interface CreateAccountAuthOptions {
 }
 
 export interface AccountAuthSession {
+  readonly sessionId: string;
   readonly userId: string;
   readonly createdAt: Date;
   readonly expiresAt: Date;
@@ -330,6 +331,7 @@ export function createAccountAuth(options: CreateAccountAuthOptions): AccountAut
       });
       if (value === null) return undefined;
       return {
+        sessionId: value.session.id,
         userId: value.user.id,
         createdAt: value.session.createdAt,
         expiresAt: value.session.expiresAt
@@ -365,7 +367,13 @@ export async function accountAuthFromEnvironment(
   }>
 ): Promise<AccountAuth> {
   const databaseUrl = environment['WEPUU_DATABASE_URL'];
-  const publicOrigin = environment['WEPUU_CONTROL_PUBLIC_ORIGIN'];
+  const authOrigin = environment['WEPUU_AUTH_PUBLIC_ORIGIN'];
+  const legacyOrigin = environment['WEPUU_CONTROL_PUBLIC_ORIGIN'];
+  if (authOrigin !== undefined && legacyOrigin !== undefined
+      && exactHttpsOrigin(authOrigin) !== exactHttpsOrigin(legacyOrigin)) {
+    throw new Error('account_auth_public_origin_conflict');
+  }
+  const publicOrigin = authOrigin ?? legacyOrigin;
   const secretFile = environment['WEPUU_ACCOUNT_AUTH_SECRETS_FILE'];
   if (databaseUrl === undefined || publicOrigin === undefined || secretFile === undefined) {
     throw new Error('account_auth_environment_incomplete');

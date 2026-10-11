@@ -31,6 +31,9 @@ The control plane may know that a tenant paired an exact canonical MCP endpoint.
 - Manages platform accounts, tenants, site records, pairing attempts, consent orchestration, grant listings, and revocation.
 - Cannot mint arbitrary user tokens from an administrator console.
 - Uses explicit tenant membership and authorization on every object operation.
+- The SaaS console is served from `app.wpauto.cc`; account login, pairing and
+  consent ceremonies remain on `auth.wpauto.cc`. Both origins may route to the
+  same control-api process, with exact Host and Origin enforcement.
 
 ### Account authentication boundary
 
@@ -47,6 +50,11 @@ The control plane may know that a tenant paired an exact canonical MCP endpoint.
   Resend is only the delivery adapter; it is not an identity store. A future
   Google login can use the same account boundary without replacing
   node-oidc-provider or automatically linking accounts by matching email.
+- Better Auth's host-only Session never crosses to the app origin. A five-minute
+  one-time fragment handoff creates an opaque, hash-only console Session linked
+  to the exact Better Auth Session. The derived Session has no refresh, expires
+  within the same 12-hour absolute boundary and is invalid when its authority
+  Session or platform account is no longer active.
 
 ### WordPress connector resource server
 

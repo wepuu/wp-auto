@@ -5,17 +5,20 @@ projects. It uses the `wpauto` Compose project, the `172.30.50.0/24` Docker
 subnet, loopback ports 3000/3001 and `/opt/wpauto`. It does not modify an
 existing Docker network or the BaoTa Nginx main configuration.
 
-## Public origin
+## Public origins
 
-- Origin and OAuth issuer: `https://auth.wpauto.cc`
-- P2 candidate account login: `https://auth.wpauto.cc/v1/account/login`
+- Account authentication and OAuth issuer: `https://auth.wpauto.cc`
+- SaaS console: `https://app.wpauto.cc`
+- Email login: `https://auth.wpauto.cc/v1/account/login`
 
-The P2 Compose template in this directory is not deployed by the repository
-change. The currently running ADR-017 image continues to use its historical
-Auth0 callback until a separate rollout is authorized.
+The P4-A Compose and vhost templates in this directory are not deployed by the
+repository change. P3-A completion, a database backup and separate deployment
+approval are required before migration 014 or the app vhost is activated.
 
-The Nginx vhost routes only the established OAuth/JWKS paths to port 3001 and
-routes the control shell to port 3000. `/internal/metrics` is not public.
+The auth Nginx vhost routes only established OAuth/JWKS paths to port 3001 and
+auth ceremonies to port 3000. The app vhost routes only to port 3000 and
+rejects OAuth, discovery and raw Better Auth paths. `/internal/metrics` is not
+public on either origin.
 
 ## Host layout
 
@@ -68,7 +71,8 @@ fixed acceptance webroot and never prints certificate private material.
 4. Write the public keyring slot, publish the public JWK, and wait a real 20
    minutes before activation. Do not backdate production metadata.
 5. Activate the key, then start the control and authorization services.
-6. Install the dedicated BaoTa Nginx vhost only after `nginx -t` succeeds.
+6. Install each dedicated BaoTa Nginx vhost only after its certificate exists
+   and `nginx -t` succeeds.
 
 Install `cloudflare-realip.conf` with the auth vhost and review it against
 Cloudflare's published IP ranges before every rollout. Nginx trusts
@@ -92,9 +96,9 @@ BaoTa-managed certificate can renew without changing another site.
 - no private key, passphrase, Resend API key, OTP or WordPress content appears in
   logs, images, PostgreSQL metadata or public responses.
 
-The bounded ADR-017 production acceptance passed on 2026-10-10 using the old
-ADR-007 callback. The P1 callback and account schema are not deployed by this
-repository change. For ongoing checks,
+The bounded ADR-017 OAuth/MCP acceptance passed on 2026-10-10. Better Auth and
+Email OTP browser entry passed in production on 2026-10-11, while P3-A remains
+open. P4-A is not deployed by this repository change. For ongoing checks,
 run `pnpm check:production:public` from a trusted workstation and follow
 `docs/ADR_017_OPERATIONS_RUNBOOK.md`. The public probe is content-free and does
 not replace the VPS file-permission, certificate, disk, backup-restore or

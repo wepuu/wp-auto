@@ -10,6 +10,7 @@ import {
   SessionAccountIdentityProvider,
   type AccountIdentityProvider,
   type AccountLoginTransactionStore,
+  type ConsoleAuthStore,
   type ControlStore,
   type PairingOperations
 } from './server.js';
@@ -123,6 +124,110 @@ class MemoryLoginTransactions implements AccountLoginTransactionStore {
     });
   }
 }
+
+class MemoryConsoleAuth implements ConsoleAuthStore {
+  readonly requestId = `console_${'r'.repeat(32)}`;
+  readonly browserSecret = 'b'.repeat(43);
+  readonly code = 'c'.repeat(43);
+  consumed = false;
+  createLogin(returnPath: string) {
+    return Promise.resolve({
+      requestId: this.requestId, browserSecret: this.browserSecret,
+      returnPath, expiresAt: new Date(Date.now() + 300_000)
+    });
+  }
+  authorizeLogin() {
+    return Promise.resolve({ requestId: this.requestId, code: this.code, expiresAt: new Date(Date.now() + 300_000) });
+  }
+  exchangeLogin(input: { requestId: string; browserSecret: string; code: string }) {
+    if (input.requestId !== this.requestId || input.browserSecret !== this.browserSecret || input.code !== this.code
+        || this.consumed) return Promise.reject(new Error('invalid'));
+    this.consumed = true;
+    return Promise.resolve({
+      token: 's'.repeat(43), accountId: 'account_12345678', authenticationTime: 1,
+      returnPath: '/app/account', expiresAt: new Date(Date.now() + 43_200_000)
+    });
+  }
+  resolveSession() { return Promise.resolve(undefined); }
+  beginLogout() { return Promise.resolve({ requestId: `console_${'l'.repeat(32)}` }); }
+  validateLogout() { return Promise.resolve('/app'); }
+}
+
+void test('split domains use a fragment handoff and independent host-only console session', async () => {
+  const accountAuth = new StaticAccountAuth();
+  accountAuth.session = {
+    sessionId: 'auth_session_console', userId: 'auth_user_console',
+    createdAt: new Date(), expiresAt: new Date(Date.now() + 43_200_000)
+  };
+  const consoleAuth = new MemoryConsoleAuth();
+  const app = buildControlApi({
+    identityProvider: new StaticIdentity({
+      accountId: 'account_12345678', authenticationTime: 1, authenticationMethod: 'email_otp'
+    }),
+    consoleIdentityProvider: new StaticIdentity(), consoleAuth,
+    store: new StaticStore(), audit: new MemoryAudit(), accountAuth,
+    authOrigin: 'https://auth.example.test', appOrigin: 'https://app.example.test'
+  });
+
+  const start = await app.inject({
+    method: 'GET', url: '/v1/console/login?return_to=%2Fapp%2Faccount', headers: { host: 'app.example.test' }
+  });
+  assert.equal(start.statusCode, 303);
+  assert.equal(start.headers.location,
+    `https://auth.example.test/v1/account/console/authorize?request=${consoleAuth.requestId}`);
+  const loginCookieName = `__Host-wepuu_console_login_${consoleAuth.requestId}`;
+  assert.match(String(start.headers['set-cookie']), new RegExp(`${loginCookieName}=`));
+  assert.doesNotMatch(String(start.headers['set-cookie']), /Domain=/ui);
+
+  const authorize = await app.inject({
+    method: 'GET', url: `/v1/account/console/authorize?request=${consoleAuth.requestId}`,
+    headers: { host: 'auth.example.test', cookie: '__Host-wepuu_session=authority' }
+  });
+  assert.equal(authorize.statusCode, 303);
+  const callback = new URL(String(authorize.headers.location));
+  assert.equal(callback.origin, 'https://app.example.test');
+  assert.equal(callback.pathname, '/v1/session/callback');
+  assert.equal(callback.search, '');
+  assert.equal(new URLSearchParams(callback.hash.slice(1)).get('code'), consoleAuth.code);
+
+  const exchange = await app.inject({
+    method: 'POST', url: '/v1/session/exchange',
+    headers: {
+      host: 'app.example.test', origin: 'https://app.example.test',
+      cookie: `${loginCookieName}=${consoleAuth.browserSecret}`,
+      'content-type': 'application/json'
+    },
+    payload: { request: consoleAuth.requestId, code: consoleAuth.code }
+  });
+  assert.equal(exchange.statusCode, 200);
+  assert.deepEqual(exchange.json(), { location: '/app/account' });
+  assert.match(String(exchange.headers['set-cookie']), /__Host-wepuu_console=/u);
+  assert.doesNotMatch(String(exchange.headers['set-cookie']), /__Host-wepuu_session=/u);
+  assert.doesNotMatch(String(exchange.headers['set-cookie']), /Domain=/ui);
+
+  const replay = await app.inject({
+    method: 'POST', url: '/v1/session/exchange',
+    headers: {
+      host: 'app.example.test', origin: 'https://app.example.test',
+      cookie: `${loginCookieName}=${consoleAuth.browserSecret}`,
+      'content-type': 'application/json'
+    },
+    payload: { request: consoleAuth.requestId, code: consoleAuth.code }
+  });
+  assert.equal(replay.statusCode, 400);
+
+  const legacy = await app.inject({ method: 'GET', url: '/app/account', headers: { host: 'auth.example.test' } });
+  assert.equal(legacy.statusCode, 303);
+  assert.equal(legacy.headers.location, 'https://app.example.test/app/account');
+
+  for (const path of ['/v1/account/tenants', '/v1/account/deployment-readiness']) {
+    const appBoundary = await app.inject({ method: 'GET', url: path, headers: { host: 'app.example.test' } });
+    assert.notEqual(appBoundary.statusCode, 404);
+    const authBoundary = await app.inject({ method: 'GET', url: path, headers: { host: 'auth.example.test' } });
+    assert.equal(authBoundary.statusCode, 404);
+  }
+  await app.close();
+});
 
 void test('raw Better Auth routes are not public', async () => {
   const accountAuth = new StaticAccountAuth();
@@ -622,7 +727,8 @@ void test('SSR workspace redirects unauthenticated users and renders a content-f
 void test('bootstrap failure preserves the Better Auth session and offers an idempotent retry', async () => {
   const accountAuth = new StaticAccountAuth();
   accountAuth.sessionAfterHandle = {
-    userId: 'auth_user_retry', createdAt: new Date(), expiresAt: new Date(Date.now() + 60_000)
+    sessionId: 'auth_session_retry', userId: 'auth_user_retry',
+    createdAt: new Date(), expiresAt: new Date(Date.now() + 60_000)
   };
   const transactions = new MemoryLoginTransactions();
   transactions.failCompletion = true;

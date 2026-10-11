@@ -70,6 +70,15 @@ const ActivityQuerySchema = z.object({
 }).strict();
 const IdempotencyKeySchema = z.string().regex(/^[A-Za-z0-9_-]{16,128}$/u);
 const AccountLoginQuerySchema = z.object({ return_to: z.string().max(2_048).optional() }).strict();
+const ConsoleRequestQuerySchema = z.object({ request: z.string().regex(/^console_[A-Za-z0-9_-]{32}$/u) }).strict();
+const ConsoleExchangeSchema = z.object({
+  request: z.string().regex(/^console_[A-Za-z0-9_-]{32}$/u),
+  code: z.string().regex(/^[A-Za-z0-9_-]{43}$/u)
+}).strict();
+const ConsoleLogoutSchema = z.object({
+  csrf: z.string().regex(/^[A-Za-z0-9_-]{43}$/u),
+  request: z.string().regex(/^console_[A-Za-z0-9_-]{32}$/u)
+}).strict();
 const LoginTransactionSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/u);
 const LoginMutationBaseSchema = z.object({
   csrf: z.string().regex(/^[A-Za-z0-9_-]{43}$/u),
@@ -105,6 +114,8 @@ const OAuthConsentBootstrapClaimsSchema = z.object({
 }).strict();
 const SESSION_COOKIE = '__Host-wepuu_session';
 const CSRF_COOKIE = '__Host-wepuu_csrf';
+const CONSOLE_SESSION_COOKIE = '__Host-wepuu_console';
+const CONSOLE_LOGIN_COOKIE_PREFIX = '__Host-wepuu_console_login_';
 const UiFormSchema = z.object({
   csrf: z.string().regex(/^[A-Za-z0-9_-]{43}$/u),
   idempotency_key: IdempotencyKeySchema
@@ -122,6 +133,27 @@ export class DenyAllAccountIdentityProvider implements AccountIdentityProvider {
 
 export interface AccountSessionStore {
   resolve(sessionHash: Uint8Array): Promise<{ accountId: string; authenticationTime: number } | undefined>;
+}
+
+export interface ConsoleAuthStore {
+  createLogin(returnPath: string): Promise<{
+    readonly requestId: string; readonly browserSecret: string; readonly expiresAt: Date;
+  }>;
+  authorizeLogin(input: {
+    readonly requestId: string; readonly authSessionId: string; readonly accountId: string;
+    readonly authExpiresAt: Date;
+  }): Promise<{ readonly requestId: string; readonly code: string; readonly expiresAt: Date }>;
+  exchangeLogin(input: {
+    readonly requestId: string; readonly browserSecret: string; readonly code: string;
+  }): Promise<{
+    readonly token: string; readonly accountId: string; readonly authenticationTime: number;
+    readonly returnPath: string; readonly expiresAt: Date;
+  }>;
+  resolveSession(sessionHash: Uint8Array): Promise<{
+    readonly accountId: string; readonly authenticationTime: number;
+  } | undefined>;
+  beginLogout(sessionHash: Uint8Array, returnPath: string): Promise<{ readonly requestId: string }>;
+  validateLogout(requestId: string, authSessionId: string, consume?: boolean): Promise<string>;
 }
 
 export interface AccountAuthLinkStore {
@@ -204,6 +236,10 @@ function secureCookie(name: string, value: string, maxAgeSeconds: number): strin
   return `${name}=${value}; Max-Age=${String(Math.max(0, Math.trunc(maxAgeSeconds)))}; Path=/; Secure; HttpOnly; SameSite=Lax`;
 }
 
+function consoleLoginCookieName(requestId: string): string {
+  return `${CONSOLE_LOGIN_COOKIE_PREFIX}${requestId}`;
+}
+
 function clearCookie(name: string): string {
   return secureCookie(name, '', 0);
 }
@@ -233,6 +269,25 @@ export class SessionAccountIdentityProvider implements AccountIdentityProvider {
       accountId: session.accountId,
       authenticationTime: session.authenticationTime,
       authenticationMethod: 'oidc'
+    });
+  }
+}
+
+export class ConsoleSessionAccountIdentityProvider implements AccountIdentityProvider {
+  readonly #sessions: Pick<ConsoleAuthStore, 'resolveSession'>;
+
+  constructor(sessions: Pick<ConsoleAuthStore, 'resolveSession'>) {
+    this.#sessions = sessions;
+  }
+
+  async authenticate(request: FastifyRequest): Promise<AccountPrincipal | undefined> {
+    const token = requestCookie(request, CONSOLE_SESSION_COOKIE);
+    if (token === undefined || !/^[A-Za-z0-9_-]{43}$/u.test(token)) return undefined;
+    const session = await this.#sessions.resolveSession(createHash('sha256').update(token, 'utf8').digest());
+    return session === undefined ? undefined : AccountPrincipalSchema.parse({
+      accountId: session.accountId,
+      authenticationTime: session.authenticationTime,
+      authenticationMethod: 'email_otp'
     });
   }
 }
@@ -304,7 +359,11 @@ export interface ControlApiOptions {
   readonly readiness?: () => Promise<void>;
   readonly accountAuth?: AccountAuth;
   readonly loginTransactions?: AccountLoginTransactionStore;
+  readonly consoleAuth?: ConsoleAuthStore;
+  readonly consoleIdentityProvider?: AccountIdentityProvider;
   readonly publicOrigin?: string;
+  readonly authOrigin?: string;
+  readonly appOrigin?: string;
   readonly pairing?: PairingOperations;
   readonly grants?: GrantOperations;
   readonly oauthIssuer?: string;
@@ -523,15 +582,41 @@ const emailOtpScript = `(() => {
   setTimeout(tick, 1000);
 })();`;
 
+const consoleHandoffScript = `(() => {
+  const status = document.getElementById('status');
+  const parameters = new URLSearchParams(location.hash.slice(1));
+  const request = parameters.get('request');
+  const code = parameters.get('code');
+  history.replaceState(null, '', location.pathname);
+  if (!(status instanceof HTMLElement) || request === null || code === null) {
+    if (status instanceof HTMLElement) status.textContent = 'This sign-in link is invalid or expired.';
+    return;
+  }
+  fetch('/v1/session/exchange', {
+    method: 'POST', credentials: 'same-origin',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ request, code })
+  }).then(async (response) => {
+    if (!response.ok) throw new Error('exchange_failed');
+    const body = await response.json();
+    if (typeof body.location !== 'string' || !body.location.startsWith('/app')) throw new Error('location_invalid');
+    location.replace(body.location);
+  }).catch(() => { status.textContent = 'Sign-in could not be completed. Start again from the console.'; });
+})();`;
+
 function correlationId(): string {
   return randomBytes(18).toString('base64url');
 }
 
 export function buildControlApi(options: ControlApiOptions): FastifyInstance {
+  const authOrigin = new URL(options.authOrigin ?? options.publicOrigin ?? 'https://platform.example.test').origin;
+  const appOrigin = new URL(options.appOrigin ?? options.publicOrigin ?? authOrigin).origin;
+  const splitOrigins = authOrigin !== appOrigin;
   const deployment = options.deployment ?? loadPublicDeploymentConfig({
     WEPUU_DEPLOYMENT_MODE: 'test',
-    WEPUU_CONTROL_PUBLIC_ORIGIN: options.publicOrigin ?? 'https://platform.example.test'
-  }, options.publicOrigin);
+    WEPUU_APP_PUBLIC_ORIGIN: appOrigin,
+    WEPUU_CONTROL_PUBLIC_ORIGIN: appOrigin
+  }, appOrigin);
   const app = Fastify({
     logger: false,
     bodyLimit: 16 * 1024,
@@ -558,6 +643,37 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
     }
   });
 
+  function requestBoundary(request: FastifyRequest): 'auth' | 'app' | 'unknown' {
+    if (!splitOrigins) return 'auth';
+    const host = request.headers.host?.toLowerCase();
+    if (host === new URL(authOrigin).host.toLowerCase()) return 'auth';
+    if (host === new URL(appOrigin).host.toLowerCase()) return 'app';
+    return 'unknown';
+  }
+
+  app.addHook('preHandler', async (request, reply) => {
+    if (!splitOrigins) return;
+    const path = (request.raw.url ?? '/').split('?', 1)[0] ?? '/';
+    const boundary = requestBoundary(request);
+    const appAccountRoute = path === '/v1/account/tenants'
+      || path === '/v1/account/deployment-readiness';
+    const authOnly = (path.startsWith('/v1/account') && !appAccountRoute) || path.startsWith('/v1/pairing')
+      || path.startsWith('/v1/consent') || path.startsWith('/v1/oauth')
+      || /^\/v1\/tenants\/[^/]+\/pairing$/u.test(path)
+      || /^\/v1\/tenants\/[^/]+\/grants\/[^/]+\/complete$/u.test(path);
+    const appOnly = path.startsWith('/app') || path.startsWith('/v1/console')
+      || path.startsWith('/v1/session') || appAccountRoute
+      || (path.startsWith('/v1/tenants') && !authOnly);
+    if (path.startsWith('/app') && boundary === 'auth') {
+      return reply.status(303).header('cache-control', 'no-store')
+        .header('location', new URL(request.raw.url ?? '/app', appOrigin).href).send();
+    }
+    if (boundary === 'unknown'
+        || (appOnly && boundary !== 'app') || (authOnly && boundary !== 'auth')) {
+      throw new PlatformError('not_found', 404);
+    }
+  });
+
   async function safeAudit(event: SecurityAuditEvent): Promise<void> {
     try {
       await options.audit.write(event);
@@ -567,7 +683,7 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
   }
 
   async function requestContext(request: FastifyRequest): Promise<TenantContext> {
-    const principal = await options.identityProvider.authenticate(request);
+    const principal = await identityProviderFor(request).authenticate(request);
     const parsed = TenantParamsSchema.safeParse(request.params);
     const requestCorrelationId = correlationId();
     if (principal === undefined) {
@@ -593,9 +709,17 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
   }
 
   async function authenticatedPrincipal(request: FastifyRequest): Promise<AccountPrincipal> {
-    const principal = await options.identityProvider.authenticate(request);
+    const principal = await identityProviderFor(request).authenticate(request);
     if (principal === undefined) throw new PlatformError('unauthenticated', 401);
     return AccountPrincipalSchema.parse(principal);
+  }
+
+  function identityProviderFor(request: FastifyRequest): AccountIdentityProvider {
+    if (splitOrigins && requestBoundary(request) === 'app') {
+      if (options.consoleIdentityProvider === undefined) throw new PlatformError('temporarily_unavailable', 503);
+      return options.consoleIdentityProvider;
+    }
+    return options.identityProvider;
   }
 
   function uiCsrf(request: FastifyRequest): { readonly value: string; readonly setCookie?: string } {
@@ -606,7 +730,7 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
   }
 
   function validateUiMutation(request: FastifyRequest): z.infer<typeof UiFormSchema> {
-    if (options.publicOrigin === undefined || request.headers.origin !== options.publicOrigin) {
+    if (request.headers.origin !== appOrigin) {
       throw new PlatformError('forbidden', 403);
     }
     const formInput = typeof request.body === 'string'
@@ -621,7 +745,7 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
   }
 
   function loginFormInput(request: FastifyRequest): Record<string, unknown> {
-    if (options.publicOrigin === undefined || request.headers.origin !== options.publicOrigin) {
+    if (request.headers.origin !== authOrigin) {
       throw new PlatformError('forbidden', 403);
     }
     if (typeof request.body === 'string') return Object.fromEntries(new URLSearchParams(request.body));
@@ -647,18 +771,18 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
     body: Record<string, string>,
     deliveryId?: string
   ): Promise<Response> {
-    if (options.accountAuth === undefined || options.publicOrigin === undefined) {
+    if (options.accountAuth === undefined) {
       throw new PlatformError('temporarily_unavailable', 503);
     }
     const headers = new Headers({
-      origin: options.publicOrigin,
+      origin: authOrigin,
       'content-type': 'application/json',
       [ACCOUNT_AUTH_CLIENT_IP_HEADER]: request.ip
     });
     if (deliveryId !== undefined) headers.set(ACCOUNT_AUTH_DELIVERY_ID_HEADER, deliveryId);
     if (request.headers.cookie !== undefined) headers.set('cookie', request.headers.cookie);
     if (request.headers['user-agent'] !== undefined) headers.set('user-agent', request.headers['user-agent']);
-    return options.accountAuth.handle(new Request(new URL(`/api/auth${path}`, options.publicOrigin), {
+    return options.accountAuth.handle(new Request(new URL(`/api/auth${path}`, authOrigin), {
       method: 'POST', headers, body: JSON.stringify(body)
     }));
   }
@@ -712,9 +836,12 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
       return await membershipsFor(request);
     } catch (error) {
       if (error instanceof PlatformError && error.code === 'unauthenticated') {
-        const returnTo = new URL(request.raw.url ?? '/app', deployment.publicOrigin).pathname;
+        const target = new URL(request.raw.url ?? '/app', appOrigin);
+        const returnTo = `${target.pathname}${target.search}`;
         await reply.status(303).header('cache-control', 'no-store')
-          .header('location', `/v1/account/login?return_to=${encodeURIComponent(returnTo)}`).send();
+          .header('location', splitOrigins
+            ? `/v1/console/login?return_to=${encodeURIComponent(returnTo)}`
+            : `/v1/account/login?return_to=${encodeURIComponent(returnTo)}`).send();
         return undefined;
       }
       throw error;
@@ -804,6 +931,12 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
     .type('text/javascript; charset=utf-8')
     .send(emailOtpScript));
 
+  app.get('/assets/console-handoff-v1.js', async (_request, reply) => reply
+    .header('cache-control', 'public, max-age=31536000, immutable')
+    .header('x-content-type-options', 'nosniff')
+    .type('text/javascript; charset=utf-8')
+    .send(consoleHandoffScript));
+
   const live = async (_request: FastifyRequest, reply: FastifyReply): Promise<unknown> =>
     reply.header('cache-control', 'no-store').send({ status: 'live' });
   const ready = async (_request: FastifyRequest, reply: FastifyReply): Promise<unknown> => {
@@ -860,8 +993,120 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
       }));
   });
 
+  app.get('/v1/console/login', async (request, reply) => {
+    if (options.consoleAuth === undefined) throw new PlatformError('temporarily_unavailable', 503);
+    const query = AccountLoginQuerySchema.safeParse(request.query);
+    if (!query.success) throw new PlatformError('invalid_request', 400);
+    const returnPath = validatedReturnTo(query.data.return_to);
+    if (!returnPath.startsWith('/app')) throw new PlatformError('invalid_request', 400);
+    const transaction = await options.consoleAuth.createLogin(returnPath);
+    const maxAge = Math.max(1, Math.floor((transaction.expiresAt.getTime() - Date.now()) / 1_000));
+    const authorizeUrl = new URL('/v1/account/console/authorize', authOrigin);
+    authorizeUrl.searchParams.set('request', transaction.requestId);
+    return reply.status(303).header('cache-control', 'no-store')
+      .header('set-cookie', secureCookie(
+        consoleLoginCookieName(transaction.requestId), transaction.browserSecret, maxAge
+      ))
+      .header('location', authorizeUrl.href).send();
+  });
+
+  app.get('/v1/account/console/authorize', async (request, reply) => {
+    if (options.consoleAuth === undefined || options.accountAuth === undefined) {
+      throw new PlatformError('temporarily_unavailable', 503);
+    }
+    const query = ConsoleRequestQuerySchema.safeParse(request.query);
+    if (!query.success) throw new PlatformError('invalid_request', 400);
+    const session = await options.accountAuth.getSession(accountAuthHeaders(request.headers));
+    if (session === undefined || session.expiresAt.getTime() <= Date.now()) {
+      const returnPath = `/v1/account/console/authorize?request=${encodeURIComponent(query.data.request)}`;
+      return reply.status(303).header('cache-control', 'no-store')
+        .header('location', `/v1/account/login?return_to=${encodeURIComponent(returnPath)}`).send();
+    }
+    const principal = await options.identityProvider.authenticate(request);
+    if (principal === undefined) throw new PlatformError('forbidden', 403);
+    const handoff = await options.consoleAuth.authorizeLogin({
+      requestId: query.data.request,
+      authSessionId: session.sessionId,
+      accountId: principal.accountId,
+      authExpiresAt: session.expiresAt
+    });
+    const callback = new URL('/v1/session/callback', appOrigin);
+    callback.hash = new URLSearchParams({ request: handoff.requestId, code: handoff.code }).toString();
+    return reply.status(303).header('cache-control', 'no-store').header('location', callback.href).send();
+  });
+
+  app.get('/v1/session/callback', async (_request, reply) => htmlHeaders(reply)
+    .type('text/html; charset=utf-8')
+    .send(renderInteractionPage({
+      title: 'WePuu console sign-in',
+      heading: 'Opening your workspace.',
+      message: 'Completing a one-time secure handoff from the identity service.',
+      content: '<p id="status" role="status">Completing sign-in&hellip;</p><script src="/assets/console-handoff-v1.js" defer></script>'
+    })));
+
+  app.post('/v1/session/exchange', async (request, reply) => {
+    if (options.consoleAuth === undefined || request.headers.origin !== appOrigin) {
+      throw new PlatformError('forbidden', 403);
+    }
+    const body = ConsoleExchangeSchema.safeParse(request.body);
+    const browserSecret = body.success
+      ? requestCookie(request, consoleLoginCookieName(body.data.request))
+      : undefined;
+    if (!body.success || browserSecret === undefined) throw new PlatformError('invalid_request', 400);
+    try {
+      const session = await options.consoleAuth.exchangeLogin({
+        requestId: body.data.request,
+        browserSecret,
+        code: body.data.code
+      });
+      const maxAge = Math.max(1, Math.floor((session.expiresAt.getTime() - Date.now()) / 1_000));
+      return await reply.header('cache-control', 'no-store')
+        .header('set-cookie', [
+          secureCookie(CONSOLE_SESSION_COOKIE, session.token, maxAge),
+          clearCookie(consoleLoginCookieName(body.data.request))
+        ]).send({ location: session.returnPath });
+    } catch {
+      throw new PlatformError('invalid_request', 400);
+    }
+  });
+
+  app.get('/v1/account/console/logout', async (request, reply) => {
+    if (options.consoleAuth === undefined || options.accountAuth === undefined) {
+      throw new PlatformError('temporarily_unavailable', 503);
+    }
+    const query = ConsoleRequestQuerySchema.safeParse(request.query);
+    if (!query.success) throw new PlatformError('invalid_request', 400);
+    const session = await options.accountAuth.getSession(accountAuthHeaders(request.headers));
+    if (session === undefined) {
+      return reply.status(303).header('cache-control', 'no-store').header('location', appOrigin).send();
+    }
+    await options.consoleAuth.validateLogout(query.data.request, session.sessionId);
+    const csrf = uiCsrf(request);
+    return htmlHeaders(reply, csrf.setCookie).type('text/html; charset=utf-8').send(renderInteractionPage({
+      title: 'Sign out of WePuu',
+      heading: 'Sign out on this browser?',
+      message: 'This ends both the console session and its authoritative identity session.',
+      content: `<form class="auth-form" method="post" action="/v1/account/console/logout"><input type="hidden" name="csrf" value="${csrf.value}"><input type="hidden" name="request" value="${query.data.request}"><button type="submit">Sign out</button></form>`
+    }));
+  });
+
+  app.post('/v1/account/console/logout', async (request, reply) => {
+    if (options.consoleAuth === undefined || options.accountAuth === undefined) {
+      throw new PlatformError('temporarily_unavailable', 503);
+    }
+    const form = validateLoginMutation(request, ConsoleLogoutSchema);
+    const session = await options.accountAuth.getSession(accountAuthHeaders(request.headers));
+    if (session === undefined) throw new PlatformError('unauthenticated', 401);
+    const returnPath = await options.consoleAuth.validateLogout(form.request, session.sessionId, true);
+    const response = await options.accountAuth.signOut(accountAuthHeaders(request.headers));
+    const location = new URL(returnPath, appOrigin);
+    return reply.status(303).header('cache-control', 'no-store')
+      .header('set-cookie', [...response.headers.getSetCookie(), clearCookie(CSRF_COOKIE)])
+      .header('location', location.href).send();
+  });
+
   app.get('/v1/account/login', async (request, reply) => {
-    if (options.accountAuth === undefined || options.publicOrigin === undefined
+    if (options.accountAuth === undefined
       || options.loginTransactions === undefined) {
       throw new PlatformError('temporarily_unavailable', 503);
     }
@@ -1005,7 +1250,7 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
     .header('cache-control', 'no-store').send({ error: 'not_found' }));
 
   app.get('/v1/account/session', async (request, reply) => {
-    const principal = await options.identityProvider.authenticate(request);
+    const principal = await identityProviderFor(request).authenticate(request);
     if (principal === undefined) {
       return reply.status(401).header('cache-control', 'no-store').send({ error: 'unauthenticated' });
     }
@@ -1018,14 +1263,15 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
   });
 
   app.post('/v1/account/logout', async (request, reply) => {
-    if (options.accountAuth === undefined || options.publicOrigin === undefined) {
+    if (options.accountAuth === undefined) {
       throw new PlatformError('temporarily_unavailable', 503);
     }
-    if (request.headers.origin !== options.publicOrigin) throw new PlatformError('forbidden', 403);
+    if (request.headers.origin !== authOrigin) throw new PlatformError('forbidden', 403);
     return sendAccountAuthResponse(reply, await options.accountAuth.signOut(accountAuthHeaders(request.headers)));
   });
 
-  app.get('/', async (_request, reply) => reply.status(303).header('cache-control', 'no-store').header('location', '/app').send());
+  app.get('/', async (request, reply) => reply.status(303).header('cache-control', 'no-store')
+    .header('location', requestBoundary(request) === 'auth' && splitOrigins ? appOrigin : '/app').send());
 
   app.get('/app', async (request, reply) => {
     const account = await uiMembershipsFor(request, reply);
@@ -1115,6 +1361,19 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
 
   app.post('/app/logout', async (request, reply) => {
     validateUiMutation(request);
+    if (splitOrigins) {
+      if (options.consoleAuth === undefined) throw new PlatformError('temporarily_unavailable', 503);
+      const token = requestCookie(request, CONSOLE_SESSION_COOKIE);
+      if (token === undefined) throw new PlatformError('unauthenticated', 401);
+      const transaction = await options.consoleAuth.beginLogout(
+        createHash('sha256').update(token, 'utf8').digest(), '/app'
+      );
+      const logoutUrl = new URL('/v1/account/console/logout', authOrigin);
+      logoutUrl.searchParams.set('request', transaction.requestId);
+      return reply.status(303).header('cache-control', 'no-store')
+        .header('set-cookie', [clearCookie(CONSOLE_SESSION_COOKIE), clearCookie(CSRF_COOKIE)])
+        .header('location', logoutUrl.href).send();
+    }
     if (options.accountAuth === undefined) throw new PlatformError('temporarily_unavailable', 503);
     const response = await options.accountAuth.signOut(accountAuthHeaders(request.headers));
     const cookies = [...response.headers.getSetCookie(), clearCookie(CSRF_COOKIE)];
@@ -1163,10 +1422,10 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
   });
 
   app.post('/v1/tenants/:tenantId/pairing', async (request, reply) => {
-    if (options.pairing === undefined || options.publicOrigin === undefined) {
+    if (options.pairing === undefined) {
       throw new PlatformError('temporarily_unavailable', 503);
     }
-    if (request.headers.origin !== options.publicOrigin) throw new PlatformError('forbidden', 403);
+    if (request.headers.origin !== authOrigin) throw new PlatformError('forbidden', 403);
     const context = await requestContext(request);
     const body = PairingBodySchema.safeParse(request.body);
     if (!body.success) throw new PlatformError('invalid_request', 400);
@@ -1195,11 +1454,11 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
   });
 
   app.post('/v1/oauth/consent/start', async (request, reply) => {
-    if (options.grants === undefined || options.publicOrigin === undefined || options.oauthIssuer === undefined
+    if (options.grants === undefined || options.oauthIssuer === undefined
       || options.oauthConsentBootstrap === undefined) {
       throw new PlatformError('temporarily_unavailable', 503);
     }
-    if (request.headers.origin !== options.publicOrigin) throw new PlatformError('forbidden', 403);
+    if (request.headers.origin !== authOrigin) throw new PlatformError('forbidden', 403);
     const body = OAuthConsentStartBodySchema.safeParse(request.body);
     if (!body.success) throw new PlatformError('invalid_request', 400);
     const { principal, memberships } = await membershipsFor(request);
@@ -1207,7 +1466,7 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
     try {
       claims = OAuthConsentBootstrapClaimsSchema.parse(await options.oauthConsentBootstrap.verify(body.data.request, {
         issuer: options.oauthIssuer,
-        audience: `${options.publicOrigin}/v1/oauth/consent/start`,
+        audience: `${authOrigin}/v1/oauth/consent/start`,
         subjectId: principal.accountId
       }));
     } catch {
@@ -1265,10 +1524,12 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
   });
 
   app.post('/v1/tenants/:tenantId/sites/:siteId/grants', async (request, reply) => {
-    if (options.grants === undefined || options.publicOrigin === undefined) {
+    if (options.grants === undefined) {
       throw new PlatformError('temporarily_unavailable', 503);
     }
-    if (request.headers.origin !== options.publicOrigin) throw new PlatformError('forbidden', 403);
+    if (request.headers.origin !== (requestBoundary(request) === 'app' ? appOrigin : authOrigin)) {
+      throw new PlatformError('forbidden', 403);
+    }
     const context = await requestContext(request);
     const params = SiteParamsSchema.safeParse(request.params);
     const body = GrantStartBodySchema.safeParse(request.body);
@@ -1298,10 +1559,10 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
   });
 
   app.post('/v1/tenants/:tenantId/grants/:grantId/complete', async (request, reply) => {
-    if (options.grants === undefined || options.publicOrigin === undefined) {
+    if (options.grants === undefined) {
       throw new PlatformError('temporarily_unavailable', 503);
     }
-    if (request.headers.origin !== options.publicOrigin) throw new PlatformError('forbidden', 403);
+    if (request.headers.origin !== authOrigin) throw new PlatformError('forbidden', 403);
     const context = await requestContext(request);
     const params = GrantParamsSchema.safeParse(request.params);
     const body = GrantCompletionBodySchema.safeParse(request.body);
@@ -1330,7 +1591,7 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
   });
 
   app.post('/v1/tenants/:tenantId/grants/:objectId/revoke', async (request, reply) => {
-    if (options.publicOrigin === undefined || request.headers.origin !== options.publicOrigin) {
+    if (request.headers.origin !== appOrigin) {
       throw new PlatformError('forbidden', 403);
     }
     const context = await requestContext(request);
@@ -1342,7 +1603,7 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
   });
 
   app.post('/v1/tenants/:tenantId/sites/:objectId/disconnect', async (request, reply) => {
-    if (options.publicOrigin === undefined || request.headers.origin !== options.publicOrigin) {
+    if (request.headers.origin !== appOrigin) {
       throw new PlatformError('forbidden', 403);
     }
     const context = await requestContext(request);

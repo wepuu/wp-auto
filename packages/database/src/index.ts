@@ -711,6 +711,262 @@ export class PostgresAccountLoginTransactionStore {
   }
 }
 
+export interface ConsoleLoginTransaction {
+  readonly requestId: string;
+  readonly browserSecret: string;
+  readonly returnPath: string;
+  readonly expiresAt: Date;
+}
+
+export interface ConsoleLoginHandoff {
+  readonly requestId: string;
+  readonly code: string;
+  readonly expiresAt: Date;
+}
+
+export interface ConsoleSession {
+  readonly token: string;
+  readonly accountId: string;
+  readonly authenticationTime: number;
+  readonly returnPath: string;
+  readonly expiresAt: Date;
+}
+
+function consoleSecretHash(value: string): Buffer {
+  if (!/^[A-Za-z0-9_-]{43}$/u.test(value)) throw new Error('console_auth_secret_invalid');
+  return createHash('sha256').update(value, 'utf8').digest();
+}
+
+function consoleRequestId(): string {
+  return `console_${randomBytes(24).toString('base64url')}`;
+}
+
+function validConsoleReturnPath(value: string): boolean {
+  return value.length <= 2_048 && value.startsWith('/') && !value.startsWith('//')
+    && !value.includes('\\') && !value.includes('#');
+}
+
+/**
+ * Owns the short-lived auth-to-app handoff and opaque console Sessions. Raw
+ * browser secrets and handoff codes are never persisted.
+ */
+export class PostgresConsoleAuthStore {
+  readonly #database: Database;
+
+  constructor(database: Database) {
+    this.#database = database;
+  }
+
+  async createLogin(returnPath: string, now = new Date()): Promise<ConsoleLoginTransaction> {
+    if (!validConsoleReturnPath(returnPath)) throw new Error('console_return_path_invalid');
+    const requestId = consoleRequestId();
+    const browserSecret = randomBytes(32).toString('base64url');
+    const expiresAt = new Date(now.getTime() + 5 * 60_000);
+    await this.#database.withAccountAuthWriter(async (client) => {
+      await this.#purge(client, now);
+      await client.query(
+        `INSERT INTO platform.console_auth_transactions
+          (request_id, purpose, browser_secret_hash, return_path, created_at, expires_at)
+         VALUES ($1, 'login', $2, $3, $4, $5)`,
+        [requestId, consoleSecretHash(browserSecret), returnPath, now, expiresAt]
+      );
+    });
+    return { requestId, browserSecret, returnPath, expiresAt };
+  }
+
+  async authorizeLogin(input: {
+    readonly requestId: string;
+    readonly authSessionId: string;
+    readonly accountId: string;
+    readonly authExpiresAt: Date;
+    readonly now?: Date;
+  }): Promise<ConsoleLoginHandoff> {
+    const now = input.now ?? new Date();
+    const code = randomBytes(32).toString('base64url');
+    return this.#database.withAccountAuthWriter(async (client) => {
+      const result = await client.query<{
+        purpose: 'login' | 'logout'; expires_at: Date; consumed_at: Date | null;
+        auth_session_id: string | null; account_id: string | null;
+      }>(
+        `SELECT purpose, expires_at, consumed_at, auth_session_id, account_id
+         FROM platform.console_auth_transactions WHERE request_id = $1 FOR UPDATE`,
+        [input.requestId]
+      );
+      const row = result.rows[0];
+      if (row === undefined || row.purpose !== 'login') throw new Error('console_auth_transaction_invalid');
+      if (row.consumed_at !== null) throw new Error('console_auth_transaction_consumed');
+      if (row.expires_at.getTime() <= now.getTime() || input.authExpiresAt.getTime() <= now.getTime()) {
+        throw new Error('console_auth_transaction_expired');
+      }
+      if ((row.auth_session_id !== null && row.auth_session_id !== input.authSessionId)
+          || (row.account_id !== null && row.account_id !== input.accountId)) {
+        throw new Error('console_auth_transaction_binding_mismatch');
+      }
+      const expiresAt = new Date(Math.min(row.expires_at.getTime(), input.authExpiresAt.getTime()));
+      await client.query(
+        `UPDATE platform.console_auth_transactions
+         SET auth_session_id = $2, account_id = $3, handoff_code_hash = $4, expires_at = $5
+         WHERE request_id = $1`,
+        [input.requestId, input.authSessionId, input.accountId, consoleSecretHash(code), expiresAt]
+      );
+      return { requestId: input.requestId, code, expiresAt };
+    });
+  }
+
+  async exchangeLogin(input: {
+    readonly requestId: string;
+    readonly browserSecret: string;
+    readonly code: string;
+    readonly now?: Date;
+  }): Promise<ConsoleSession> {
+    const now = input.now ?? new Date();
+    const token = randomBytes(32).toString('base64url');
+    return this.#database.withAccountAuthWriter(async (client) => {
+      const result = await client.query<{
+        purpose: 'login' | 'logout'; browser_secret_hash: Buffer; return_path: string;
+        auth_session_id: string | null; account_id: string | null; handoff_code_hash: Buffer | null;
+        expires_at: Date; consumed_at: Date | null;
+      }>(
+        `SELECT purpose, browser_secret_hash, return_path, auth_session_id, account_id,
+                handoff_code_hash, expires_at, consumed_at
+         FROM platform.console_auth_transactions WHERE request_id = $1 FOR UPDATE`,
+        [input.requestId]
+      );
+      const row = result.rows[0];
+      if (row === undefined || row.purpose !== 'login' || row.auth_session_id === null
+          || row.account_id === null || row.handoff_code_hash === null) {
+        throw new Error('console_auth_transaction_invalid');
+      }
+      if (row.consumed_at !== null) throw new Error('console_auth_transaction_consumed');
+      if (row.expires_at.getTime() <= now.getTime()) throw new Error('console_auth_transaction_expired');
+      if (!equalDigest(row.browser_secret_hash, consoleSecretHash(input.browserSecret))
+          || !equalDigest(row.handoff_code_hash, consoleSecretHash(input.code))) {
+        throw new Error('console_auth_transaction_invalid');
+      }
+      const authority = await client.query<{
+        created_at: Date; expires_at: Date; status: AccountAuthLink['accountStatus'];
+      }>(
+        `SELECT session_record."createdAt" AS created_at, session_record."expiresAt" AS expires_at,
+                account_record.status
+         FROM auth."session" session_record
+         JOIN platform.account_auth_links link ON link.auth_user_id = session_record."userId"
+         JOIN platform.accounts account_record ON account_record.id = link.account_id
+         WHERE session_record."id" = $1 AND link.account_id = $2`,
+        [row.auth_session_id, row.account_id]
+      );
+      const authorityRow = authority.rows[0];
+      if (authorityRow === undefined || authorityRow.status !== 'active'
+          || authorityRow.expires_at.getTime() <= now.getTime()) {
+        throw new Error('console_auth_authority_invalid');
+      }
+      const expiresAt = new Date(Math.min(authorityRow.expires_at.getTime(), now.getTime() + 12 * 60 * 60_000));
+      await client.query(
+        `INSERT INTO platform.console_sessions
+          (session_hash, account_id, auth_session_id, authenticated_at, created_at, expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [consoleSecretHash(token), row.account_id, row.auth_session_id, authorityRow.created_at, now, expiresAt]
+      );
+      const consumed = await client.query(
+        `UPDATE platform.console_auth_transactions SET consumed_at = $2
+         WHERE request_id = $1 AND consumed_at IS NULL`,
+        [input.requestId, now]
+      );
+      if (consumed.rowCount !== 1) throw new Error('console_auth_transaction_consumed');
+      return {
+        token, accountId: row.account_id,
+        authenticationTime: Math.floor(authorityRow.created_at.getTime() / 1_000),
+        returnPath: row.return_path, expiresAt
+      };
+    });
+  }
+
+  async resolveSession(sessionHash: Uint8Array, now = new Date()): Promise<{
+    readonly accountId: string;
+    readonly authenticationTime: number;
+  } | undefined> {
+    return this.#database.withAccountAuthReader(async (client) => {
+      const result = await client.query<{ account_id: string; authenticated_at: Date }>(
+        `SELECT console.account_id, console.authenticated_at
+         FROM platform.console_sessions console
+         JOIN auth."session" authority ON authority."id" = console.auth_session_id
+         JOIN platform.accounts account_record ON account_record.id = console.account_id
+         WHERE console.session_hash = $1 AND console.expires_at > $2
+           AND console.revoked_at IS NULL AND authority."expiresAt" > $2
+           AND account_record.status = 'active'`,
+        [Buffer.from(sessionHash), now]
+      );
+      const row = result.rows[0];
+      return row === undefined ? undefined : {
+        accountId: row.account_id,
+        authenticationTime: Math.floor(row.authenticated_at.getTime() / 1_000)
+      };
+    });
+  }
+
+  async beginLogout(sessionHash: Uint8Array, returnPath: string, now = new Date()): Promise<{ requestId: string }> {
+    if (!validConsoleReturnPath(returnPath)) throw new Error('console_return_path_invalid');
+    const requestId = consoleRequestId();
+    return this.#database.withAccountAuthWriter(async (client) => {
+      const session = await client.query<{ account_id: string; auth_session_id: string }>(
+        `SELECT account_id, auth_session_id FROM platform.console_sessions
+         WHERE session_hash = $1 AND expires_at > $2 AND revoked_at IS NULL FOR UPDATE`,
+        [Buffer.from(sessionHash), now]
+      );
+      const row = session.rows[0];
+      if (row === undefined) throw new Error('console_session_invalid');
+      await client.query(
+        'UPDATE platform.console_sessions SET revoked_at = $2 WHERE session_hash = $1',
+        [Buffer.from(sessionHash), now]
+      );
+      await client.query(
+        `INSERT INTO platform.console_auth_transactions
+          (request_id, purpose, browser_secret_hash, return_path, auth_session_id, account_id, created_at, expires_at)
+         VALUES ($1, 'logout', $2, $3, $4, $5, $6, $7)`,
+        [requestId, randomBytes(32), returnPath, row.auth_session_id, row.account_id, now,
+          new Date(now.getTime() + 5 * 60_000)]
+      );
+      return { requestId };
+    });
+  }
+
+  async validateLogout(requestId: string, authSessionId: string, consume = false, now = new Date()): Promise<string> {
+    return this.#database.withAccountAuthWriter(async (client) => {
+      const result = await client.query<{ return_path: string; expires_at: Date; consumed_at: Date | null }>(
+        `SELECT return_path, expires_at, consumed_at FROM platform.console_auth_transactions
+         WHERE request_id = $1 AND purpose = 'logout' AND auth_session_id = $2 FOR UPDATE`,
+        [requestId, authSessionId]
+      );
+      const row = result.rows[0];
+      if (row === undefined) throw new Error('console_auth_transaction_invalid');
+      if (row.expires_at.getTime() <= now.getTime()) throw new Error('console_auth_transaction_expired');
+      if (row.consumed_at !== null) throw new Error('console_auth_transaction_consumed');
+      if (consume) await client.query(
+        'UPDATE platform.console_auth_transactions SET consumed_at = $2 WHERE request_id = $1',
+        [requestId, now]
+      );
+      return row.return_path;
+    });
+  }
+
+  async revokeSession(sessionHash: Uint8Array, now = new Date()): Promise<void> {
+    await this.#database.withAccountAuthWriter((client) => client.query(
+      `UPDATE platform.console_sessions SET revoked_at = COALESCE(revoked_at, $2)
+       WHERE session_hash = $1`, [Buffer.from(sessionHash), now]
+    ).then(() => undefined));
+  }
+
+  async #purge(client: PoolClient, now: Date): Promise<void> {
+    await client.query(
+      `DELETE FROM platform.console_auth_transactions WHERE request_id IN (
+         SELECT request_id FROM platform.console_auth_transactions
+         WHERE expires_at < $1::timestamptz - interval '1 day'
+            OR consumed_at < $1::timestamptz - interval '1 day'
+         ORDER BY created_at LIMIT 100
+       )`, [now]
+    );
+  }
+}
+
 export class PostgresAccountRegistry {
   readonly #database: Database;
 

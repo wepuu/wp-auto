@@ -6,6 +6,7 @@ import {
   PostgresAccountAuthLinkStore,
   PostgresAccountLoginTransactionStore,
   PostgresAccountWorkspaceStore,
+  PostgresConsoleAuthStore,
   PostgresGrantRepository,
   PostgresPairingRepository,
   PostgresSecurityAuditSink,
@@ -21,6 +22,7 @@ import { evaluateDeploymentReadiness, loadPublicDeploymentConfig } from '@wepuu/
 import {
   buildControlApi,
   BetterAuthAccountIdentityProvider,
+  ConsoleSessionAccountIdentityProvider,
   PostgresControlStore
 } from './server.js';
 
@@ -28,15 +30,24 @@ const databaseUrl = process.env['WEPUU_DATABASE_URL'];
 if (databaseUrl === undefined || databaseUrl.length === 0) throw new Error('WEPUU_DATABASE_URL is required');
 
 const database = new Database({ connectionString: databaseUrl, applicationName: 'wepuu-control-api' });
-const publicOrigin = process.env['WEPUU_CONTROL_PUBLIC_ORIGIN'];
-if (publicOrigin === undefined) throw new Error('WEPUU_CONTROL_PUBLIC_ORIGIN is required');
-const deployment = loadPublicDeploymentConfig(process.env, publicOrigin);
+const legacyOrigin = process.env['WEPUU_CONTROL_PUBLIC_ORIGIN'];
+const authOrigin = process.env['WEPUU_AUTH_PUBLIC_ORIGIN'] ?? legacyOrigin;
+const appOrigin = process.env['WEPUU_APP_PUBLIC_ORIGIN'] ?? legacyOrigin;
+if (authOrigin === undefined || appOrigin === undefined) {
+  throw new Error('WEPUU_AUTH_PUBLIC_ORIGIN and WEPUU_APP_PUBLIC_ORIGIN are required');
+}
+if ((process.env['WEPUU_AUTH_PUBLIC_ORIGIN'] !== undefined || process.env['WEPUU_APP_PUBLIC_ORIGIN'] !== undefined)
+    && legacyOrigin !== undefined && (legacyOrigin !== authOrigin || legacyOrigin !== appOrigin)) {
+  throw new Error('WEPUU_CONTROL_PUBLIC_ORIGIN conflicts with split public origins');
+}
+const deployment = loadPublicDeploymentConfig(process.env, appOrigin);
 const accountAuth = await accountAuthFromEnvironment(process.env, {
   applicationName: 'wepuu-control-account-auth',
   databaseRole: 'wepuu_account_auth_writer'
 });
 const accountAuthLinks = new PostgresAccountAuthLinkStore(database);
 const loginTransactions = new PostgresAccountLoginTransactionStore(database);
+const consoleAuth = new PostgresConsoleAuthStore(database);
 const platformIssuer = process.env['WEPUU_ISSUER'];
 if (platformIssuer !== undefined && !platformIssuer.startsWith('https://')) throw new Error('WEPUU_ISSUER must use HTTPS');
 const pairingVerifier = new HttpsSiteVerificationClient();
@@ -141,6 +152,8 @@ const app = buildControlApi({
     links: accountAuthLinks,
     provisionMissing: true
   }),
+  consoleIdentityProvider: new ConsoleSessionAccountIdentityProvider(consoleAuth),
+  consoleAuth,
   store: new PostgresControlStore(database),
   audit: new PostgresSecurityAuditSink(database),
   readiness: () => database.checkReady(),
@@ -151,7 +164,8 @@ const app = buildControlApi({
   deploymentReadiness: evaluateDeploymentReadiness(deployment, process.env),
   ...(process.env['WEPUU_OPERATIONS_METRICS_TOKEN'] === undefined
     ? {} : { operationsMetricsToken: process.env['WEPUU_OPERATIONS_METRICS_TOKEN'] }),
-  publicOrigin: new URL(publicOrigin).origin,
+  authOrigin: new URL(authOrigin).origin,
+  appOrigin: new URL(appOrigin).origin,
   ...(platformIssuer === undefined ? {} : { oauthIssuer: platformIssuer }),
   ...(oauthConsentBootstrap === undefined ? {} : { oauthConsentBootstrap }),
   ...(pairing === undefined ? {} : { pairing }),
