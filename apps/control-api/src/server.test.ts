@@ -332,6 +332,22 @@ class StaticGrants {
   }
 }
 
+class StaticOAuthConsentBootstrap {
+  token: string | undefined;
+  subjectId: string | undefined;
+  claims = {
+    interactionUid: 'interaction_12345678', clientId: 'client_00000001',
+    resource: 'https://site.example.test/wp-json/wp-auto/mcp', scopes: ['mcp:read'] as const,
+    subjectId: 'account_12345678', jwtId: 'b'.repeat(32)
+  };
+  verify(token: string, expected: { readonly subjectId: string }) {
+    this.token = token;
+    this.subjectId = expected.subjectId;
+    if (token !== 'signed.bootstrap.request') return Promise.reject(new Error('invalid'));
+    return Promise.resolve(this.claims);
+  }
+}
+
 void test('denies requests without a server-authenticated account and never reflects content', async () => {
   const audit = new MemoryAudit();
   const app = buildControlApi({ identityProvider: new StaticIdentity(), store: new StaticStore(), audit });
@@ -351,7 +367,64 @@ void test('consent completion bootstrap consumes only a fragment and never refle
   assert.equal(response.headers['cache-control'], 'no-store');
   const script = await app.inject({ method: 'GET', url: '/assets/consent-complete-v1.js' });
   assert.equal(script.body.includes('location.hash'), true);
+  const resumeScript = await app.inject({ method: 'GET', url: '/assets/consent-complete-v2.js' });
+  assert.match(resumeScript.body, /local_consent_request/u);
+  assert.match(resumeScript.body, /form\.method = 'post'/u);
+  assert.doesNotMatch(resumeScript.body, /[?&]local_consent_request=/u);
   assert.equal(response.body.includes('MCP_TOOL_INPUT'), false);
+  await app.close();
+});
+
+void test('OAuth consent bootstrap creates one exact pending grant through the authenticated account boundary', async () => {
+  const store = new StaticStore();
+  store.sites.push({
+    id: 'site_00000001', tenantId, resource: 'https://site.example.test/wp-json/wp-auto/mcp',
+    displayHostname: 'site.example.test', status: 'active', protocolVersion: '1',
+    createdAt: '2026-09-16T00:00:00.000Z'
+  });
+  const grants = new StaticGrants();
+  const bootstrap = new StaticOAuthConsentBootstrap();
+  const app = buildControlApi({
+    identityProvider: new StaticIdentity({
+      accountId: 'account_12345678', authenticationTime: 1, authenticationMethod: 'email_otp'
+    }),
+    store, audit: new MemoryAudit(), publicOrigin: 'https://platform.example.test',
+    grants, workspace: new StaticWorkspace(), oauthIssuer: 'https://platform.example.test',
+    oauthConsentBootstrap: bootstrap
+  });
+  const page = await app.inject({ method: 'GET', url: '/v1/consent/start' });
+  assert.equal(page.statusCode, 200);
+  assert.doesNotMatch(page.body, /client_00000001|site\.example\.test/u);
+  const script = await app.inject({ method: 'GET', url: '/assets/consent-start-v1.js' });
+  assert.match(script.body, /location\.hash/u);
+  assert.match(script.body, /sessionStorage/u);
+  assert.doesNotMatch(script.body, /JSON\.parse|atob/u);
+
+  const payload = { request: 'signed.bootstrap.request' };
+  const forbidden = await app.inject({
+    method: 'POST', url: '/v1/oauth/consent/start',
+    headers: { origin: 'https://evil.example.test' }, payload
+  });
+  assert.equal(forbidden.statusCode, 403);
+  const invalidReturn = await app.inject({
+    method: 'POST', url: '/v1/oauth/consent/start',
+    headers: { origin: 'https://platform.example.test' },
+    payload: { request: 'tampered.bootstrap.request' }
+  });
+  assert.equal(invalidReturn.statusCode, 400);
+  const started = await app.inject({
+    method: 'POST', url: '/v1/oauth/consent/start',
+    headers: { origin: 'https://platform.example.test' }, payload
+  });
+  assert.equal(started.statusCode, 201);
+  assert.equal(bootstrap.token, 'signed.bootstrap.request');
+  assert.equal(bootstrap.subjectId, 'account_12345678');
+  assert.equal(grants.startInput?.['siteId'], 'site_00000001');
+  assert.equal(grants.startInput?.['clientId'], 'client_00000001');
+  assert.deepEqual(grants.startInput?.['scopes'], ['mcp:read']);
+  assert.match(String(grants.startInput?.['idempotencyKey']), /^oauth_[A-Za-z0-9_-]{43}$/u);
+  assert.equal(started.json<{ consent_url: string }>().consent_url.startsWith('https://site.example.test/'), true);
+  assert.equal(started.json<{ return_path: string }>().return_path, '/interaction/interaction_12345678');
   await app.close();
 });
 

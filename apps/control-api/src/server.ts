@@ -11,6 +11,7 @@ import {
 } from '@wepuu/account-auth';
 import {
   AccountPrincipalSchema,
+  CanonicalResourceSchema,
   McpScopeSetSchema,
   OAuthClientIdSchema,
   OpaqueIdSchema,
@@ -32,6 +33,7 @@ import {
   type Database,
   type SecurityEventView
 } from '@wepuu/database';
+import type { OAuthConsentBootstrapClaims } from '@wepuu/key-custody';
 import type { SecurityAuditEvent, SecurityAuditSink } from '@wepuu/security-audit';
 import {
   loadPublicDeploymentConfig,
@@ -91,6 +93,15 @@ const GrantCompletionBodySchema = z.object({
   proof: z.string().min(1).max(16 * 1_024),
   challenge: z.string().regex(/^[A-Za-z0-9_-]{43}$/u),
   decision: z.enum(['approved', 'denied'])
+}).strict();
+const OAuthConsentStartBodySchema = z.object({ request: z.string().min(1).max(8192) }).strict();
+const OAuthConsentBootstrapClaimsSchema = z.object({
+  interactionUid: z.string().regex(/^[A-Za-z0-9_-]{8,256}$/u),
+  clientId: OAuthClientIdSchema,
+  resource: CanonicalResourceSchema,
+  scopes: McpScopeSetSchema,
+  subjectId: OpaqueIdSchema,
+  jwtId: z.string().regex(/^[A-Za-z0-9_-]{32}$/u)
 }).strict();
 const SESSION_COOKIE = '__Host-wepuu_session';
 const CSRF_COOKIE = '__Host-wepuu_csrf';
@@ -296,11 +307,21 @@ export interface ControlApiOptions {
   readonly publicOrigin?: string;
   readonly pairing?: PairingOperations;
   readonly grants?: GrantOperations;
+  readonly oauthIssuer?: string;
+  readonly oauthConsentBootstrap?: OAuthConsentBootstrapVerifier;
   readonly workspace?: AccountWorkspaceOperations;
   readonly deployment?: PublicDeploymentConfig;
   readonly deploymentReadiness?: DeploymentReadinessReport;
   readonly operationsMetricsToken?: string;
   readonly metrics?: ContentFreeMetrics;
+}
+
+export interface OAuthConsentBootstrapVerifier {
+  verify(token: string, expected: Readonly<{
+    issuer: string;
+    audience: string;
+    subjectId: string;
+  }>): Promise<OAuthConsentBootstrapClaims>;
 }
 
 function validatedReturnTo(value: string | undefined): string {
@@ -392,6 +413,8 @@ const pairingStartScript = `(() => {
 
 const consentCompleteScript = `(() => {
   const key = 'wepuu_consent_result';
+  const returnKey = 'wepuu_oauth_interaction_return';
+  const requestKey = 'wepuu_oauth_consent_request';
   const status = document.getElementById('status');
   const fromFragment = new URLSearchParams(location.hash.slice(1)).get('result');
   if (fromFragment !== null) {
@@ -412,10 +435,73 @@ const consentCompleteScript = `(() => {
       body: JSON.stringify({ proof: input.proof, challenge: input.challenge, decision: input.decision })
     }).then((response) => {
       if (response.status === 401) { location.assign('/v1/account/login?return_to=%2Fv1%2Fconsent%2Fcomplete'); return; }
+      if (!response.ok) { status.textContent = 'Consent completion failed.'; return; }
+      const returnPath = sessionStorage.getItem(returnKey);
+      if (returnPath !== null && new RegExp('^/interaction/[A-Za-z0-9_-]{8,256}$').test(returnPath)) {
+        const bootstrapRequest = sessionStorage.getItem(requestKey);
+        sessionStorage.removeItem(key);
+        sessionStorage.removeItem(returnKey);
+        sessionStorage.removeItem(requestKey);
+        if (input.decision === 'denied' && bootstrapRequest !== null) {
+          const form = document.createElement('form');
+          form.method = 'post';
+          form.action = returnPath;
+          for (const [name, value] of [['decision', 'deny'], ['local_consent_request', bootstrapRequest]]) {
+            const field = document.createElement('input');
+            field.type = 'hidden'; field.name = name; field.value = value; form.appendChild(field);
+          }
+          document.body.appendChild(form);
+          form.submit();
+          return;
+        }
+        if (input.decision === 'approved') { location.assign(returnPath); return; }
+        status.textContent = 'Consent denied.';
+        return;
+      }
       sessionStorage.removeItem(key);
-      status.textContent = response.ok ? (input.decision === 'approved' ? 'Consent completed.' : 'Consent denied.') : 'Consent completion failed.';
+      status.textContent = input.decision === 'approved' ? 'Consent completed.' : 'Consent denied.';
     }).catch(() => { status.textContent = 'Consent completion failed. You may retry this page.'; });
   } catch { sessionStorage.removeItem(key); status.textContent = 'Invalid consent result.'; }
+})();`;
+
+const consentStartScript = `(() => {
+  const key = 'wepuu_oauth_consent_request';
+  const returnKey = 'wepuu_oauth_interaction_return';
+  const status = document.getElementById('status');
+  const fromFragment = new URLSearchParams(location.hash.slice(1)).get('request');
+  if (fromFragment !== null) {
+    if (fromFragment.length > 8192) { history.replaceState(null, '', '/v1/consent/start'); status.textContent = 'Invalid authorization request.'; return; }
+    sessionStorage.setItem(key, fromFragment);
+    history.replaceState(null, '', '/v1/consent/start');
+  }
+  const request = sessionStorage.getItem(key);
+  if (request === null) { status.textContent = 'No pending authorization request.'; return; }
+  try {
+    fetch('/v1/oauth/consent/start', {
+      method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ request })
+    }).then(async (response) => {
+      if (response.status === 401) {
+        location.assign('/v1/account/login?return_to=%2Fv1%2Fconsent%2Fstart');
+        return;
+      }
+      if (!response.ok) {
+        sessionStorage.removeItem(key);
+        sessionStorage.removeItem(returnKey);
+        status.textContent = 'Authorization setup failed.';
+        return;
+      }
+      const result = await response.json();
+      if (typeof result !== 'object' || result === null || typeof result.consent_url !== 'string'
+        || typeof result.return_path !== 'string' || !new RegExp('^/interaction/[A-Za-z0-9_-]{8,256}$').test(result.return_path)) throw new Error();
+      sessionStorage.setItem(returnKey, result.return_path);
+      location.assign(result.consent_url);
+    }).catch(() => { status.textContent = 'Authorization setup failed. You may retry this page.'; });
+  } catch {
+    sessionStorage.removeItem(key);
+    sessionStorage.removeItem(returnKey);
+    status.textContent = 'Invalid authorization request.';
+  }
 })();`;
 
 const emailOtpScript = `(() => {
@@ -700,6 +786,18 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
     .type('text/javascript; charset=utf-8')
     .send(consentCompleteScript));
 
+  app.get('/assets/consent-complete-v2.js', async (_request, reply) => reply
+    .header('cache-control', 'public, max-age=31536000, immutable')
+    .header('x-content-type-options', 'nosniff')
+    .type('text/javascript; charset=utf-8')
+    .send(consentCompleteScript));
+
+  app.get('/assets/consent-start-v1.js', async (_request, reply) => reply
+    .header('cache-control', 'public, max-age=31536000, immutable')
+    .header('x-content-type-options', 'nosniff')
+    .type('text/javascript; charset=utf-8')
+    .send(consentStartScript));
+
   app.get('/assets/email-otp-v1.js', async (_request, reply) => reply
     .header('cache-control', 'public, max-age=31536000, immutable')
     .header('x-content-type-options', 'nosniff')
@@ -747,7 +845,18 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
         title: 'WePuu consent',
         heading: 'Finish WordPress consent.',
         message: 'The site is confirming the local user and approved scope ceiling.',
-        content: '<p id="status" role="status">Completing consent…</p><script src="/assets/consent-complete-v1.js" defer></script>'
+        content: '<p id="status" role="status">Completing consent…</p><script src="/assets/consent-complete-v2.js" defer></script>'
+      }));
+  });
+
+  app.get('/v1/consent/start', async (_request, reply) => {
+    return htmlHeaders(reply)
+      .type('text/html; charset=utf-8')
+      .send(renderInteractionPage({
+        title: 'WePuu authorization setup',
+        heading: 'Confirm access in WordPress.',
+        message: 'Preparing an exact site and scope binding before OAuth consent.',
+        content: '<p id="status" role="status">Preparing authorization…</p><script src="/assets/consent-start-v1.js" defer></script>'
       }));
   });
 
@@ -1083,6 +1192,66 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
     const context = await requestContext(request);
     const events = await options.store.listSecurityEvents(context, 50);
     return reply.header('cache-control', 'no-store').send({ events });
+  });
+
+  app.post('/v1/oauth/consent/start', async (request, reply) => {
+    if (options.grants === undefined || options.publicOrigin === undefined || options.oauthIssuer === undefined
+      || options.oauthConsentBootstrap === undefined) {
+      throw new PlatformError('temporarily_unavailable', 503);
+    }
+    if (request.headers.origin !== options.publicOrigin) throw new PlatformError('forbidden', 403);
+    const body = OAuthConsentStartBodySchema.safeParse(request.body);
+    if (!body.success) throw new PlatformError('invalid_request', 400);
+    const { principal, memberships } = await membershipsFor(request);
+    let claims: z.infer<typeof OAuthConsentBootstrapClaimsSchema>;
+    try {
+      claims = OAuthConsentBootstrapClaimsSchema.parse(await options.oauthConsentBootstrap.verify(body.data.request, {
+        issuer: options.oauthIssuer,
+        audience: `${options.publicOrigin}/v1/oauth/consent/start`,
+        subjectId: principal.accountId
+      }));
+    } catch {
+      throw new PlatformError('invalid_request', 400);
+    }
+    const matches: Array<{ readonly context: TenantContext; readonly site: SiteView }> = [];
+    for (const membership of memberships) {
+      const context = TenantContextSchema.parse({
+        tenantId: membership.tenantId,
+        accountId: principal.accountId,
+        correlationId: correlationId()
+      });
+      const sites = await options.store.listSites(context);
+      for (const site of sites) {
+        if (site.status === 'active' && site.resource === claims.resource) matches.push({ context, site });
+      }
+    }
+    if (matches.length !== 1) throw new PlatformError('invalid_request', 400);
+    const match = matches[0];
+    if (match === undefined) throw new PlatformError('invalid_request', 400);
+    const returnPath = `/interaction/${claims.interactionUid}`;
+    const idempotencyKey = `oauth_${createHash('sha256')
+      .update(`${principal.accountId}\u0000${claims.interactionUid}`, 'utf8').digest('base64url')}`;
+    try {
+      const result = await options.grants.start(match.context, {
+        siteId: match.site.id,
+        clientId: claims.clientId,
+        scopes: claims.scopes,
+        idempotencyKey
+      });
+      await safeAudit({
+        occurredAt: new Date().toISOString(), eventName: 'grant.created', outcome: 'success', reason: 'none',
+        correlationId: match.context.correlationId, tenantId: match.context.tenantId,
+        actorId: principal.accountId, siteId: match.site.id, clientId: claims.clientId,
+        grantId: result.grantId, service: 'control-api', serviceVersion: '0.5.0'
+      });
+      return await reply.status(201).header('cache-control', 'no-store').send({
+        consent_url: result.consentUrl,
+        expires_at: result.expiresAt.toISOString(),
+        return_path: returnPath
+      });
+    } catch {
+      throw new PlatformError('invalid_request', 400);
+    }
   });
 
   app.get('/v1/tenants/:tenantId/sites', async (request, reply) => {
