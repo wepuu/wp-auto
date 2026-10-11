@@ -17,6 +17,7 @@
     "keys:publish": "pnpm build && node packages/database/dist/signing-keys-cli.js publish",
     "keys:activate": "pnpm build && node packages/database/dist/signing-keys-cli.js activate",
     "keys:retire": "pnpm build && node packages/database/dist/signing-keys-cli.js retire",
+    "oauth:test-client:provision": "pnpm build && node packages/database/dist/oauth-test-client-cli.js provision-p3a-lifecycle",
     "check:production:public": "node scripts/check-production-public.mjs",
     "check": "pnpm typecheck && pnpm lint && pnpm test",
     "audit:high": "pnpm audit --audit-level high",
