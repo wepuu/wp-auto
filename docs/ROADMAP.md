@@ -227,6 +227,18 @@ disconnected state. Positive OAuth/MCP regression, repeat G1 and G2 were not
 run. See `P3A7_REPLAY_FIX_VALIDATION_2026-10-11.md` and
 `P3A7_PRODUCTION_REPAIR_DEPLOYMENT_2026-10-12.md`.
 
+The diagnostic Control hotfix was subsequently deployed and one separately
+authorized pairing was attempted on 2026-10-12. It failed before proof
+delivery because the Tenant ID configured in WordPress belonged to a different
+platform account than the active Better Auth Session. PostgreSQL RLS correctly
+rejected the pairing-attempt insert. No new platform attempt, Site, Grant or
+Outbox event was created; WordPress retained only its fail-closed local pending
+state. A platform guard candidate now rejects missing or non-administrative
+tenant membership before calling the pairing service and records the bounded
+`pairing.tenant_access_denied` diagnostic. The pending state must be cleared
+through the normal WordPress disconnect action before a separately authorized
+retry with the correct workspace Tenant ID.
+
 ### P4-A - SaaS console domain separation
 
 Status: locally implemented and validated as a candidate on 2026-10-11; not
