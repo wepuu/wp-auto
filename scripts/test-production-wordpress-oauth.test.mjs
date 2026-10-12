@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import {
   expectInvalidGrant,
   probeMcpRevocationState,
+  resolveLifecyclePlan,
   waitForMcpDenial,
 } from './test-production-wordpress-oauth.mjs';
 
@@ -33,6 +34,47 @@ function mcpResponse(status, challenge = '') {
     body: { cancel: async () => undefined },
   };
 }
+
+test('lifecycle plans preserve existing destructive modes and add an active positive rotation', () => {
+  assert.deepEqual(resolveLifecyclePlan(undefined, false), {
+    mode: 'normal',
+    probeBeforeRotation: false,
+    revokeBeforeRotation: false,
+    replayAfterRotation: false,
+    revokeAfterRotation: true,
+    preserveActiveAfterRotation: false,
+  });
+  assert.deepEqual(resolveLifecyclePlan('replay', false), {
+    mode: 'replay',
+    probeBeforeRotation: false,
+    revokeBeforeRotation: false,
+    replayAfterRotation: true,
+    revokeAfterRotation: false,
+    preserveActiveAfterRotation: false,
+  });
+  assert.deepEqual(resolveLifecyclePlan('revocation', false), {
+    mode: 'revocation',
+    probeBeforeRotation: true,
+    revokeBeforeRotation: true,
+    replayAfterRotation: false,
+    revokeAfterRotation: false,
+    preserveActiveAfterRotation: false,
+  });
+  assert.deepEqual(resolveLifecyclePlan('positive-rotation', false), {
+    mode: 'positive-rotation',
+    probeBeforeRotation: true,
+    revokeBeforeRotation: false,
+    replayAfterRotation: false,
+    revokeAfterRotation: false,
+    preserveActiveAfterRotation: true,
+  });
+});
+
+test('access-only probes cannot select lifecycle modes', () => {
+  for (const mode of ['positive-rotation', 'replay', 'revocation']) {
+    assert.throws(() => resolveLifecyclePlan(mode, true), /invalid_lifecycle_mode/u);
+  }
+});
 
 test('waitForMcpDenial polls every two seconds until a valid denial arrives', async () => {
   let calls = 0;
