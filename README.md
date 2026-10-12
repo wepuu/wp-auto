@@ -57,7 +57,10 @@ revocation acceptance on 2026-10-12. P3-B1A compatibility preflight initially
 passed for Windows Codex Desktop `26.727.4816.0`, but the first real Desktop
 OAuth attempt failed closed on 2026-10-13 because its callback-specific path
 did not match the pre-registered stable callback. No Grant changed. Full
-acceptance and controlled-use readiness remain false. P4-A
+acceptance and controlled-use readiness remain false. A fixed-purpose local
+candidate now supports adding and exactly rolling back that single observed
+callback-specific redirect without changing the existing Grant; it has not
+been run against production and the real Desktop retry has not occurred. P4-A
 is a local candidate that separates the SaaS console onto
 `app.wpauto.cc` while retaining Better Auth and the OAuth issuer on
 `auth.wpauto.cc`; no P4-A production change is authorized. See ADR-018 through
@@ -84,6 +87,9 @@ passed, followed by the successful isolated G1 and G2 lifecycle tests. See
 `docs/P3A7_REPLAY_FIX_VALIDATION_2026-10-11.md`,
 `docs/P3A7_PRODUCTION_REPAIR_DEPLOYMENT_2026-10-12.md`, and the successful G1
 record linked above.
+The callback mismatch and local correction validation are recorded in
+`docs/P3B1B_CODEX_DESKTOP_CALLBACK_MISMATCH_2026-10-13.md` and
+`docs/P3B1B_EXACT_CALLBACK_FIX_VALIDATION_2026-10-13.md`.
 
 ## Architecture
 

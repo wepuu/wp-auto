@@ -12,10 +12,12 @@ import {
   parseDesktopManifest,
   prepareDesktopProject,
   probePublicOAuthMetadata,
+  readDesktopCallbackFile,
   renderProjectConfig,
   resolveDefaultManifestPath,
   validateAuthorizationMetadata,
   validateChallenge,
+  validateDesktopCallbackUrl,
   validateResourceMetadata
 } from './prepare-codex-desktop-preflight.mjs';
 
@@ -88,6 +90,27 @@ test('renders an isolated read-only OAuth configuration', () => {
   assert.doesNotMatch(config, /token|cookie|verifier|authorization_url|auth\.json|credentials/u);
 });
 
+test('accepts only an exact callback-specific loopback path', async (t) => {
+  const callback = 'http://127.0.0.1/callback/Abcd_1234-xy';
+  assert.equal(validateDesktopCallbackUrl(callback), callback);
+  for (const invalid of [
+    'http://localhost/callback/Abcd_1234-xy',
+    'http://127.0.0.1:53123/callback/Abcd_1234-xy',
+    'http://127.0.0.1/callback/Abcd_1234-xy/extra',
+    'http://127.0.0.1/callback/short',
+    'http://127.0.0.1/callback/Abcd_1234-xy?next=1',
+    'https://127.0.0.1/callback/Abcd_1234-xy'
+  ]) assert.throws(() => validateDesktopCallbackUrl(invalid), /callback_invalid/u);
+
+  const root = await mkdtemp(path.join(tmpdir(), 'wepuu-p3b1-callback-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const callbackFile = path.join(root, 'callback');
+  await writeFile(callbackFile, `${callback}\n`, 'utf8');
+  assert.equal(await readDesktopCallbackFile(callbackFile), callback);
+  await writeFile(callbackFile, `${callback}\n${callback}\n`, 'utf8');
+  await assert.rejects(() => readDesktopCallbackFile(callbackFile), /callback_file_invalid/u);
+});
+
 test('validates the strict public challenge and OAuth metadata contracts', () => {
   validateChallenge(401, `Bearer resource_metadata="${MCP_RESOURCE.replace('/wp-json/', '/.well-known/oauth-protected-resource/wp-json/')}"`);
   validateResourceMetadata(resourceMetadata);
@@ -112,22 +135,28 @@ test('creates only a project-scoped config under the selected temporary root', a
   const root = await mkdtemp(path.join(tmpdir(), 'wepuu-p3b1-test-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const manifestPath = path.join(root, 'AppxManifest.xml');
+  const callbackPath = path.join(root, 'callback');
+  const callback = 'http://127.0.0.1/callback/Abcd_1234-xy';
   await writeFile(manifestPath, manifest, 'utf8');
+  await writeFile(callbackPath, callback, 'utf8');
   const prepared = await prepareDesktopProject({
     manifestPath,
     outputRoot: root,
     now: new Date('2026-10-12T00:00:00Z'),
     random: '0123abcd',
-    fetchImpl: successfulFetch()
+    fetchImpl: successfulFetch(),
+    callbackFile: callbackPath
   });
   assert.equal(path.dirname(path.dirname(prepared.configPath)), prepared.projectDirectory);
-  assert.equal(await readFile(prepared.configPath, 'utf8'), renderProjectConfig(prepared.serverName));
+  assert.equal(await readFile(prepared.configPath, 'utf8'), renderProjectConfig(prepared.serverName, callback));
+  assert.match(prepared.callbackDigest, /^[a-f0-9]{64}$/u);
   await assert.rejects(() => prepareDesktopProject({
     manifestPath,
     outputRoot: root,
     now: new Date('2026-10-12T00:00:00Z'),
     random: '0123abcd',
-    fetchImpl: successfulFetch()
+    fetchImpl: successfulFetch(),
+    callbackFile: callbackPath
   }), /EEXIST/u);
 });
 

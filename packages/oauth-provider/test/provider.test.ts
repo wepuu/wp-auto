@@ -53,6 +53,31 @@ test('native loopback redirect permits only a registered 127.0.0.1 path with a d
   assert.equal(await allowRegisteredNativeLoopbackPort(provider, unknown), false);
 });
 
+test('native loopback redirect requires the exact registered callback-specific path', async () => {
+  const callback = 'http://127.0.0.1/callback/Abcd_1234-xy';
+  const client = { redirectUris: ['http://127.0.0.1/callback', callback] };
+  const provider = {
+    Client: { find: async (clientId: string) => clientId === 'codex-client' ? client : undefined }
+  } as unknown as Provider;
+  const allowed = new URL(
+    `https://auth.example.test/auth?client_id=codex-client&redirect_uri=${encodeURIComponent('http://127.0.0.1:53123/callback/Abcd_1234-xy')}`
+  );
+  assert.equal(await allowRegisteredNativeLoopbackPort(provider, allowed), true);
+  assert.equal(client.redirectUris.includes('http://127.0.0.1:53123/callback/Abcd_1234-xy'), true);
+
+  for (const redirect of [
+    'http://127.0.0.1:53123/callback/Other_123456',
+    'http://127.0.0.1:53123/callback/Abcd_1234-xy/extra',
+    'http://127.0.0.1:53123/callback/Abcd_1234-xy?next=1',
+    'http://localhost:53123/callback/Abcd_1234-xy'
+  ]) {
+    const rejected = new URL(
+      `https://auth.example.test/auth?client_id=codex-client&redirect_uri=${encodeURIComponent(redirect)}`
+    );
+    assert.equal(await allowRegisteredNativeLoopbackPort(provider, rejected), false, redirect);
+  }
+});
+
 function memoryAdapter(): new (model: string) => OidcAdapterShape {
   return class MemoryAdapter implements OidcAdapterShape {
     static readonly values = new Map<string, Record<string, unknown>>();

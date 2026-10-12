@@ -1,6 +1,6 @@
 import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
-import { readdir, readFile } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
+import { lstat, readdir, readFile } from 'node:fs/promises';
+import { dirname, isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Pool, type PoolClient, type PoolConfig } from 'pg';
 import {
@@ -2073,15 +2073,133 @@ export class PostgresOAuthClientRepository {
     });
     return { changed, clientId };
   }
+
+  async registerP3b1CodexDesktopCallback(callbackUri: string): Promise<P3b1CodexCallbackUpdate> {
+    return this.#updateP3b1CodexDesktopCallback(callbackUri, 'register');
+  }
+
+  async removeP3b1CodexDesktopCallback(callbackUri: string): Promise<P3b1CodexCallbackUpdate> {
+    return this.#updateP3b1CodexDesktopCallback(callbackUri, 'remove');
+  }
+
+  async #updateP3b1CodexDesktopCallback(
+    callbackUri: string,
+    operation: 'register' | 'remove'
+  ): Promise<P3b1CodexCallbackUpdate> {
+    const validatedCallback = validateP3b1CodexDesktopCallbackUri(callbackUri);
+    const targetRedirects = [P3B1_CODEX_STABLE_REDIRECT_URI, validatedCallback];
+    const targetDigest = p3b1CodexClientMetadataDigest(targetRedirects);
+    const callbackDigest = createHash('sha256').update(validatedCallback, 'utf8').digest('hex');
+    const changed = await this.#database.withAuthorizationService(async (client) => {
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [P3B1_CODEX_CLIENT_ID]);
+      const existing = await client.query<{
+        registration_mode: string;
+        redirect_uris: unknown;
+        metadata_digest: string;
+        status: string;
+      }>(
+        `SELECT registration_mode, redirect_uris, metadata_digest, status
+         FROM oauth.clients WHERE client_id = $1 FOR UPDATE`,
+        [P3B1_CODEX_CLIENT_ID]
+      );
+      const row = existing.rows[0];
+      if (row === undefined || row.registration_mode !== 'pre-registered' || row.status !== 'active') {
+        throw new Error('p3b1_codex_client_conflict');
+      }
+      const baseline = exactStringArray(row.redirect_uris, [P3B1_CODEX_STABLE_REDIRECT_URI])
+        && row.metadata_digest === P3B1_CODEX_BASELINE_METADATA_DIGEST;
+      const registered = exactStringArray(row.redirect_uris, targetRedirects)
+        && row.metadata_digest === targetDigest;
+      if (!baseline && !registered) throw new Error('p3b1_codex_client_conflict');
+      if ((operation === 'register' && registered) || (operation === 'remove' && baseline)) return false;
+      const nextRedirects = operation === 'register' ? targetRedirects : [P3B1_CODEX_STABLE_REDIRECT_URI];
+      const nextDigest = operation === 'register' ? targetDigest : P3B1_CODEX_BASELINE_METADATA_DIGEST;
+      const result = await client.query(
+        `UPDATE oauth.clients
+         SET redirect_uris = $2::jsonb, metadata_digest = $3, updated_at = now()
+         WHERE client_id = $1`,
+        [P3B1_CODEX_CLIENT_ID, JSON.stringify(nextRedirects), nextDigest]
+      );
+      if (result.rowCount !== 1) throw new Error('p3b1_codex_client_update_failed');
+      return true;
+    });
+    return {
+      changed,
+      clientId: P3B1_CODEX_CLIENT_ID,
+      redirectCount: operation === 'register' ? 2 : 1,
+      metadataDigest: operation === 'register' ? targetDigest : P3B1_CODEX_BASELINE_METADATA_DIGEST,
+      callbackDigest
+    };
+  }
 }
 
 export const P3A_LIFECYCLE_TEST_CLIENT_ID = 'wepuu-e2e-lifecycle';
 export const P3A_LIFECYCLE_TEST_REDIRECT_URI = 'http://127.0.0.1/callback';
+export const P3B1_CODEX_CLIENT_ID = 'wepuu-e2e-codex';
+export const P3B1_CODEX_STABLE_REDIRECT_URI = 'http://127.0.0.1/callback';
+export const P3B1_CODEX_BASELINE_METADATA_DIGEST = 'sha256:e2e-loopback-20261009';
+
+export interface P3b1CodexCallbackUpdate {
+  readonly changed: boolean;
+  readonly clientId: typeof P3B1_CODEX_CLIENT_ID;
+  readonly redirectCount: 1 | 2;
+  readonly metadataDigest: string;
+  readonly callbackDigest: string;
+}
+
+function exactStringArray(value: unknown, expected: readonly string[]): boolean {
+  return Array.isArray(value) && value.length === expected.length
+    && value.every((item, index) => item === expected[index]);
+}
+
+export function validateP3b1CodexDesktopCallbackUri(value: string): string {
+  if (value.length > 256 || !/^http:\/\/127\.0\.0\.1\/callback\/[A-Za-z0-9_-]{8,64}$/u.test(value)) {
+    throw new Error('p3b1_codex_callback_invalid');
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error('p3b1_codex_callback_invalid');
+  }
+  if (parsed.href !== value || parsed.protocol !== 'http:' || parsed.hostname !== '127.0.0.1'
+    || parsed.port !== '' || parsed.username !== '' || parsed.password !== ''
+    || parsed.search !== '' || parsed.hash !== '') {
+    throw new Error('p3b1_codex_callback_invalid');
+  }
+  return value;
+}
+
+export async function readP3b1CodexDesktopCallbackFile(
+  filePath: string,
+  production = process.env['NODE_ENV'] === 'production'
+): Promise<string> {
+  if (!isAbsolute(filePath) || (production && !filePath.startsWith('/run/secrets/'))) {
+    throw new Error('p3b1_codex_callback_file_invalid');
+  }
+  const details = await lstat(filePath);
+  if (!details.isFile() || details.isSymbolicLink() || details.size < 1 || details.size > 300) {
+    throw new Error('p3b1_codex_callback_file_invalid');
+  }
+  if (production && (details.mode & 0o077) !== 0) throw new Error('p3b1_codex_callback_file_permissions');
+  const contents = await readFile(filePath, 'utf8');
+  if (!/^[^\r\n]+(?:\r?\n)?$/u.test(contents)) throw new Error('p3b1_codex_callback_file_invalid');
+  return validateP3b1CodexDesktopCallbackUri(contents.replace(/\r?\n$/u, ''));
+}
 
 function p3aLifecycleClientMetadataDigest(): string {
   return createHash('sha256').update(JSON.stringify({
     client_id: P3A_LIFECYCLE_TEST_CLIENT_ID,
     redirect_uris: [P3A_LIFECYCLE_TEST_REDIRECT_URI],
+    token_endpoint_auth_method: 'none',
+    code_challenge_method: 'S256'
+  }), 'utf8').digest('hex');
+}
+
+function p3b1CodexClientMetadataDigest(redirectUris: readonly string[]): string {
+  return createHash('sha256').update(JSON.stringify({
+    client_id: P3B1_CODEX_CLIENT_ID,
+    redirect_uris: redirectUris,
     token_endpoint_auth_method: 'none',
     code_challenge_method: 'S256'
   }), 'utf8').digest('hex');
