@@ -73,7 +73,7 @@ test('derives the Appx manifest from the packaged Codex executable', async () =>
       stdout: 'C:\\Program Files\\WindowsApps\\OpenAI.CodexBeta_26.727.4816.0_x64__2p2nqsd0c76g0\\app\\resources\\codex.exe\r\n',
       stderr: ''
     };
-  });
+  }, 'win32');
   assert.equal(result, 'C:\\Program Files\\WindowsApps\\OpenAI.CodexBeta_26.727.4816.0_x64__2p2nqsd0c76g0\\AppxManifest.xml');
 });
 

@@ -142,8 +142,8 @@ export async function prepareDesktopProject({ manifestPath, outputRoot = tmpdir(
   return { manifest, serverName, projectDirectory, configPath, ...probe };
 }
 
-export async function resolveDefaultManifestPath(execFileImpl = execFile) {
-  if (process.platform !== 'win32') throw new Error('codex_desktop_windows_required');
+export async function resolveDefaultManifestPath(execFileImpl = execFile, platform = process.platform) {
+  if (platform !== 'win32') throw new Error('codex_desktop_windows_required');
   const result = await execFileImpl('where.exe', ['codex'], { windowsHide: true, timeout: 5_000 });
   const candidates = result.stdout.split(/\r?\n/u).map((value) => value.trim()).filter(Boolean);
   const executable = candidates.find((value) => /\\OpenAI\.CodexBeta_[^\\]+\\app\\resources\\codex(?:\.exe)?$/iu.test(value));
