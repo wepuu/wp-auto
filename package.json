@@ -19,6 +19,7 @@
     "keys:retire": "pnpm build && node packages/database/dist/signing-keys-cli.js retire",
     "oauth:test-client:provision": "pnpm build && node packages/database/dist/oauth-test-client-cli.js provision-p3a-lifecycle",
     "check:production:public": "node scripts/check-production-public.mjs",
+    "preflight:codex-desktop": "node scripts/prepare-codex-desktop-preflight.mjs",
     "check": "pnpm typecheck && pnpm lint && pnpm test",
     "audit:high": "pnpm audit --audit-level high",
     "sbom:check": "pnpm dlx @cyclonedx/cdxgen@12.8.4 --type js --recurse --spec-version 1.6 --profile license-compliance --output .tmp/phase-2-0-6-sbom.json && node scripts/verify-sbom.mjs .tmp/phase-2-0-6-sbom.json",

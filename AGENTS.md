@@ -44,8 +44,10 @@ returned `invalid_grant`, the isolated Grant was revoked with
 `refresh_replay`, its sequence-1 Outbox event was delivered, and the Connector
 rejected AT1 before expiry. The Codex Grant remained unchanged. G2 then
 revoked a new independent Grant with `token_revoked`, delivered sequence 2 and
-caused the corresponding AT0 to be denied before expiry. P3-B has not started,
-so full acceptance and controlled-use readiness remain false.
+caused the corresponding AT0 to be denied before expiry. P3-B1A Codex Desktop
+compatibility preflight passed for Windows Desktop `26.727.4816.0`; the real
+Desktop OAuth flow has not run, so full acceptance and controlled-use
+readiness remain false.
 The positive evidence and corrected lifecycle provisioning preflight are
 recorded in
 `docs/P3A_PRODUCTION_POSITIVE_ACCEPTANCE_2026-10-11.md` and
