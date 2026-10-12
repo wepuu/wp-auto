@@ -34,6 +34,7 @@ import {
   type SecurityEventView
 } from '@wepuu/database';
 import type { OAuthConsentBootstrapClaims } from '@wepuu/key-custody';
+import { pairingDiagnostic, type PairingDiagnosticCode, type PairingDiagnosticStage } from '@wepuu/pairing';
 import type { SecurityAuditEvent, SecurityAuditSink } from '@wepuu/security-audit';
 import {
   loadPublicDeploymentConfig,
@@ -365,6 +366,7 @@ export interface ControlApiOptions {
   readonly authOrigin?: string;
   readonly appOrigin?: string;
   readonly pairing?: PairingOperations;
+  readonly pairingDiagnostics?: PairingDiagnosticSink;
   readonly grants?: GrantOperations;
   readonly oauthIssuer?: string;
   readonly oauthConsentBootstrap?: OAuthConsentBootstrapVerifier;
@@ -422,6 +424,17 @@ export interface PairingOperations {
   pair(context: TenantContext, input: { readonly resource: string; readonly verifier: string }): Promise<{
     readonly siteId: string;
   }>;
+}
+
+export interface PairingDiagnosticEvent {
+  readonly occurredAt: string;
+  readonly correlationId: string;
+  readonly stage: PairingDiagnosticStage;
+  readonly code: PairingDiagnosticCode;
+}
+
+export interface PairingDiagnosticSink {
+  write(event: PairingDiagnosticEvent): void | Promise<void>;
 }
 
 export interface GrantOperations {
@@ -1437,7 +1450,18 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
         siteId: result.siteId, service: 'control-api', serviceVersion: '0.5.0'
       });
       return await reply.header('cache-control', 'no-store').send({ site_id: result.siteId, status: 'active' });
-    } catch {
+    } catch (error) {
+      const classified = pairingDiagnostic(error);
+      try {
+        await options.pairingDiagnostics?.write({
+          occurredAt: new Date().toISOString(),
+          correlationId: context.correlationId,
+          stage: classified.stage,
+          code: classified.code
+        });
+      } catch {
+        // Diagnostic output is best-effort and must never alter fail-closed behavior.
+      }
       await safeAudit({
         occurredAt: new Date().toISOString(), eventName: 'pairing.denied', outcome: 'denied', reason: 'proof_invalid',
         correlationId: context.correlationId, tenantId: context.tenantId, actorId: context.accountId,

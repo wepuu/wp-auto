@@ -4,7 +4,7 @@ import { request as httpsRequest } from 'node:https';
 import { isIP, type LookupFunction } from 'node:net';
 import { URL } from 'node:url';
 import ipaddr from 'ipaddr.js';
-import { calculateJwkThumbprint, compactVerify, importJWK, type JWK } from 'jose';
+import { calculateJwkThumbprint, compactVerify, decodeProtectedHeader, importJWK, type JWK } from 'jose';
 import { z } from 'zod';
 import {
   CanonicalResourceSchema,
@@ -19,6 +19,38 @@ export const PAIRING_PROTOCOL_VERSION = '1';
 export const PAIRING_ATTEMPT_TTL_MS = 10 * 60 * 1_000;
 export const SITE_PROOF_TTL_SECONDS = 60;
 export const MAX_SITE_PROOF_BYTES = 16 * 1_024;
+
+export type PairingDiagnosticStage =
+  | 'dns' | 'destination' | 'network' | 'response' | 'proof' | 'state' | 'persistence' | 'unknown';
+
+export type PairingDiagnosticCode =
+  | 'dns.failed' | 'destination.unsafe' | 'network.failed' | 'network.timeout' | 'tls.failed'
+  | 'http.401' | 'http.403' | 'http.429' | 'http.4xx' | 'http.5xx' | 'http.other'
+  | 'response.content_type_invalid' | 'response.too_large' | 'response.json_invalid' | 'response.schema_invalid'
+  | 'proof.key_invalid' | 'proof.signature_invalid' | 'proof.header_invalid' | 'proof.claims_invalid'
+  | 'pairing.state_invalid' | 'pairing.persistence_failed' | 'unknown';
+
+export class PairingDiagnosticError extends Error {
+  readonly stage: PairingDiagnosticStage;
+  readonly code: PairingDiagnosticCode;
+
+  constructor(stage: PairingDiagnosticStage, code: PairingDiagnosticCode, cause?: unknown) {
+    super(code, cause === undefined ? undefined : { cause });
+    this.name = 'PairingDiagnosticError';
+    this.stage = stage;
+    this.code = code;
+  }
+}
+
+export function pairingDiagnostic(error: unknown): Readonly<{ stage: PairingDiagnosticStage; code: PairingDiagnosticCode }> {
+  return error instanceof PairingDiagnosticError
+    ? { stage: error.stage, code: error.code }
+    : { stage: 'unknown', code: 'unknown' };
+}
+
+function diagnostic(stage: PairingDiagnosticStage, code: PairingDiagnosticCode, cause?: unknown): PairingDiagnosticError {
+  return cause instanceof PairingDiagnosticError ? cause : new PairingDiagnosticError(stage, code, cause);
+}
 
 const SitePublicJwkSchema = z.object({
   kty: z.literal('OKP'),
@@ -96,19 +128,22 @@ export function isPublicAddress(address: string): boolean {
   return parsed.range() === 'unicast';
 }
 
-export async function resolvePublicAddresses(hostname: string): Promise<readonly string[]> {
+export async function resolvePublicAddresses(hostname: string, resolver: {
+  readonly resolve4?: (value: string) => Promise<readonly string[]>;
+  readonly resolve6?: (value: string) => Promise<readonly string[]>;
+} = {}): Promise<readonly string[]> {
   if (isIP(hostname) !== 0) {
-    if (!isPublicAddress(hostname)) throw new Error('unsafe_destination');
+    if (!isPublicAddress(hostname)) throw diagnostic('destination', 'destination.unsafe');
     return [hostname];
   }
-  const [v4, v6] = await Promise.all([
-    resolve4(hostname).catch(() => [] as string[]),
-    resolve6(hostname).catch(() => [] as string[])
+  const [v4Result, v6Result] = await Promise.allSettled([
+    (resolver.resolve4 ?? resolve4)(hostname), (resolver.resolve6 ?? resolve6)(hostname)
   ]);
+  const v4 = v4Result.status === 'fulfilled' ? v4Result.value : [];
+  const v6 = v6Result.status === 'fulfilled' ? v6Result.value : [];
   const addresses = [...new Set([...v4, ...v6])];
-  if (addresses.length === 0 || addresses.some((address) => !isPublicAddress(address))) {
-    throw new Error('unsafe_destination');
-  }
+  if (addresses.length === 0) throw diagnostic('dns', 'dns.failed');
+  if (addresses.some((address) => !isPublicAddress(address))) throw diagnostic('destination', 'destination.unsafe');
   return addresses.sort();
 }
 
@@ -133,45 +168,58 @@ export async function verifySiteProof(
   publicJwkInput: unknown,
   expected: ExpectedSiteProof
 ): Promise<VerifiedSiteProof> {
-  if (Buffer.byteLength(compactJws, 'utf8') > MAX_SITE_PROOF_BYTES) throw new Error('proof_too_large');
-  const publicJwk = SitePublicJwkSchema.parse(publicJwkInput);
-  const key = await importJWK(publicJwk as JWK, 'EdDSA');
-  const verified = await compactVerify(compactJws, key, { algorithms: ['EdDSA'] });
-  if (Object.keys(verified.protectedHeader).sort().join(',') !== 'alg,kid,typ'
-    || verified.protectedHeader.typ !== 'wepuu-site-proof+jwt'
-    || verified.protectedHeader.kid !== publicJwk.kid) throw new Error('proof_header_invalid');
-  const claims = SiteProofClaimsSchema.parse(JSON.parse(new TextDecoder().decode(verified.payload)) as unknown);
-  const now = Math.floor((expected.now ?? new Date()).getTime() / 1_000);
-  if (claims.exp <= now || claims.iat > now + 5 || claims.exp - claims.iat > SITE_PROOF_TTL_SECONDS) {
-    throw new Error('proof_time_invalid');
+  if (Buffer.byteLength(compactJws, 'utf8') > MAX_SITE_PROOF_BYTES) {
+    throw diagnostic('proof', 'proof.signature_invalid');
   }
-  if (claims.kind !== expected.kind) throw new Error('proof_kind_mismatch');
-  if (claims.platform_issuer !== expected.platformIssuer) throw new Error('issuer_mismatch');
-  if (claims.iss !== new URL(expected.resource).hostname) throw new Error('site_issuer_mismatch');
-  if (claims.tenant_id !== expected.tenantId) throw new Error('tenant_mismatch');
-  if (claims.resource !== expected.resource) throw new Error('resource_mismatch');
-  if (claims.challenge !== expected.challenge) throw new Error('challenge_mismatch');
-  exactClaim(claims.pairing_attempt_id, expected.pairingAttemptId, 'pairing_attempt');
-  exactClaim(claims.site_id, expected.siteId, 'site');
-  exactClaim(claims.platform_signing_key_sha256, expected.platformSigningKeySha256, 'platform_signing_key');
-  exactClaim(claims.platform_signing_kid, expected.platformSigningKid, 'platform_signing_kid');
-  exactClaim(claims.grant_id, expected.grantId, 'grant');
-  exactClaim(claims.client_id, expected.clientId, 'client');
-  exactClaim(claims.subject_id, expected.subjectId, 'subject');
-  exactClaim(claims.aud, expected.kind === 'consent' ? expected.resource : undefined, 'audience');
-  exactClaim(claims.decision, expected.decision, 'decision');
-  if (expected.scopes !== undefined) {
-    const actualScopes = [...(claims.scope ?? [])];
-    const expectedScopes = [...expected.scopes];
-    if (actualScopes.length !== expectedScopes.length || actualScopes.some((scope, index) => scope !== expectedScopes[index])) {
-      throw new Error('scope_mismatch');
+  let publicJwk: SitePublicJwk;
+  let key: Awaited<ReturnType<typeof importJWK>>;
+  try {
+    publicJwk = SitePublicJwkSchema.parse(publicJwkInput);
+    key = await importJWK(publicJwk as JWK, 'EdDSA');
+  } catch (error) {
+    throw diagnostic('proof', 'proof.key_invalid', error);
+  }
+  try {
+    const header = decodeProtectedHeader(compactJws);
+    if (Object.keys(header).sort().join(',') !== 'alg,kid,typ'
+      || header.alg !== 'EdDSA' || header.typ !== 'wepuu-site-proof+jwt'
+      || header.kid !== publicJwk.kid) throw new Error('invalid');
+  } catch (error) {
+    throw diagnostic('proof', 'proof.header_invalid', error);
+  }
+  let verified: Awaited<ReturnType<typeof compactVerify>>;
+  try {
+    verified = await compactVerify(compactJws, key, { algorithms: ['EdDSA'] });
+  } catch (error) {
+    throw diagnostic('proof', 'proof.signature_invalid', error);
+  }
+  try {
+    const claims = SiteProofClaimsSchema.parse(JSON.parse(new TextDecoder().decode(verified.payload)) as unknown);
+    const now = Math.floor((expected.now ?? new Date()).getTime() / 1_000);
+    if (claims.exp <= now || claims.iat > now + 5 || claims.exp - claims.iat > SITE_PROOF_TTL_SECONDS) throw new Error('invalid');
+    if (claims.kind !== expected.kind || claims.platform_issuer !== expected.platformIssuer
+      || claims.iss !== new URL(expected.resource).hostname || claims.tenant_id !== expected.tenantId
+      || claims.resource !== expected.resource || claims.challenge !== expected.challenge) throw new Error('invalid');
+    exactClaim(claims.pairing_attempt_id, expected.pairingAttemptId, 'pairing_attempt');
+    exactClaim(claims.site_id, expected.siteId, 'site');
+    exactClaim(claims.platform_signing_key_sha256, expected.platformSigningKeySha256, 'platform_signing_key');
+    exactClaim(claims.platform_signing_kid, expected.platformSigningKid, 'platform_signing_kid');
+    exactClaim(claims.grant_id, expected.grantId, 'grant');
+    exactClaim(claims.client_id, expected.clientId, 'client');
+    exactClaim(claims.subject_id, expected.subjectId, 'subject');
+    exactClaim(claims.aud, expected.kind === 'consent' ? expected.resource : undefined, 'audience');
+    exactClaim(claims.decision, expected.decision, 'decision');
+    if (expected.scopes !== undefined) {
+      const actualScopes = [...(claims.scope ?? [])];
+      const expectedScopes = [...expected.scopes];
+      if (actualScopes.length !== expectedScopes.length || actualScopes.some((scope, index) => scope !== expectedScopes[index])) {
+        throw new Error('invalid');
+      }
     }
+    return { claims, publicJwk, thumbprint: await calculateJwkThumbprint(publicJwk as JWK, 'sha256') };
+  } catch (error) {
+    throw diagnostic('proof', 'proof.claims_invalid', error);
   }
-  return {
-    claims,
-    publicJwk,
-    thumbprint: await calculateJwkThumbprint(publicJwk as JWK, 'sha256')
-  };
 }
 
 export interface SiteProofResponse {
@@ -197,47 +245,105 @@ export interface SiteVerificationClient {
 
 export type SiteRequest = (url: URL, body: Uint8Array, pinnedAddress: string) => Promise<SiteProofResponse>;
 
-async function requestSiteProof(url: URL, body: Uint8Array, pinnedAddress: string): Promise<SiteProofResponse> {
+const SiteProofResponseSchema = z.object({ proof: z.string(), publicJwk: SitePublicJwkSchema }).strict();
+
+function httpDiagnostic(status: number): PairingDiagnosticError {
+  if (status === 401) return diagnostic('response', 'http.401');
+  if (status === 403) return diagnostic('response', 'http.403');
+  if (status === 429) return diagnostic('response', 'http.429');
+  if (status >= 400 && status < 500) return diagnostic('response', 'http.4xx');
+  if (status >= 500 && status < 600) return diagnostic('response', 'http.5xx');
+  return diagnostic('response', 'http.other');
+}
+
+const TLS_ERROR_CODES = new Set([
+  'CERT_HAS_EXPIRED', 'CERT_NOT_YET_VALID', 'DEPTH_ZERO_SELF_SIGNED_CERT', 'ERR_TLS_CERT_ALTNAME_INVALID',
+  'SELF_SIGNED_CERT_IN_CHAIN', 'UNABLE_TO_GET_ISSUER_CERT', 'UNABLE_TO_GET_ISSUER_CERT_LOCALLY',
+  'UNABLE_TO_VERIFY_LEAF_SIGNATURE'
+]);
+
+function networkDiagnostic(error: unknown): PairingDiagnosticError {
+  if (error instanceof PairingDiagnosticError) return error;
+  const code = typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string'
+    ? error.code : undefined;
+  if (code !== undefined && (TLS_ERROR_CODES.has(code) || code.startsWith('ERR_SSL_') || code.startsWith('ERR_TLS_'))) {
+    return diagnostic('network', 'tls.failed', error);
+  }
+  return diagnostic('network', 'network.failed', error);
+}
+
+export function createSiteProofRequest(options: {
+  readonly ca?: string | Buffer;
+  readonly timeoutMs?: number;
+} = {}): SiteRequest {
+  return (url, body, pinnedAddress) => requestSiteProof(url, body, pinnedAddress, options);
+}
+
+async function requestSiteProof(
+  url: URL,
+  body: Uint8Array,
+  pinnedAddress: string,
+  options: { readonly ca?: string | Buffer; readonly timeoutMs?: number } = {}
+): Promise<SiteProofResponse> {
   return new Promise((resolve, reject) => {
+    let settled = false;
+    const succeed = (value: SiteProofResponse): void => {
+      if (!settled) { settled = true; resolve(value); }
+    };
+    const fail = (error: unknown): void => {
+      if (!settled) { settled = true; reject(error instanceof Error ? error : diagnostic('unknown', 'unknown', error)); }
+    };
     const request = httpsRequest({
       protocol: 'https:',
       hostname: url.hostname,
-      port: 443,
-      path: url.pathname,
+      port: url.port === '' ? 443 : Number(url.port),
+      path: `${url.pathname}${url.search}`,
       method: 'POST',
       servername: url.hostname,
       headers: { 'content-type': 'application/json', 'content-length': String(body.byteLength), accept: 'application/json' },
-      lookup: createPinnedAddressLookup(pinnedAddress)
+      lookup: createPinnedAddressLookup(pinnedAddress),
+      ...(options.ca === undefined ? {} : { ca: options.ca })
     }, (response) => {
       if (response.statusCode !== 200) {
         response.resume();
-        reject(new Error('site_proof_status_invalid'));
+        fail(httpDiagnostic(response.statusCode ?? 0));
         return;
       }
       if (!(response.headers['content-type'] ?? '').toLowerCase().startsWith('application/json')) {
         response.resume();
-        reject(new Error('site_proof_content_type_invalid'));
+        fail(diagnostic('response', 'response.content_type_invalid'));
         return;
       }
       const chunks: Buffer[] = [];
       let size = 0;
       response.on('data', (chunk: Buffer) => {
         size += chunk.byteLength;
-        if (size > MAX_SITE_PROOF_BYTES) response.destroy(new Error('site_proof_too_large'));
+        if (size > MAX_SITE_PROOF_BYTES) {
+          fail(diagnostic('response', 'response.too_large'));
+          response.destroy();
+        }
         else chunks.push(chunk);
       });
       response.on('end', () => {
+        if (settled) return;
+        let decoded: unknown;
         try {
-          const parsed = z.object({ proof: z.string(), publicJwk: SitePublicJwkSchema }).strict()
-            .parse(JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown);
-          resolve(parsed);
-        } catch {
-          reject(new Error('site_proof_response_invalid'));
+          decoded = JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
+        } catch (error) {
+          fail(diagnostic('response', 'response.json_invalid', error));
+          return;
         }
+        const parsed = SiteProofResponseSchema.safeParse(decoded);
+        if (!parsed.success) fail(diagnostic('response', 'response.schema_invalid', parsed.error));
+        else succeed(parsed.data);
       });
     });
-    request.setTimeout(5_000, () => request.destroy(new Error('site_proof_timeout')));
-    request.once('error', reject);
+    request.setTimeout(options.timeoutMs ?? 5_000, () => {
+      const error = diagnostic('network', 'network.timeout');
+      fail(error);
+      request.destroy(error);
+    });
+    request.once('error', (error) => { fail(networkDiagnostic(error)); });
     request.end(body);
   });
 }
@@ -247,7 +353,7 @@ export class HttpsSiteVerificationClient implements SiteVerificationClient {
   readonly #resolve: (hostname: string) => Promise<readonly string[]>;
 
   constructor(options: { request?: SiteRequest; resolve?: (hostname: string) => Promise<readonly string[]> } = {}) {
-    this.#request = options.request ?? requestSiteProof;
+    this.#request = options.request ?? createSiteProofRequest();
     this.#resolve = options.resolve ?? resolvePublicAddresses;
   }
 
@@ -255,9 +361,15 @@ export class HttpsSiteVerificationClient implements SiteVerificationClient {
     const resource = canonicalizeResource(input.resource);
     const resourceUrl = new URL(resource);
     const endpoint = new URL('/wp-json/wp-auto/v1/pairing/proof', resourceUrl.origin);
-    const addresses = await this.#resolve(resourceUrl.hostname);
+    let addresses: readonly string[];
+    try {
+      addresses = await this.#resolve(resourceUrl.hostname);
+    } catch (error) {
+      throw error instanceof PairingDiagnosticError ? error : diagnostic('dns', 'dns.failed', error);
+    }
     const pinnedAddress = addresses[0];
-    if (pinnedAddress === undefined || !isPublicAddress(pinnedAddress)) throw new Error('unsafe_destination');
+    if (pinnedAddress === undefined) throw diagnostic('dns', 'dns.failed');
+    if (!isPublicAddress(pinnedAddress)) throw diagnostic('destination', 'destination.unsafe');
     const body = Buffer.from(JSON.stringify({
       protocol_version: PAIRING_PROTOCOL_VERSION,
       tenant_id: input.tenantId,
@@ -348,16 +460,21 @@ export class PairingService {
     if (!/^[A-Za-z0-9_-]{43,128}$/u.test(input.verifier)) throw new Error('invalid_verifier');
     const now = this.#now();
     const expiresAt = new Date(now.getTime() + PAIRING_ATTEMPT_TTL_MS);
-    await this.#repository.createAttempt({
+    const record = {
       tenantId: input.tenantId,
       id: OpaqueIdSchema.parse(input.attemptId),
       initiatorAccountId: OpaqueIdSchema.parse(input.accountId),
       correlationId: OpaqueIdSchema.parse(input.correlationId),
       resource: canonicalizeResource(input.resource),
       verifierHash: secretHash(input.verifier),
-      status: 'pending',
+      status: 'pending' as const,
       expiresAt
-    });
+    };
+    try {
+      await this.#repository.createAttempt(record);
+    } catch (error) {
+      throw diagnostic('persistence', 'pairing.persistence_failed', error);
+    }
     return { expiresAt };
   }
 
@@ -368,13 +485,24 @@ export class PairingService {
     siteId: string;
     idempotencyKey: string;
   }): Promise<VerifiedSiteProof> {
-    const attempt = await this.#repository.findAttemptForUpdate(input.tenantId, input.attemptId);
-    if (attempt === undefined || attempt.expiresAt <= this.#now()) throw new Error('pairing_attempt_invalid');
+    let attempt: PairingAttemptRecord | undefined;
+    try {
+      attempt = await this.#repository.findAttemptForUpdate(input.tenantId, input.attemptId);
+    } catch (error) {
+      throw diagnostic('persistence', 'pairing.persistence_failed', error);
+    }
+    if (attempt === undefined || attempt.expiresAt <= this.#now()) throw diagnostic('state', 'pairing.state_invalid');
     const candidate = secretHash(input.verifier);
     if (candidate.byteLength !== attempt.verifierHash.byteLength || !timingSafeEqual(candidate, attempt.verifierHash)) {
-      throw new Error('pairing_verifier_invalid');
+      throw diagnostic('state', 'pairing.state_invalid');
     }
-    if (!(await this.#repository.markVerifying(input.tenantId, input.attemptId))) throw new Error('pairing_replay');
+    let marked: boolean;
+    try {
+      marked = await this.#repository.markVerifying(input.tenantId, input.attemptId);
+    } catch (error) {
+      throw diagnostic('persistence', 'pairing.persistence_failed', error);
+    }
+    if (!marked) throw diagnostic('state', 'pairing.state_invalid');
     try {
       const proof = await this.#verifier.verify({
         resource: attempt.resource,
@@ -387,11 +515,19 @@ export class PairingService {
         verifier: input.verifier,
         challenge: randomBytes(32).toString('base64url')
       });
-      await this.#repository.complete(attempt, proof, OpaqueIdSchema.parse(input.siteId), input.idempotencyKey);
+      try {
+        await this.#repository.complete(attempt, proof, OpaqueIdSchema.parse(input.siteId), input.idempotencyKey);
+      } catch (error) {
+        throw diagnostic('persistence', 'pairing.persistence_failed', error);
+      }
       return proof;
     } catch (error) {
-      await this.#repository.fail(input.tenantId, input.attemptId, 'verification_failed');
-      throw error;
+      try {
+        await this.#repository.fail(input.tenantId, input.attemptId, 'verification_failed');
+      } catch (persistenceError) {
+        throw diagnostic('persistence', 'pairing.persistence_failed', new AggregateError([error, persistenceError]));
+      }
+      throw error instanceof PairingDiagnosticError ? error : diagnostic('unknown', 'unknown', error);
     }
   }
 }

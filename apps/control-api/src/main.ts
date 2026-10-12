@@ -156,6 +156,11 @@ const app = buildControlApi({
   consoleAuth,
   store: new PostgresControlStore(database),
   audit: new PostgresSecurityAuditSink(database),
+  pairingDiagnostics: {
+    write(event) {
+      process.stderr.write(`${JSON.stringify(event)}\n`);
+    }
+  },
   readiness: () => database.checkReady(),
   accountAuth,
   loginTransactions,
