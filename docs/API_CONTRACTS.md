@@ -44,7 +44,9 @@ Implemented Phase 2.0.3A routes additionally include:
 - `GET /v1/pairing/start` (fixed fragment-consuming page; the fragment is not
   received or logged by the server);
 - `POST /v1/tenants/{tenant_id}/pairing` (exact-origin, authenticated pairing
-  completion with bounded JSON);
+  completion with bounded JSON; the authenticated account must have an active
+  owner or administrator membership for the exact tenant before any pairing
+  attempt is persisted or site-proof request is sent);
 - `POST /v1/tenants/{tenant_id}/sites/{site_id}/grants` (create one pending
   grant and return the fragment-based WordPress consent URL);
 - `GET /v1/consent/complete` (fixed fragment-consuming completion page);

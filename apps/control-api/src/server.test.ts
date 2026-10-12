@@ -401,14 +401,17 @@ void test('real Fastify HTTP ingress enforces Better Auth database limits and co
 
 class StaticWorkspace {
   ensuredAccount: string | undefined;
-  readonly membership: TenantMembershipView = {
+  readonly memberships: readonly TenantMembershipView[];
+  constructor(memberships: readonly TenantMembershipView[] = [{
     tenantId, role: 'owner', status: 'active', createdAt: '2026-09-16T00:00:00.000Z', isHome: true
-  };
+  }]) { this.memberships = memberships; }
   ensurePersonalWorkspace(accountId: string): Promise<TenantMembershipView> {
     this.ensuredAccount = accountId;
-    return Promise.resolve(this.membership);
+    const membership = this.memberships[0];
+    if (membership === undefined) return Promise.reject(new Error('workspace_missing'));
+    return Promise.resolve(membership);
   }
-  listMemberships(): Promise<readonly TenantMembershipView[]> { return Promise.resolve([this.membership]); }
+  listMemberships(): Promise<readonly TenantMembershipView[]> { return Promise.resolve(this.memberships); }
 }
 
 class StaticPairing implements PairingOperations {
@@ -815,7 +818,7 @@ void test('pairing mutation requires exact origin and server-authenticated tenan
   const audit = new MemoryAudit();
   const app = buildControlApi({
     identityProvider: new StaticIdentity({ accountId: 'account_12345678', authenticationTime: 1, authenticationMethod: 'oidc' }),
-    store: new StaticStore(), audit, pairing, publicOrigin: 'https://platform.example.test'
+    store: new StaticStore(), workspace: new StaticWorkspace(), audit, pairing, publicOrigin: 'https://platform.example.test'
   });
   const payload = { resource: 'https://site.example.test/wp-json/wp-auto/mcp', verifier: 'v'.repeat(43) };
   assert.equal((await app.inject({ method: 'POST', url: `/v1/tenants/${tenantId}/pairing`, payload })).statusCode, 403);
@@ -831,12 +834,81 @@ void test('pairing mutation requires exact origin and server-authenticated tenan
   await app.close();
 });
 
+void test('pairing rejects a missing or non-administrative tenant membership before proof processing', async () => {
+  const payload = {
+    resource: 'https://site.example.test/wp-json/wp-auto/mcp',
+    verifier: 'SECRET_TENANT_MISMATCH_VERIFIER'.padEnd(43, 'x')
+  };
+  const deniedMemberships: readonly (readonly TenantMembershipView[])[] = [
+    [{
+      tenantId: '118f47a8-66e9-7b24-a43d-8a84a9b3f822', role: 'owner', status: 'active',
+      createdAt: '2026-09-16T00:00:00.000Z', isHome: true
+    }],
+    [{
+      tenantId, role: 'member', status: 'active', createdAt: '2026-09-16T00:00:00.000Z', isHome: true
+    }]
+  ];
+  for (const memberships of deniedMemberships) {
+    const pairing = new StaticPairing();
+    const audit = new MemoryAudit();
+    const diagnostics: unknown[] = [];
+    const app = buildControlApi({
+      identityProvider: new StaticIdentity({
+        accountId: 'account_12345678', authenticationTime: 1, authenticationMethod: 'email_otp'
+      }),
+      store: new StaticStore(), workspace: new StaticWorkspace(memberships), audit, pairing,
+      pairingDiagnostics: { write(event) { diagnostics.push(event); } },
+      publicOrigin: 'https://platform.example.test'
+    });
+    const response = await app.inject({
+      method: 'POST', url: `/v1/tenants/${tenantId}/pairing`,
+      headers: { origin: 'https://platform.example.test' }, payload
+    });
+    assert.equal(response.statusCode, 400);
+    assert.deepEqual(response.json(), { error: 'invalid_request' });
+    assert.equal(pairing.context, undefined);
+    assert.equal(pairing.input, undefined);
+    assert.equal(diagnostics.length, 1);
+    const diagnostic = diagnostics[0] as Record<string, unknown>;
+    assert.equal(diagnostic['stage'], 'state');
+    assert.equal(diagnostic['code'], 'pairing.tenant_access_denied');
+    assert.deepEqual(Object.keys(diagnostic).sort(), ['code', 'correlationId', 'occurredAt', 'stage']);
+    assert.equal(JSON.stringify(diagnostics).includes('SECRET_'), false);
+    assert.equal(audit.events.at(-1)?.eventName, 'tenant.access_denied');
+    assert.equal(audit.events.at(-1)?.reason, 'membership_missing');
+    await app.close();
+  }
+});
+
+void test('pairing permits an active tenant administrator', async () => {
+  const pairing = new StaticPairing();
+  const workspace = new StaticWorkspace([{
+    tenantId, role: 'administrator', status: 'active',
+    createdAt: '2026-09-16T00:00:00.000Z', isHome: false
+  }]);
+  const app = buildControlApi({
+    identityProvider: new StaticIdentity({
+      accountId: 'account_12345678', authenticationTime: 1, authenticationMethod: 'email_otp'
+    }),
+    store: new StaticStore(), workspace, audit: new MemoryAudit(), pairing,
+    publicOrigin: 'https://platform.example.test'
+  });
+  const response = await app.inject({
+    method: 'POST', url: `/v1/tenants/${tenantId}/pairing`,
+    headers: { origin: 'https://platform.example.test' },
+    payload: { resource: 'https://site.example.test/wp-json/wp-auto/mcp', verifier: 'v'.repeat(43) }
+  });
+  assert.equal(response.statusCode, 200);
+  assert.equal(pairing.context?.tenantId, tenantId);
+  await app.close();
+});
+
 void test('pairing diagnostics remain internal, bounded and content-free', async () => {
   const audit = new MemoryAudit();
   const events: unknown[] = [];
   const app = buildControlApi({
     identityProvider: new StaticIdentity({ accountId: 'account_12345678', authenticationTime: 1, authenticationMethod: 'oidc' }),
-    store: new StaticStore(), audit, publicOrigin: 'https://platform.example.test',
+    store: new StaticStore(), workspace: new StaticWorkspace(), audit, publicOrigin: 'https://platform.example.test',
     pairing: {
       async pair() {
         throw new PairingDiagnosticError('persistence', 'pairing.persistence_failed', new Error('SECRET_SQL_DETAIL'));
@@ -865,7 +937,7 @@ void test('pairing diagnostics remain internal, bounded and content-free', async
 void test('pairing diagnostic sink failure preserves the generic fail-closed response', async () => {
   const app = buildControlApi({
     identityProvider: new StaticIdentity({ accountId: 'account_12345678', authenticationTime: 1, authenticationMethod: 'oidc' }),
-    store: new StaticStore(), audit: new MemoryAudit(), publicOrigin: 'https://platform.example.test',
+    store: new StaticStore(), workspace: new StaticWorkspace(), audit: new MemoryAudit(), publicOrigin: 'https://platform.example.test',
     pairing: { async pair() { throw new Error('SECRET_UNKNOWN_DETAIL'); } },
     pairingDiagnostics: { write() { throw new Error('SECRET_SINK_DETAIL'); } }
   });
