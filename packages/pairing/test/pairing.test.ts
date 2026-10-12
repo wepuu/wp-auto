@@ -4,10 +4,13 @@ import { CompactSign, exportJWK, generateKeyPair } from 'jose';
 import {
   HttpsSiteVerificationClient,
   GrantService,
+  PairingDiagnosticError,
   PairingService,
   canonicalizeResource,
   createPinnedAddressLookup,
   isPublicAddress,
+  pairingDiagnostic,
+  resolvePublicAddresses,
   secretHash,
   verifySiteProof,
   type PairingAttemptRecord,
@@ -15,8 +18,13 @@ import {
   type GrantRepository,
   type PendingGrantRecord,
   type SiteProofResponse,
+  type SiteVerificationClient,
   type VerifiedSiteProof
 } from '../src/index.js';
+
+function diagnostic(stage: string, code: string): (error: unknown) => boolean {
+  return (error) => error instanceof PairingDiagnosticError && error.stage === stage && error.code === code;
+}
 
 const now = new Date('2026-09-22T00:00:00.000Z');
 const tenantId = '11111111-1111-4111-8111-111111111111';
@@ -90,6 +98,21 @@ test('pinned lookup returns the Node 26 all-address shape without changing the p
   assert.throws(() => createPinnedAddressLookup('not-an-ip'), /pinned_address_invalid/u);
 });
 
+test('DNS diagnostics accept a successful address family and reject empty or unsafe results', async () => {
+  assert.deepEqual(await resolvePublicAddresses('site.example.test', {
+    resolve4: async () => { throw new Error('v4 unavailable'); },
+    resolve6: async () => ['2606:4700:4700::1111']
+  }), ['2606:4700:4700::1111']);
+  await assert.rejects(resolvePublicAddresses('site.example.test', {
+    resolve4: async () => { throw new Error('v4 unavailable'); },
+    resolve6: async () => { throw new Error('v6 unavailable'); }
+  }), diagnostic('dns', 'dns.failed'));
+  await assert.rejects(resolvePublicAddresses('site.example.test', {
+    resolve4: async () => ['8.8.8.8'], resolve6: async () => ['::1']
+  }), diagnostic('destination', 'destination.unsafe'));
+  assert.deepEqual(pairingDiagnostic(new Error('SECRET_DETAIL')), { stage: 'unknown', code: 'unknown' });
+});
+
 test('site proof binds algorithm, type, issuer, tenant, resource, challenge and lifetime', async () => {
   const response = await signedProof();
   const verified = await verifySiteProof(response.proof, response.publicJwk, {
@@ -113,12 +136,36 @@ test('site proof binds algorithm, type, issuer, tenant, resource, challenge and 
     challenge: 'challenge_00000000000000000000000',
     pairingAttemptId: 'attempt_00000001', platformSigningKid,
     now
-  }), /issuer_mismatch/u);
+  }), diagnostic('proof', 'proof.claims_invalid'));
   const expired = await signedProof({ exp: Math.floor(now.getTime() / 1_000) - 1 });
   await assert.rejects(verifySiteProof(expired.proof, expired.publicJwk, {
     kind: 'pairing', platformIssuer: 'https://auth.example.test', tenantId, resource,
     challenge: 'challenge_00000000000000000000000', pairingAttemptId: 'attempt_00000001', platformSigningKid, now
-  }), /proof_time_invalid/u);
+  }), diagnostic('proof', 'proof.claims_invalid'));
+});
+
+test('site proof diagnostics distinguish key, protected header, signature and claims failures', async () => {
+  const response = await signedProof();
+  const expected = {
+    kind: 'pairing' as const, platformIssuer: 'https://auth.example.test', tenantId, resource,
+    challenge: 'challenge_00000000000000000000000', pairingAttemptId: 'attempt_00000001',
+    siteId: 'site_00000001', platformSigningKeySha256, platformSigningKid, now
+  };
+  await assert.rejects(verifySiteProof(response.proof, { ...response.publicJwk, x: 'bad' }, expected),
+    diagnostic('proof', 'proof.key_invalid'));
+  const { privateKey, publicKey } = await generateKeyPair('EdDSA', { crv: 'Ed25519' });
+  const publicJwk = { ...(await exportJWK(publicKey)), kid: 'site-key-0001', alg: 'EdDSA', use: 'sig' };
+  const badHeader = await new CompactSign(Buffer.from('{}'))
+    .setProtectedHeader({ alg: 'EdDSA', typ: 'wrong', kid: publicJwk.kid }).sign(privateKey);
+  await assert.rejects(verifySiteProof(badHeader, publicJwk, expected), diagnostic('proof', 'proof.header_invalid'));
+  const parts = response.proof.split('.');
+  const signature = parts[2];
+  assert.ok(signature !== undefined);
+  parts[2] = `${signature.startsWith('A') ? 'B' : 'A'}${signature.slice(1)}`;
+  await assert.rejects(verifySiteProof(parts.join('.'), response.publicJwk, expected),
+    diagnostic('proof', 'proof.signature_invalid'));
+  await assert.rejects(verifySiteProof(response.proof, response.publicJwk, { ...expected, tenantId: '22222222-2222-4222-8222-222222222222' }),
+    diagnostic('proof', 'proof.claims_invalid'));
 });
 
 test('HTTPS verifier pins a prevalidated public address and fixed proof path', async () => {
@@ -193,7 +240,58 @@ test('pairing attempt stores only a verifier hash and permits one completion', a
   await assert.rejects(service.verify({
     tenantId, attemptId: 'attempt_00000001', verifier,
     siteId: 'site_00000001', idempotencyKey: 'idempotency_0000000001'
-  }), /pairing_replay/u);
+  }), diagnostic('state', 'pairing.state_invalid'));
+});
+
+test('pairing repository failures are classified before any outbound proof request', async () => {
+  let verifyCalls = 0;
+  const repository: PairingRepository = {
+    async createAttempt() { throw new Error('SECRET_DATABASE_DETAIL'); },
+    async findAttemptForUpdate() { throw new Error('unused'); },
+    async markVerifying() { throw new Error('unused'); },
+    async fail() { throw new Error('unused'); },
+    async complete() { throw new Error('unused'); }
+  };
+  const service = new PairingService({
+    repository,
+    verifier: { verify: async () => { verifyCalls += 1; throw new Error('unused'); } },
+    platformIssuer: 'https://auth.example.test', platformSigningKeyPem, platformSigningKid, now: () => now
+  });
+  await assert.rejects(service.begin({
+    tenantId, attemptId: 'attempt_00000001', accountId: 'account_00000001',
+    correlationId: 'correlation_00000001', resource, verifier: 'v'.repeat(43)
+  }), diagnostic('persistence', 'pairing.persistence_failed'));
+  assert.equal(verifyCalls, 0);
+});
+
+test('pairing find, mark, complete and failure-write boundaries classify database failures', async () => {
+  const base: PairingAttemptRecord = {
+    tenantId, id: 'attempt_00000001', resource, verifierHash: secretHash('v'.repeat(43)),
+    status: 'pending', expiresAt: new Date(now.getTime() + 60_000)
+  };
+  const makeService = (repository: PairingRepository, verifier: SiteVerificationClient = {
+    verify: async () => ({ claims: { resource }, publicJwk: {}, thumbprint: 'thumb' } as unknown as VerifiedSiteProof)
+  }) => new PairingService({
+    repository, verifier, platformIssuer: 'https://auth.example.test',
+    platformSigningKeyPem, platformSigningKid, now: () => now
+  });
+  const input = {
+    tenantId, attemptId: base.id, verifier: 'v'.repeat(43), siteId: 'site_00000001',
+    idempotencyKey: 'idempotency_0000000001'
+  };
+  const repository = (overrides: Partial<PairingRepository>): PairingRepository => ({
+    async createAttempt() {}, async findAttemptForUpdate() { return base; }, async markVerifying() { return true; },
+    async fail() {}, async complete() {}, ...overrides
+  });
+  await assert.rejects(makeService(repository({ async findAttemptForUpdate() { throw new Error('db'); } })).verify(input),
+    diagnostic('persistence', 'pairing.persistence_failed'));
+  await assert.rejects(makeService(repository({ async markVerifying() { throw new Error('db'); } })).verify(input),
+    diagnostic('persistence', 'pairing.persistence_failed'));
+  await assert.rejects(makeService(repository({ async complete() { throw new Error('db'); } })).verify(input),
+    diagnostic('persistence', 'pairing.persistence_failed'));
+  await assert.rejects(makeService(repository({ async fail() { throw new Error('db'); } }), {
+    verify: async () => { throw new PairingDiagnosticError('response', 'http.401'); }
+  }).verify(input), diagnostic('persistence', 'pairing.persistence_failed'));
 });
 
 test('grant consent binds site, subject, client, scopes, challenge and activates once', async () => {
