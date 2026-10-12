@@ -309,6 +309,22 @@ export async function expectInvalidGrant(tokenUrl, form, request = fetch) {
   }
 }
 
+export function resolveLifecyclePlan(value, accessOnly) {
+  const mode = value ?? 'normal';
+  if (!['normal', 'positive-rotation', 'replay', 'revocation'].includes(mode)
+      || (mode !== 'normal' && accessOnly)) {
+    throw new Error('invalid_lifecycle_mode');
+  }
+  return {
+    mode,
+    probeBeforeRotation: mode === 'positive-rotation' || mode === 'revocation',
+    revokeBeforeRotation: mode === 'revocation',
+    replayAfterRotation: mode === 'replay',
+    revokeAfterRotation: mode === 'normal',
+    preserveActiveAfterRotation: mode === 'positive-rotation',
+  };
+}
+
 async function main() {
 const args = readArguments(process.argv.slice(2));
 const issuerUrl = assertHttpsUrl(args.issuer, 'issuer');
@@ -316,10 +332,7 @@ const resourceUrl = assertHttpsUrl(args.resource, 'resource');
 const issuer = issuerUrl.href.replace(/\/$/u, '');
 const resource = resourceUrl.href;
 const accessOnly = args['access-only'] === 'true';
-const mode = args.mode ?? 'normal';
-if (!['normal', 'replay', 'revocation'].includes(mode) || (mode !== 'normal' && accessOnly)) {
-  throw new Error('invalid_lifecycle_mode');
-}
+const lifecycle = resolveLifecyclePlan(args.mode, accessOnly);
 const state = base64url(randomBytes(32));
 const verifier = base64url(randomBytes(64));
 const challenge = base64url(createHash('sha256').update(verifier, 'ascii').digest());
@@ -382,11 +395,14 @@ if (accessOnly) {
 
 if (typeof first.body.refresh_token !== 'string') throw new Error('refresh_token_missing');
 
-if (mode === 'revocation') {
+if (lifecycle.probeBeforeRotation) {
+  await probeMcp(resource, first.body.access_token);
+}
+
+if (lifecycle.revokeBeforeRotation) {
   if (Math.floor(Date.now() / 1_000) >= firstBinding.exp) {
     throw new Error('access_token_expired_before_revocation_started');
   }
-  await probeMcp(resource, first.body.access_token);
   const revoked = await fetch(new URL('/token/revocation', issuer), {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
@@ -428,7 +444,23 @@ if (refreshedBinding.grantId !== firstBinding.grantId || refreshedBinding.kid !=
 }
 await probeMcp(resource, refreshed.body.access_token);
 
-if (mode === 'replay') {
+if (lifecycle.preserveActiveAfterRotation) {
+  console.log('OAUTH_LIFECYCLE_MODE=positive-rotation');
+  console.log('OAUTH_AUTHORIZATION_CODE_PKCE=True');
+  console.log('OAUTH_ACCESS_TOKEN_RS256=True');
+  console.log('OAUTH_ACCESS_TOKEN_BINDINGS=True');
+  console.log('OAUTH_MCP_INITIAL=True');
+  console.log('OAUTH_TOOL_COUNT=23');
+  console.log('OAUTH_SITE_HEALTH=True');
+  console.log('OAUTH_REFRESH_ROTATION=True');
+  console.log('OAUTH_MCP_REFRESHED=True');
+  console.log('OAUTH_GRANT_PRESERVED_ACTIVE=True');
+  console.log(`OAUTH_GRANT_ID=${firstBinding.grantId}`);
+  console.log(`OAUTH_SIGNING_KID=${firstBinding.kid}`);
+  process.exit(0);
+}
+
+if (lifecycle.replayAfterRotation) {
   await expectInvalidGrant(tokenUrl, {
     grant_type: 'refresh_token', refresh_token: first.body.refresh_token,
     client_id: args['client-id'], resource,
@@ -447,6 +479,7 @@ if (mode === 'replay') {
   process.exit(0);
 }
 
+if (!lifecycle.revokeAfterRotation) throw new Error('invalid_lifecycle_plan');
 const revocationUrl = new URL('/token/revocation', issuer);
 const revoked = await fetch(revocationUrl, {
   method: 'POST',
