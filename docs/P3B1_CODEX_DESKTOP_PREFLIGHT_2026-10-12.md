@@ -129,3 +129,32 @@ The separately authorized P3-B1B run must use the temporary project,
 initiate OAuth once, stop on any scope or callback mismatch, call only
 `wp-auto-site-health`, clear only the temporary local credential and verify
 that the existing production Grant did not change.
+
+## Post-preflight correction (2026-10-13)
+
+The first separately authorized real Desktop attempt disproved the static
+callback conclusion above for the installed application state. Desktop
+`26.727.4816.0` sent the correct client, resource, `mcp:read` scope,
+`127.0.0.1` host and dynamic port, but used a callback-specific path of the
+form `/callback/<server-specific-id>`. The production client had only the
+stable `/callback` path registered, so the authorization server correctly
+failed closed with `invalid_redirect_uri` before login or Consent.
+
+The authorization metadata still advertised issuer-bound responses correctly.
+Current Codex documentation explains that existing client state without a
+saved stable callback can retain the callback-specific form. Static metadata
+compatibility was therefore insufficient to establish the exact installed
+Desktop behavior. The detailed attempt is recorded in
+`P3B1B_CODEX_DESKTOP_CALLBACK_MISMATCH_2026-10-13.md`.
+
+Corrected current status:
+
+```text
+CODEX_DESKTOP_STATIC_COMPATIBILITY_PASS=False
+CODEX_DESKTOP_PREFLIGHT_PASS=False
+CODEX_DESKTOP_OAUTH_PASS=False
+P3_CORE_OAUTH_MCP_PASS=True
+P3_FULL_ACCEPTANCE_PASS=False
+READY_FOR_CONTROLLED_USE=False
+NOT_READY_FOR_PUBLIC_REGISTRATION=True
+```
