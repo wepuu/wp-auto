@@ -23,8 +23,9 @@ account mapping and `/app` entry were recorded on 2026-10-11. P3-A remains
 incomplete: PR #33 is merged and CI is green. Exact `bb71226` control and
 authorization images were published, a fresh project backup was verified and
 the bounded deployment, health smoke and positive production
-OAuth/PKCE/Consent/direct-MCP browser regression passed on 2026-10-11. G1
-Refresh Replay and G2 revocation remain incomplete, so P3-A is not yet closed. The
+OAuth/PKCE/Consent/direct-MCP browser regression passed on 2026-10-11. The
+repeat G1 Refresh Replay acceptance passed on 2026-10-12; G2 revocation remains
+incomplete, so P3-A is not yet closed. The
 fixed-purpose `wepuu-e2e-lifecycle` client was provisioned in production on
 2026-10-11 from a digest-pinned one-shot image without deploying that image or
 running migration 014; the existing Authorization image was restarted and
@@ -34,7 +35,14 @@ not pass. R0-to-R1 rotation completed, but the validation script stopped on a
 Node 26 locked-stream error while processing the first replay response. The
 new isolated Grant was revoked with `token_revoked`, its outbox delivery
 failed, and R1 plus Connector denial were not verified. The original
-`wepuu-e2e-codex` Grant was unchanged. No repeat attempt is authorized.
+`wepuu-e2e-codex` Grant was unchanged. That failure remains historical
+evidence. After the fixed Authorization and pairing-scoped Connector repairs,
+a newly paired Site passed the positive OAuth/MCP regression and a separately
+authorized repeat G1 passed on 2026-10-12: R0 replay and subsequent R1 use both
+returned `invalid_grant`, the isolated Grant was revoked with
+`refresh_replay`, its sequence-1 Outbox event was delivered, and the Connector
+rejected AT1 before expiry. The Codex Grant remained unchanged. G2 remains
+incomplete, so P3-A is not yet closed.
 The positive evidence and corrected lifecycle provisioning preflight are
 recorded in
 `docs/P3A_PRODUCTION_POSITIVE_ACCEPTANCE_2026-10-11.md` and
@@ -42,15 +50,19 @@ recorded in
 recorded in `docs/P3A6_PRODUCTION_CLIENT_PREREGISTRATION_2026-10-11.md`; the
 failed G1 attempt is recorded in
 `docs/P3A7_G1_REFRESH_REPLAY_PRODUCTION_ACCEPTANCE_2026-10-11.md`.
+The successful repeat is recorded in
+`docs/P3A7_G1_REFRESH_REPLAY_PRODUCTION_ACCEPTANCE_2026-10-12.md`.
 A fixed-digest Authorization hotfix and the pairing-scoped Connector repair
 were deployed to the bounded test environment on 2026-10-12 after verified
 PostgreSQL, MariaDB, Connector and configuration backups. The services and
 protocol smoke checks passed and the database remained at migrations 001
-through 013. The old site was then disconnected through the product flow, but
-the fresh browser pairing failed before creating a new site, identity or
-Grant. The WordPress fixture was returned through the normal local action to a
-safe disconnected state. Positive OAuth/MCP regression, repeat G1 and G2 were
-not run. The local repair validation and production result are recorded in
+through 013. The old site was then disconnected through the product flow. An
+initial fresh pairing attempt failed closed because the configured Tenant did
+not belong to the active account. After deploying the Tenant membership guard
+and using the correct workspace Tenant, a new Site was paired through the
+formal flow. Its positive OAuth/PKCE/MCP and normal refresh regression passed,
+followed by the successful isolated repeat G1 described above. G2 was not run.
+The local repair validation and production result are recorded in
 `docs/P3A7_REPLAY_FIX_VALIDATION_2026-10-11.md` and
 `docs/P3A7_PRODUCTION_REPAIR_DEPLOYMENT_2026-10-12.md`.
 ADR-020 P4-A console-domain separation is a locally validated candidate only.

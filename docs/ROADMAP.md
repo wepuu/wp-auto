@@ -195,8 +195,9 @@ Status: incomplete. P3-A remains false in the repository validation record.
 PR #33 and hosted CI passed. Exact `bb71226` control and authorization images
 were published, a fresh project backup was verified and the bounded production
 deployment, health smoke and positive Email OTP OAuth/PKCE/Consent/direct-MCP
-browser regression passed on 2026-10-11. Refresh Replay and revocation remain
-separately gated. Migration 004 permits a revoked Grant to be followed by a
+browser regression passed on 2026-10-11. A separately authorized repeat G1
+Refresh Replay acceptance passed on 2026-10-12; G2 revocation remains gated.
+Migration 004 permits a revoked Grant to be followed by a
 fresh Grant for the same account/site/client tuple. A locally tested,
 fixed-purpose `wepuu-e2e-lifecycle` provisioning command therefore supports
 the two destructive scenarios with sequential Grants while preserving the
@@ -215,16 +216,16 @@ the script while processing the first replay response. The isolated Grant was
 revoked with `token_revoked` rather than `refresh_replay`; its outbox event was
 not delivered, and R1 invalidation plus Connector denial were not verified.
 The existing positive `wepuu-e2e-codex` Grant remained unchanged. See
-`P3A7_G1_REFRESH_REPLAY_PRODUCTION_ACCEPTANCE_2026-10-11.md`. A repeat G1 and
-G2 remain separately gated. P3-A is not closed and P3-B has not started.
+`P3A7_G1_REFRESH_REPLAY_PRODUCTION_ACCEPTANCE_2026-10-11.md`. That failure is
+retained as historical evidence.
 The P3-A7 Authorization repair and Connector pairing-scoped revocation-state
 correction were deployed to the bounded test environment on 2026-10-12 after
 fresh verified backups. Runtime, discovery, JWKS, client and migration smoke
-checks passed. The old site was disconnected normally, but the required fresh
-browser pairing failed before a new site, site identity or Grant was created.
-The WordPress fixture was returned through its normal local action to a safe
-disconnected state. Positive OAuth/MCP regression, repeat G1 and G2 were not
-run. See `P3A7_REPLAY_FIX_VALIDATION_2026-10-11.md` and
+checks passed. The old site was disconnected normally. The first fresh pairing
+failed before proof delivery because the configured Tenant did not belong to
+the active account, and the WordPress fixture was returned through its normal
+local action to a safe disconnected state. See
+`P3A7_REPLAY_FIX_VALIDATION_2026-10-11.md` and
 `P3A7_PRODUCTION_REPAIR_DEPLOYMENT_2026-10-12.md`.
 
 The diagnostic Control hotfix was subsequently deployed and one separately
@@ -235,9 +236,20 @@ rejected the pairing-attempt insert. No new platform attempt, Site, Grant or
 Outbox event was created; WordPress retained only its fail-closed local pending
 state. A platform guard candidate now rejects missing or non-administrative
 tenant membership before calling the pairing service and records the bounded
-`pairing.tenant_access_denied` diagnostic. The pending state must be cleared
-through the normal WordPress disconnect action before a separately authorized
-retry with the correct workspace Tenant ID.
+`pairing.tenant_access_denied` diagnostic. After that guard was merged and
+deployed, the pending state was cleared through the normal WordPress action and
+a separately authorized retry with the correct workspace Tenant created one
+new active Site. The Site and Connector identifiers matched, Connector
+revocation state v2 began at sequence 0, and the positive OAuth/PKCE/MCP and
+normal refresh regression passed.
+
+A separately authorized repeat G1 then passed on 2026-10-12. R0 rotated to R1;
+replay of R0 and subsequent use of R1 both returned `invalid_grant`. The
+isolated lifecycle Grant was revoked with reason `refresh_replay`, its
+sequence-1 Outbox event was delivered, and the Connector rejected AT1 before
+expiry. The existing `wepuu-e2e-codex` Grant remained active and unchanged.
+See `P3A7_G1_REFRESH_REPLAY_PRODUCTION_ACCEPTANCE_2026-10-12.md`. G2 remains
+separately gated; P3-A is not closed and P3-B has not started.
 
 ### P4-A - SaaS console domain separation
 

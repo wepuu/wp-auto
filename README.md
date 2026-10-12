@@ -50,7 +50,9 @@ deployed in the bounded operator environment. Real email delivery, OTP
 verification, stable account mapping and `/app` entry passed on 2026-10-11.
 P3-A is not closed: the first-authorization fix in PR #33 is deployed from its
 exact images and the positive Email OTP OAuth/PKCE/Consent/direct-MCP browser
-regression passed. G1 Refresh Replay and G2 revocation remain incomplete. P4-A
+regression passed. The repaired, newly paired Site passed the positive
+OAuth/MCP regression and the repeat G1 Refresh Replay acceptance on
+2026-10-12. G2 revocation remains incomplete. P4-A
 is a local candidate that separates the SaaS console onto
 `app.wpauto.cc` while retaining Better Auth and the OAuth issuer on
 `auth.wpauto.cc`; no P4-A production change is authorized. See ADR-018 through
@@ -63,14 +65,19 @@ pass: a Node 26 response-stream error stopped validation, the isolated Grant
 was revoked with the wrong `token_revoked` reason, and its outbox delivery
 failed. See
 `docs/P3A7_G1_REFRESH_REPLAY_PRODUCTION_ACCEPTANCE_2026-10-11.md`. G1 remains
-failed and G2 has not been run.
+failed as historical evidence. A successful isolated repeat is recorded in
+`docs/P3A7_G1_REFRESH_REPLAY_PRODUCTION_ACCEPTANCE_2026-10-12.md`; G2 has not
+been run.
 The fixed-digest Authorization repair and pairing-scoped Connector correction
 were deployed to the bounded test environment on 2026-10-12. Runtime and
-protocol health passed, but the required fresh browser pairing failed before a
-new site or Grant was created. The test WordPress was returned to a safe local
-disconnected state, so the positive OAuth/MCP regression, repeat G1 and G2 were
-not run. See `docs/P3A7_REPLAY_FIX_VALIDATION_2026-10-11.md` and
-`docs/P3A7_PRODUCTION_REPAIR_DEPLOYMENT_2026-10-12.md`.
+protocol health passed. The first fresh pairing failed closed because its
+configured Tenant did not belong to the active account; after the Tenant guard
+was deployed and the correct workspace Tenant was used, a new Site paired
+successfully. The positive OAuth/PKCE/MCP and normal refresh regression then
+passed, followed by the successful isolated repeat G1. G2 was not run. See
+`docs/P3A7_REPLAY_FIX_VALIDATION_2026-10-11.md`,
+`docs/P3A7_PRODUCTION_REPAIR_DEPLOYMENT_2026-10-12.md`, and the successful G1
+record linked above.
 
 ## Architecture
 
