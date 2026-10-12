@@ -197,7 +197,9 @@ The first real Desktop OAuth attempt on 2026-10-13 failed closed with
 `invalid_redirect_uri` because the installed Desktop used a callback-specific
 path that was not one of the client's registered paths. No OAuth artifact or
 Grant change occurred; full acceptance and controlled-use readiness remain
-false.
+false. A fixed-purpose, fail-closed client-metadata command and exact rollback
+are locally validated; production metadata is unchanged and a real retry still
+requires separate authorization.
 PR #33 and hosted CI passed. Exact `bb71226` control and authorization images
 were published, a fresh project backup was verified and the bounded production
 deployment, health smoke and positive Email OTP OAuth/PKCE/Consent/direct-MCP
@@ -268,7 +270,7 @@ See `P3A7_G2_TOKEN_REVOCATION_PRODUCTION_ACCEPTANCE_2026-10-12.md`.
 Positive OAuth/PKCE/MCP, normal Refresh rotation, G1 Replay and G2 explicit
 revocation have now all passed on the repaired active Site. Therefore
 `P3_CORE_OAUTH_MCP_PASS=True`. P3-B1B is blocked on the exact callback-path
-registration mismatch, so
+production registration and real Desktop retry, so
 `P3_FULL_ACCEPTANCE_PASS=False`, `READY_FOR_CONTROLLED_USE=False`, and
 `NOT_READY_FOR_PUBLIC_REGISTRATION=True` remain in force.
 

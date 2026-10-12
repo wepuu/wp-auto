@@ -1,6 +1,6 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { execFile as execFileCallback } from 'node:child_process';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
@@ -51,10 +51,32 @@ export function createServerName(now = new Date(), random = randomBytes(4).toStr
   return `wepuu-p3b1-desktop-${day}-${random}`;
 }
 
-export function renderProjectConfig(serverName) {
+export function validateDesktopCallbackUrl(value) {
+  if (value === OAUTH_CALLBACK_URL) return value;
+  if (value.length > 256 || !/^http:\/\/127\.0\.0\.1\/callback\/[A-Za-z0-9_-]{8,64}$/u.test(value)) {
+    throw new Error('codex_desktop_callback_invalid');
+  }
+  const parsed = new URL(value);
+  if (parsed.href !== value || parsed.port !== '' || parsed.search !== '' || parsed.hash !== ''
+      || parsed.username !== '' || parsed.password !== '') throw new Error('codex_desktop_callback_invalid');
+  return value;
+}
+
+export async function readDesktopCallbackFile(filePath) {
+  const details = await lstat(filePath);
+  if (!details.isFile() || details.isSymbolicLink() || details.size < 1 || details.size > 300) {
+    throw new Error('codex_desktop_callback_file_invalid');
+  }
+  const contents = await readFile(filePath, 'utf8');
+  if (!/^[^\r\n]+(?:\r?\n)?$/u.test(contents)) throw new Error('codex_desktop_callback_file_invalid');
+  return validateDesktopCallbackUrl(contents.replace(/\r?\n$/u, ''));
+}
+
+export function renderProjectConfig(serverName, callbackUrl = OAUTH_CALLBACK_URL) {
   if (!/^wepuu-p3b1-desktop-\d{8}-[a-f0-9]{8}$/u.test(serverName)) {
     throw new Error('server_name_invalid');
   }
+  const validatedCallback = validateDesktopCallbackUrl(callbackUrl);
   return `[mcp_servers.${serverName}]\n`
     + `url = "${MCP_RESOURCE}"\n`
     + `oauth_resource = "${MCP_RESOURCE}"\n`
@@ -62,7 +84,7 @@ export function renderProjectConfig(serverName) {
     + 'default_tools_approval_mode = "prompt"\n\n'
     + `[mcp_servers.${serverName}.oauth]\n`
     + `client_id = "${OAUTH_CLIENT_ID}"\n`
-    + `callback_url = "${OAUTH_CALLBACK_URL}"\n`;
+    + `callback_url = "${validatedCallback}"\n`;
 }
 
 export function validateChallenge(status, authenticate) {
@@ -126,9 +148,17 @@ export async function probePublicOAuthMetadata(fetchImpl = fetch) {
   return { redirectObserved };
 }
 
-export async function prepareDesktopProject({ manifestPath, outputRoot = tmpdir(), now, random, fetchImpl } = {}) {
+export async function prepareDesktopProject({
+  manifestPath,
+  outputRoot = tmpdir(),
+  now,
+  random,
+  fetchImpl,
+  callbackFile
+} = {}) {
   if (manifestPath === undefined) throw new Error('codex_desktop_manifest_path_required');
   const manifest = parseDesktopManifest(await readFile(manifestPath, 'utf8'));
+  const callbackUrl = callbackFile === undefined ? OAUTH_CALLBACK_URL : await readDesktopCallbackFile(callbackFile);
   const serverName = createServerName(now, random);
   const projectDirectory = path.resolve(outputRoot, serverName);
   const expectedParent = `${path.resolve(outputRoot)}${path.sep}`;
@@ -137,9 +167,16 @@ export async function prepareDesktopProject({ manifestPath, outputRoot = tmpdir(
   await mkdir(projectDirectory, { recursive: false });
   await mkdir(configDirectory, { recursive: false });
   const configPath = path.join(configDirectory, 'config.toml');
-  await writeFile(configPath, renderProjectConfig(serverName), { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+  await writeFile(configPath, renderProjectConfig(serverName, callbackUrl), { encoding: 'utf8', flag: 'wx', mode: 0o600 });
   const probe = await probePublicOAuthMetadata(fetchImpl);
-  return { manifest, serverName, projectDirectory, configPath, ...probe };
+  return {
+    manifest,
+    serverName,
+    projectDirectory,
+    configPath,
+    callbackDigest: createHash('sha256').update(callbackUrl, 'utf8').digest('hex'),
+    ...probe
+  };
 }
 
 export async function resolveDefaultManifestPath(execFileImpl = execFile, platform = process.platform) {
@@ -155,12 +192,14 @@ export async function resolveDefaultManifestPath(execFileImpl = execFile, platfo
 
 async function main() {
   const prepared = await prepareDesktopProject({
-    manifestPath: process.env.WEPUU_CODEX_APPX_MANIFEST ?? await resolveDefaultManifestPath()
+    manifestPath: process.env.WEPUU_CODEX_APPX_MANIFEST ?? await resolveDefaultManifestPath(),
+    callbackFile: process.env.WEPUU_CODEX_DESKTOP_CALLBACK_FILE
   });
   process.stdout.write(`CODEX_DESKTOP_VERSION=${prepared.manifest.version}\n`);
   process.stdout.write(`CODEX_DESKTOP_SERVER_NAME=${prepared.serverName}\n`);
   process.stdout.write(`CODEX_DESKTOP_PROJECT_DIR=${prepared.projectDirectory}\n`);
   process.stdout.write(`CODEX_DESKTOP_CONFIG_PATH=${prepared.configPath}\n`);
+  process.stdout.write(`CODEX_DESKTOP_CALLBACK_DIGEST=${prepared.callbackDigest}\n`);
   process.stdout.write(`RESOURCE_METADATA_SAME_ORIGIN_REDIRECT=${String(prepared.redirectObserved)}\n`);
   process.stdout.write('CODEX_DESKTOP_STATIC_COMPATIBILITY_PASS=True\n');
   process.stdout.write('CODEX_DESKTOP_OAUTH_STARTED=False\n');
