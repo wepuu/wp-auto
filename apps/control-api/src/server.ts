@@ -579,6 +579,14 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
     }
   }
 
+  async function safePairingDiagnostic(event: PairingDiagnosticEvent): Promise<void> {
+    try {
+      await options.pairingDiagnostics?.write(event);
+    } catch {
+      // Diagnostic output is best-effort and must never alter fail-closed behavior.
+    }
+  }
+
   async function requestContext(request: FastifyRequest): Promise<TenantContext> {
     const principal = await options.identityProvider.authenticate(request);
     const parsed = TenantParamsSchema.safeParse(request.params);
@@ -1176,13 +1184,36 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
   });
 
   app.post('/v1/tenants/:tenantId/pairing', async (request, reply) => {
-    if (options.pairing === undefined || options.publicOrigin === undefined) {
+    if (options.pairing === undefined || options.publicOrigin === undefined || options.workspace === undefined) {
       throw new PlatformError('temporarily_unavailable', 503);
     }
     if (request.headers.origin !== options.publicOrigin) throw new PlatformError('forbidden', 403);
     const context = await requestContext(request);
     const body = PairingBodySchema.safeParse(request.body);
     if (!body.success) throw new PlatformError('invalid_request', 400);
+    const membership = (await options.workspace.listMemberships(context.accountId))
+      .find((candidate) => candidate.tenantId === context.tenantId);
+    if (membership === undefined || (membership.role !== 'owner' && membership.role !== 'administrator')) {
+      const occurredAt = new Date().toISOString();
+      await safePairingDiagnostic({
+        occurredAt,
+        correlationId: context.correlationId,
+        stage: 'state',
+        code: 'pairing.tenant_access_denied'
+      });
+      await safeAudit({
+        occurredAt,
+        eventName: 'tenant.access_denied',
+        outcome: 'denied',
+        reason: 'membership_missing',
+        correlationId: context.correlationId,
+        tenantId: context.tenantId,
+        actorId: context.accountId,
+        service: 'control-api',
+        serviceVersion: '0.5.0'
+      });
+      throw new PlatformError('invalid_request', 400);
+    }
     try {
       const result = await options.pairing.pair(context, body.data);
       await safeAudit({
@@ -1193,16 +1224,12 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
       return await reply.header('cache-control', 'no-store').send({ site_id: result.siteId, status: 'active' });
     } catch (error) {
       const classified = pairingDiagnostic(error);
-      try {
-        await options.pairingDiagnostics?.write({
-          occurredAt: new Date().toISOString(),
-          correlationId: context.correlationId,
-          stage: classified.stage,
-          code: classified.code
-        });
-      } catch {
-        // Diagnostic output is best-effort and must never alter fail-closed behavior.
-      }
+      await safePairingDiagnostic({
+        occurredAt: new Date().toISOString(),
+        correlationId: context.correlationId,
+        stage: classified.stage,
+        code: classified.code
+      });
       await safeAudit({
         occurredAt: new Date().toISOString(), eventName: 'pairing.denied', outcome: 'denied', reason: 'proof_invalid',
         correlationId: context.correlationId, tenantId: context.tenantId, actorId: context.accountId,

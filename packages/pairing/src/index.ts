@@ -28,7 +28,7 @@ export type PairingDiagnosticCode =
   | 'http.401' | 'http.403' | 'http.429' | 'http.4xx' | 'http.5xx' | 'http.other'
   | 'response.content_type_invalid' | 'response.too_large' | 'response.json_invalid' | 'response.schema_invalid'
   | 'proof.key_invalid' | 'proof.signature_invalid' | 'proof.header_invalid' | 'proof.claims_invalid'
-  | 'pairing.state_invalid' | 'pairing.persistence_failed' | 'unknown';
+  | 'pairing.state_invalid' | 'pairing.tenant_access_denied' | 'pairing.persistence_failed' | 'unknown';
 
 export class PairingDiagnosticError extends Error {
   readonly stage: PairingDiagnosticStage;
