@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
+  expectInvalidGrant,
   probeMcpRevocationState,
   waitForMcpDenial,
 } from './test-production-wordpress-oauth.mjs';
@@ -96,5 +97,44 @@ test('probeMcpRevocationState rejects protocol responses other than success or i
       async () => mcpResponse(401, 'Bearer error="insufficient_scope"'),
     ),
     /mcp_revocation_protocol_401/u,
+  );
+});
+
+test('expectInvalidGrant consumes a real Node Response exactly once', async () => {
+  const response = new Response(JSON.stringify({ error: 'invalid_grant' }), {
+    status: 400,
+    headers: { 'content-type': 'application/json' },
+  });
+  await expectInvalidGrant('https://auth.example/token', {}, async () => response);
+  assert.equal(response.bodyUsed, true);
+});
+
+test('expectInvalidGrant rejects success, other OAuth errors and non-JSON responses without details', async () => {
+  for (const response of [
+    new Response('{}', { status: 200 }),
+    new Response(JSON.stringify({ error: 'invalid_client', token: 'must-not-leak' }), { status: 400 }),
+    new Response('not-json-sensitive-body', { status: 400 }),
+  ]) {
+    await assert.rejects(
+      expectInvalidGrant('https://auth.example/token', {}, async () => response),
+      (error) => error instanceof Error
+        && /^oauth_invalid_grant_expected_/u.test(error.message)
+        && !/invalid_client|must-not-leak|not-json-sensitive-body/u.test(error.message),
+    );
+  }
+});
+
+test('expectInvalidGrant classifies request timeout and network failure without sensitive detail', async () => {
+  await assert.rejects(
+    expectInvalidGrant('https://auth.example/token', {}, async () => {
+      throw new DOMException('sensitive timeout detail', 'TimeoutError');
+    }),
+    /oauth_invalid_grant_probe_timeout/u,
+  );
+  await assert.rejects(
+    expectInvalidGrant('https://auth.example/token', {}, async () => {
+      throw new TypeError('sensitive network detail');
+    }),
+    /oauth_invalid_grant_probe_network/u,
   );
 });

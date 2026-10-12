@@ -9,16 +9,60 @@ import {
   consentInteractionCsp,
   consentInteractionResult,
   consentGrantUpdatePlan,
+  createGrantRevocationContext,
   interactionResource,
   interactionSubmissionHeaderRejection,
   normalizeAuthorizationResources,
   oauthConsentBootstrapMatches,
   oauthResumeStageDiagnostic,
+  providerGrantRevocationReason,
   safeOAuthFailure,
   serverErrorDiagnostic
 } from './server.js';
 
 const resource = 'https://site.example.test/wp-json/wp-auto/mcp';
+
+test('provider request context identifies only an explicit consumed refresh replay', () => {
+  assert.equal(providerGrantRevocationReason({
+    oidc: {
+      route: 'token',
+      params: { grant_type: 'refresh_token' },
+      entities: { RefreshToken: { consumed: 1_760_000_000 } }
+    }
+  }), 'refresh_replay');
+  for (const context of [
+    undefined,
+    { oidc: { route: 'revocation', params: {}, entities: { RefreshToken: { consumed: 1 } } } },
+    { oidc: { route: 'token', params: { grant_type: 'authorization_code' }, entities: {} } },
+    { oidc: { route: 'token', params: { grant_type: 'refresh_token' }, entities: { RefreshToken: {} } } }
+  ]) {
+    assert.equal(providerGrantRevocationReason(context), 'token_revoked');
+  }
+});
+
+test('provider revocation contexts remain isolated across concurrent requests', async () => {
+  const context = createGrantRevocationContext();
+  let releaseReplay!: () => void;
+  const replayBarrier = new Promise<void>((resolve) => { releaseReplay = resolve; });
+  const replay = context.run({
+    oidc: {
+      route: 'token', params: { grant_type: 'refresh_token' },
+      entities: { RefreshToken: { consumed: 1 } }
+    }
+  }, async () => {
+    await replayBarrier;
+    return context.resolve();
+  });
+  const revocation = context.run({
+    oidc: { route: 'revocation', params: {}, entities: { RefreshToken: { consumed: 1 } } }
+  }, async () => {
+    releaseReplay();
+    await Promise.resolve();
+    return context.resolve();
+  });
+  assert.deepEqual(await Promise.all([replay, revocation]), ['refresh_replay', 'token_revoked']);
+  assert.equal(context.resolve(), 'token_revoked');
+});
 
 test('OAuth resume stage diagnostics contain no request or tenant data', () => {
   assert.deepEqual(oauthResumeStageDiagnostic('interaction_ended'), {

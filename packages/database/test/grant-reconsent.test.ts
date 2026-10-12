@@ -98,10 +98,13 @@ test('revoked Grant permits same-tuple re-consent without reviving old tokens', 
   await refresh.upsert(r0, { ...tokenPayload, rotations: 0 }, 3_600);
   await refresh.consume(r0);
   await refresh.upsert(r1, { ...tokenPayload, rotations: 1 }, 3_600);
-  await assert.rejects(
-    refresh.consume(r0),
-    (error: unknown) => error instanceof Error && error.message === 'invalid_grant'
+  const replayAdapter = new PostgresOidcAdapter(
+    'RefreshToken', database, artifactCodec, new RateLimitSubjectCodec(Buffer.alloc(32, 13)),
+    () => 'refresh_replay'
   );
+  assert.equal(typeof (await replayAdapter.find(r0))?.['consumed'], 'number');
+  await replayAdapter.destroy(r0);
+  await replayAdapter.revokeByGrantId(first.grantId);
 
   const firstState = await admin.query<{ status: string; revocation_reason: string | null }>(
     'SELECT status, revocation_reason FROM platform.grants WHERE tenant_id = $1 AND id = $2',
@@ -110,6 +113,11 @@ test('revoked Grant permits same-tuple re-consent without reviving old tokens', 
   assert.deepEqual(firstState.rows[0], { status: 'revoked', revocation_reason: 'refresh_replay' });
   assert.equal(await refresh.find(r1), undefined);
   await assert.rejects(refresh.consume(r1));
+  const firstEvents = await admin.query<{ reason: string }>(
+    'SELECT reason FROM oauth.revocation_outbox WHERE grant_id = $1 ORDER BY id',
+    [first.grantId]
+  );
+  assert.deepEqual(firstEvents.rows, [{ reason: 'refresh_replay' }]);
   const claims = new PostgresGrantClaimsResolver(database);
   assert.equal(await claims.resolve(accountId, {
     grantId: first.grantId,
@@ -153,12 +161,22 @@ test('revoked Grant permits same-tuple re-consent without reviving old tokens', 
     { id: second.grantId, status: 'active' }
   ]);
 
+  const explicitRevocationToken = 'refresh-reconsent-explicit-revocation';
+  await refresh.upsert(explicitRevocationToken, {
+    ...tokenPayload, grantId: second.grantId, rotations: 0
+  }, 3_600);
+  await refresh.consume(explicitRevocationToken);
   await refresh.revokeByGrantId(second.grantId);
   const secondState = await admin.query<{ status: string; revocation_reason: string | null }>(
     'SELECT status, revocation_reason FROM platform.grants WHERE tenant_id = $1 AND id = $2',
     [tenantId, second.grantId]
   );
   assert.deepEqual(secondState.rows[0], { status: 'revoked', revocation_reason: 'token_revoked' });
+  const secondEvents = await admin.query<{ reason: string }>(
+    'SELECT reason FROM oauth.revocation_outbox WHERE grant_id = $1 ORDER BY id',
+    [second.grantId]
+  );
+  assert.deepEqual(secondEvents.rows, [{ reason: 'token_revoked' }]);
   assert.equal(await claims.resolve(accountId, {
     grantId: second.grantId,
     clientId: P3A_LIFECYCLE_TEST_CLIENT_ID,
