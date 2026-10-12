@@ -45,9 +45,12 @@ returned `invalid_grant`, the isolated Grant was revoked with
 rejected AT1 before expiry. The Codex Grant remained unchanged. G2 then
 revoked a new independent Grant with `token_revoked`, delivered sequence 2 and
 caused the corresponding AT0 to be denied before expiry. P3-B1A Codex Desktop
-compatibility preflight passed for Windows Desktop `26.727.4816.0`; the real
-Desktop OAuth flow has not run, so full acceptance and controlled-use
-readiness remain false.
+compatibility preflight initially passed for Windows Desktop `26.727.4816.0`.
+The first real Desktop OAuth attempt on 2026-10-13 then failed closed with
+`invalid_redirect_uri`: this Desktop connection used a callback-specific path
+under `/callback/`, while the pre-registered client contains only the stable
+`/callback` path. No OAuth artifact or Grant change occurred. Full acceptance
+and controlled-use readiness remain false.
 The positive evidence and corrected lifecycle provisioning preflight are
 recorded in
 `docs/P3A_PRODUCTION_POSITIVE_ACCEPTANCE_2026-10-11.md` and
