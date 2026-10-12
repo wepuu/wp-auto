@@ -217,11 +217,15 @@ not delivered, and R1 invalidation plus Connector denial were not verified.
 The existing positive `wepuu-e2e-codex` Grant remained unchanged. See
 `P3A7_G1_REFRESH_REPLAY_PRODUCTION_ACCEPTANCE_2026-10-11.md`. A repeat G1 and
 G2 remain separately gated. P3-A is not closed and P3-B has not started.
-The local P3-A7 repair candidate fixes response consumption, Provider
-request-scoped replay classification, and bounded outbox error codes without a
-migration. A separate Connector pairing-scoped revocation-state correction is
-still required before any production retry. See
-`P3A7_REPLAY_FIX_VALIDATION_2026-10-11.md`.
+The P3-A7 Authorization repair and Connector pairing-scoped revocation-state
+correction were deployed to the bounded test environment on 2026-10-12 after
+fresh verified backups. Runtime, discovery, JWKS, client and migration smoke
+checks passed. The old site was disconnected normally, but the required fresh
+browser pairing failed before a new site, site identity or Grant was created.
+The WordPress fixture was returned through its normal local action to a safe
+disconnected state. Positive OAuth/MCP regression, repeat G1 and G2 were not
+run. See `P3A7_REPLAY_FIX_VALIDATION_2026-10-11.md` and
+`P3A7_PRODUCTION_REPAIR_DEPLOYMENT_2026-10-12.md`.
 
 ### P4-A - SaaS console domain separation
 

@@ -42,11 +42,17 @@ recorded in
 recorded in `docs/P3A6_PRODUCTION_CLIENT_PREREGISTRATION_2026-10-11.md`; the
 failed G1 attempt is recorded in
 `docs/P3A7_G1_REFRESH_REPLAY_PRODUCTION_ACCEPTANCE_2026-10-11.md`.
-A local, undeployed platform repair candidate now removes the Fetch body
-double-consumption, distinguishes Provider replay from RFC 7009 using isolated
-request context, and records bounded outbox failure codes. Its incomplete
-validation and the independent Connector pairing-sequence defect are recorded
-in `docs/P3A7_REPLAY_FIX_VALIDATION_2026-10-11.md`.
+A fixed-digest Authorization hotfix and the pairing-scoped Connector repair
+were deployed to the bounded test environment on 2026-10-12 after verified
+PostgreSQL, MariaDB, Connector and configuration backups. The services and
+protocol smoke checks passed and the database remained at migrations 001
+through 013. The old site was then disconnected through the product flow, but
+the fresh browser pairing failed before creating a new site, identity or
+Grant. The WordPress fixture was returned through the normal local action to a
+safe disconnected state. Positive OAuth/MCP regression, repeat G1 and G2 were
+not run. The local repair validation and production result are recorded in
+`docs/P3A7_REPLAY_FIX_VALIDATION_2026-10-11.md` and
+`docs/P3A7_PRODUCTION_REPAIR_DEPLOYMENT_2026-10-12.md`.
 ADR-020 P4-A console-domain separation is a locally validated candidate only.
 It is not deployed and does not authorize DNS, Nginx or production database
 changes.

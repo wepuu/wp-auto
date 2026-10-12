@@ -64,11 +64,13 @@ was revoked with the wrong `token_revoked` reason, and its outbox delivery
 failed. See
 `docs/P3A7_G1_REFRESH_REPLAY_PRODUCTION_ACCEPTANCE_2026-10-11.md`. G1 remains
 failed and G2 has not been run.
-An undeployed repair candidate addresses the Fetch stream and replay-reason
-defects and adds content-free delivery failure categories. The production
-Connector also requires a separate pairing-scoped sequence-state fix before a
-new G1 can be authorized; see
-`docs/P3A7_REPLAY_FIX_VALIDATION_2026-10-11.md`.
+The fixed-digest Authorization repair and pairing-scoped Connector correction
+were deployed to the bounded test environment on 2026-10-12. Runtime and
+protocol health passed, but the required fresh browser pairing failed before a
+new site or Grant was created. The test WordPress was returned to a safe local
+disconnected state, so the positive OAuth/MCP regression, repeat G1 and G2 were
+not run. See `docs/P3A7_REPLAY_FIX_VALIDATION_2026-10-11.md` and
+`docs/P3A7_PRODUCTION_REPAIR_DEPLOYMENT_2026-10-12.md`.
 
 ## Architecture
 
