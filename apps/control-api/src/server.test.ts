@@ -5,6 +5,7 @@ import type { SecurityEventView } from '@wepuu/database';
 import type { SecurityAuditEvent, SecurityAuditSink } from '@wepuu/security-audit';
 import { createAccountAuth, MockOtpEmailSender, type AccountAuth } from '@wepuu/account-auth';
 import { Database, PostgresAccountLoginTransactionStore } from '@wepuu/database';
+import { PairingDiagnosticError } from '@wepuu/pairing';
 import {
   buildControlApi,
   SessionAccountIdentityProvider,
@@ -827,6 +828,53 @@ void test('pairing mutation requires exact origin and server-authenticated tenan
   assert.equal(pairing.context?.tenantId, tenantId);
   assert.deepEqual(pairing.input, payload);
   assert.equal(JSON.stringify(audit.events).includes(payload.verifier), false);
+  await app.close();
+});
+
+void test('pairing diagnostics remain internal, bounded and content-free', async () => {
+  const audit = new MemoryAudit();
+  const events: unknown[] = [];
+  const app = buildControlApi({
+    identityProvider: new StaticIdentity({ accountId: 'account_12345678', authenticationTime: 1, authenticationMethod: 'oidc' }),
+    store: new StaticStore(), audit, publicOrigin: 'https://platform.example.test',
+    pairing: {
+      async pair() {
+        throw new PairingDiagnosticError('persistence', 'pairing.persistence_failed', new Error('SECRET_SQL_DETAIL'));
+      }
+    },
+    pairingDiagnostics: { write(event) { events.push(event); } }
+  });
+  const response = await app.inject({
+    method: 'POST', url: `/v1/tenants/${tenantId}/pairing`,
+    headers: { origin: 'https://platform.example.test' },
+    payload: { resource: 'https://site.example.test/wp-json/wp-auto/mcp', verifier: 'SECRET_VERIFIER'.padEnd(43, 'x') }
+  });
+  assert.equal(response.statusCode, 400);
+  assert.deepEqual(response.json(), { error: 'invalid_request' });
+  assert.equal(events.length, 1);
+  const event = events[0] as Record<string, unknown>;
+  assert.deepEqual(Object.keys(event).sort(), ['code', 'correlationId', 'occurredAt', 'stage']);
+  assert.equal(event['stage'], 'persistence');
+  assert.equal(event['code'], 'pairing.persistence_failed');
+  assert.equal(JSON.stringify(events).includes('SECRET_'), false);
+  assert.equal(audit.events.at(-1)?.eventName, 'pairing.denied');
+  assert.equal(audit.events.at(-1)?.reason, 'proof_invalid');
+  await app.close();
+});
+
+void test('pairing diagnostic sink failure preserves the generic fail-closed response', async () => {
+  const app = buildControlApi({
+    identityProvider: new StaticIdentity({ accountId: 'account_12345678', authenticationTime: 1, authenticationMethod: 'oidc' }),
+    store: new StaticStore(), audit: new MemoryAudit(), publicOrigin: 'https://platform.example.test',
+    pairing: { async pair() { throw new Error('SECRET_UNKNOWN_DETAIL'); } },
+    pairingDiagnostics: { write() { throw new Error('SECRET_SINK_DETAIL'); } }
+  });
+  const response = await app.inject({
+    method: 'POST', url: `/v1/tenants/${tenantId}/pairing`, headers: { origin: 'https://platform.example.test' },
+    payload: { resource: 'https://site.example.test/wp-json/wp-auto/mcp', verifier: 'v'.repeat(43) }
+  });
+  assert.equal(response.statusCode, 400);
+  assert.deepEqual(response.json(), { error: 'invalid_request' });
   await app.close();
 });
 
