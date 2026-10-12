@@ -148,9 +148,9 @@ export async function resolveDefaultManifestPath(execFileImpl = execFile, platfo
   const candidates = result.stdout.split(/\r?\n/u).map((value) => value.trim()).filter(Boolean);
   const executable = candidates.find((value) => /\\OpenAI\.CodexBeta_[^\\]+\\app\\resources\\codex(?:\.exe)?$/iu.test(value));
   if (executable === undefined) throw new Error('codex_desktop_executable_not_found');
-  const resources = path.dirname(executable);
-  const packageRoot = path.dirname(path.dirname(resources));
-  return path.join(packageRoot, 'AppxManifest.xml');
+  const resources = path.win32.dirname(executable);
+  const packageRoot = path.win32.dirname(path.win32.dirname(resources));
+  return path.win32.join(packageRoot, 'AppxManifest.xml');
 }
 
 async function main() {
