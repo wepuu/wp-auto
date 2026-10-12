@@ -19,13 +19,14 @@ revocation, direct WordPress MCP, and isolated Application Password regression
 evidence. Connector changes and Phase 2.0.7B2 remain separately gated.
 ADR-018 P1 Better Auth and ADR-019 P2 Email OTP + Resend are deployed on the
 bounded operator environment; real email delivery, OTP verification, stable
-account mapping and `/app` entry were recorded on 2026-10-11. P3-A remains
-incomplete: PR #33 is merged and CI is green. Exact `bb71226` control and
-authorization images were published, a fresh project backup was verified and
+account mapping and `/app` entry were recorded on 2026-10-11. P3-A core
+acceptance is complete: PR #33 is merged and CI is green. Exact `bb71226`
+control and authorization images were published, a fresh project backup was verified and
 the bounded deployment, health smoke and positive production
 OAuth/PKCE/Consent/direct-MCP browser regression passed on 2026-10-11. The
-repeat G1 Refresh Replay acceptance passed on 2026-10-12; G2 revocation remains
-incomplete, so P3-A is not yet closed. The
+repeat G1 Refresh Replay acceptance and the isolated G2 RFC 7009 revocation
+acceptance passed on 2026-10-12. Both delivered their expected signed Outbox
+events and produced Connector denial before Access Token expiry. The
 fixed-purpose `wepuu-e2e-lifecycle` client was provisioned in production on
 2026-10-11 from a digest-pinned one-shot image without deploying that image or
 running migration 014; the existing Authorization image was restarted and
@@ -41,8 +42,10 @@ a newly paired Site passed the positive OAuth/MCP regression and a separately
 authorized repeat G1 passed on 2026-10-12: R0 replay and subsequent R1 use both
 returned `invalid_grant`, the isolated Grant was revoked with
 `refresh_replay`, its sequence-1 Outbox event was delivered, and the Connector
-rejected AT1 before expiry. The Codex Grant remained unchanged. G2 remains
-incomplete, so P3-A is not yet closed.
+rejected AT1 before expiry. The Codex Grant remained unchanged. G2 then
+revoked a new independent Grant with `token_revoked`, delivered sequence 2 and
+caused the corresponding AT0 to be denied before expiry. P3-B has not started,
+so full acceptance and controlled-use readiness remain false.
 The positive evidence and corrected lifecycle provisioning preflight are
 recorded in
 `docs/P3A_PRODUCTION_POSITIVE_ACCEPTANCE_2026-10-11.md` and
@@ -52,6 +55,8 @@ failed G1 attempt is recorded in
 `docs/P3A7_G1_REFRESH_REPLAY_PRODUCTION_ACCEPTANCE_2026-10-11.md`.
 The successful repeat is recorded in
 `docs/P3A7_G1_REFRESH_REPLAY_PRODUCTION_ACCEPTANCE_2026-10-12.md`.
+The successful G2 and aggregate P3-A conclusion are recorded in
+`docs/P3A7_G2_TOKEN_REVOCATION_PRODUCTION_ACCEPTANCE_2026-10-12.md`.
 A fixed-digest Authorization hotfix and the pairing-scoped Connector repair
 were deployed to the bounded test environment on 2026-10-12 after verified
 PostgreSQL, MariaDB, Connector and configuration backups. The services and
@@ -61,7 +66,7 @@ initial fresh pairing attempt failed closed because the configured Tenant did
 not belong to the active account. After deploying the Tenant membership guard
 and using the correct workspace Tenant, a new Site was paired through the
 formal flow. Its positive OAuth/PKCE/MCP and normal refresh regression passed,
-followed by the successful isolated repeat G1 described above. G2 was not run.
+followed by the successful isolated G1 and G2 lifecycle tests described above.
 The local repair validation and production result are recorded in
 `docs/P3A7_REPLAY_FIX_VALIDATION_2026-10-11.md` and
 `docs/P3A7_PRODUCTION_REPAIR_DEPLOYMENT_2026-10-12.md`.

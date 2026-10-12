@@ -48,11 +48,13 @@ validation deployment: connector changes, general release expansion and Phase
 The P1 Better Auth account boundary and P2 Email OTP + Resend runtime are
 deployed in the bounded operator environment. Real email delivery, OTP
 verification, stable account mapping and `/app` entry passed on 2026-10-11.
-P3-A is not closed: the first-authorization fix in PR #33 is deployed from its
-exact images and the positive Email OTP OAuth/PKCE/Consent/direct-MCP browser
+P3-A core acceptance is complete: the first-authorization fix in PR #33 is
+deployed from its exact images and the positive Email OTP
+OAuth/PKCE/Consent/direct-MCP browser
 regression passed. The repaired, newly paired Site passed the positive
-OAuth/MCP regression and the repeat G1 Refresh Replay acceptance on
-2026-10-12. G2 revocation remains incomplete. P4-A
+OAuth/MCP regression, repeat G1 Refresh Replay and isolated G2 RFC 7009
+revocation acceptance on 2026-10-12. P3-B has not started, so full acceptance
+and controlled-use readiness remain false. P4-A
 is a local candidate that separates the SaaS console onto
 `app.wpauto.cc` while retaining Better Auth and the OAuth issuer on
 `auth.wpauto.cc`; no P4-A production change is authorized. See ADR-018 through
@@ -66,15 +68,16 @@ was revoked with the wrong `token_revoked` reason, and its outbox delivery
 failed. See
 `docs/P3A7_G1_REFRESH_REPLAY_PRODUCTION_ACCEPTANCE_2026-10-11.md`. G1 remains
 failed as historical evidence. A successful isolated repeat is recorded in
-`docs/P3A7_G1_REFRESH_REPLAY_PRODUCTION_ACCEPTANCE_2026-10-12.md`; G2 has not
-been run.
+`docs/P3A7_G1_REFRESH_REPLAY_PRODUCTION_ACCEPTANCE_2026-10-12.md`. The
+successful G2 and aggregate P3-A conclusion are recorded in
+`docs/P3A7_G2_TOKEN_REVOCATION_PRODUCTION_ACCEPTANCE_2026-10-12.md`.
 The fixed-digest Authorization repair and pairing-scoped Connector correction
 were deployed to the bounded test environment on 2026-10-12. Runtime and
 protocol health passed. The first fresh pairing failed closed because its
 configured Tenant did not belong to the active account; after the Tenant guard
 was deployed and the correct workspace Tenant was used, a new Site paired
 successfully. The positive OAuth/PKCE/MCP and normal refresh regression then
-passed, followed by the successful isolated repeat G1. G2 was not run. See
+passed, followed by the successful isolated G1 and G2 lifecycle tests. See
 `docs/P3A7_REPLAY_FIX_VALIDATION_2026-10-11.md`,
 `docs/P3A7_PRODUCTION_REPAIR_DEPLOYMENT_2026-10-12.md`, and the successful G1
 record linked above.

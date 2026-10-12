@@ -191,12 +191,14 @@ ordinary CI. See ADR-019 and the P2 validation records.
 
 ### P3 - Email OTP OAuth and MCP production acceptance
 
-Status: incomplete. P3-A remains false in the repository validation record.
+Status: P3-A core acceptance completed on 2026-10-12. P3-B has not started;
+full acceptance and controlled-use readiness remain false.
 PR #33 and hosted CI passed. Exact `bb71226` control and authorization images
 were published, a fresh project backup was verified and the bounded production
 deployment, health smoke and positive Email OTP OAuth/PKCE/Consent/direct-MCP
-browser regression passed on 2026-10-11. A separately authorized repeat G1
-Refresh Replay acceptance passed on 2026-10-12; G2 revocation remains gated.
+browser regression passed on 2026-10-11. Separately authorized repeat G1
+Refresh Replay and isolated G2 RFC 7009 revocation acceptance passed on
+2026-10-12.
 Migration 004 permits a revoked Grant to be followed by a
 fresh Grant for the same account/site/client tuple. A locally tested,
 fixed-purpose `wepuu-e2e-lifecycle` provisioning command therefore supports
@@ -248,8 +250,21 @@ replay of R0 and subsequent use of R1 both returned `invalid_grant`. The
 isolated lifecycle Grant was revoked with reason `refresh_replay`, its
 sequence-1 Outbox event was delivered, and the Connector rejected AT1 before
 expiry. The existing `wepuu-e2e-codex` Grant remained active and unchanged.
-See `P3A7_G1_REFRESH_REPLAY_PRODUCTION_ACCEPTANCE_2026-10-12.md`. G2 remains
-separately gated; P3-A is not closed and P3-B has not started.
+See `P3A7_G1_REFRESH_REPLAY_PRODUCTION_ACCEPTANCE_2026-10-12.md`.
+
+The separately authorized G2 used a new lifecycle Grant and submitted R0 once
+to the RFC 7009 revocation endpoint. R0 then returned `invalid_grant`; the
+Grant was `revoked / token_revoked`, its sequence-2 Outbox event was delivered,
+and the Connector denied AT0 before expiry. Connector state retained the G1
+and G2 hashed Grant markers at sequence 2, while the existing
+`wepuu-e2e-codex` Grant and five historical Outbox rows remained unchanged.
+See `P3A7_G2_TOKEN_REVOCATION_PRODUCTION_ACCEPTANCE_2026-10-12.md`.
+
+Positive OAuth/PKCE/MCP, normal Refresh rotation, G1 Replay and G2 explicit
+revocation have now all passed on the repaired active Site. Therefore
+`P3_CORE_OAUTH_MCP_PASS=True`. P3-B has not started, so
+`P3_FULL_ACCEPTANCE_PASS=False`, `READY_FOR_CONTROLLED_USE=False`, and
+`NOT_READY_FOR_PUBLIC_REGISTRATION=True` remain in force.
 
 ### P4-A - SaaS console domain separation
 
