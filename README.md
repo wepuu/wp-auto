@@ -53,8 +53,9 @@ deployed from its exact images and the positive Email OTP
 OAuth/PKCE/Consent/direct-MCP browser
 regression passed. The repaired, newly paired Site passed the positive
 OAuth/MCP regression, repeat G1 Refresh Replay and isolated G2 RFC 7009
-revocation acceptance on 2026-10-12. P3-B has not started, so full acceptance
-and controlled-use readiness remain false. P4-A
+revocation acceptance on 2026-10-12. P3-B1A compatibility preflight passed for
+Windows Codex Desktop `26.727.4816.0`; no real Desktop OAuth flow has run, so
+full acceptance and controlled-use readiness remain false. P4-A
 is a local candidate that separates the SaaS console onto
 `app.wpauto.cc` while retaining Better Auth and the OAuth issuer on
 `auth.wpauto.cc`; no P4-A production change is authorized. See ADR-018 through

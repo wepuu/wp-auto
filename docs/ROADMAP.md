@@ -191,8 +191,10 @@ ordinary CI. See ADR-019 and the P2 validation records.
 
 ### P3 - Email OTP OAuth and MCP production acceptance
 
-Status: P3-A core acceptance completed on 2026-10-12. P3-B has not started;
-full acceptance and controlled-use readiness remain false.
+Status: P3-A core acceptance completed on 2026-10-12. P3-B1A Codex Desktop
+compatibility preflight passed for Windows Desktop `26.727.4816.0`, but real
+Desktop OAuth has not run; full acceptance and controlled-use readiness remain
+false.
 PR #33 and hosted CI passed. Exact `bb71226` control and authorization images
 were published, a fresh project backup was verified and the bounded production
 deployment, health smoke and positive Email OTP OAuth/PKCE/Consent/direct-MCP
@@ -262,7 +264,7 @@ See `P3A7_G2_TOKEN_REVOCATION_PRODUCTION_ACCEPTANCE_2026-10-12.md`.
 
 Positive OAuth/PKCE/MCP, normal Refresh rotation, G1 Replay and G2 explicit
 revocation have now all passed on the repaired active Site. Therefore
-`P3_CORE_OAUTH_MCP_PASS=True`. P3-B has not started, so
+`P3_CORE_OAUTH_MCP_PASS=True`. P3-B1A passed and P3-B1B remains pending, so
 `P3_FULL_ACCEPTANCE_PASS=False`, `READY_FOR_CONTROLLED_USE=False`, and
 `NOT_READY_FOR_PUBLIC_REGISTRATION=True` remain in force.
 
