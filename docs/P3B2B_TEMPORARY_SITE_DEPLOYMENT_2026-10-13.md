@@ -1,5 +1,25 @@
 # P3-B2B temporary Site B deployment: preparation checkpoint
 
+## Later DNS-01 preparation checkpoint
+
+After the initial checkpoint below, the operator confirmed the Cloudflare
+record/wildcard origin is `5.255.99.225`, proxy enabled and Full (strict)
+unchanged, and explicitly authorized Let's Encrypt issuance. The installed
+BaoTa ACME code was inspected before use. A single dedicated RSA-2048 manual
+DNS-01 order for `test2.wpauto.cc` was created, using TLS verification enabled
+only on this ACME instance. The existing ACME account was used without exposing
+its credentials. No website/vhost or global renewal job was created.
+
+Order reference: `742f1d04a93cd32ee79c8b0d293e6f43`. Its public TXT challenge
+was returned only to the operator, not stored in this record. Issuance is
+pending operator TXT creation and public DNS verification. Do not create a
+second order or finalize before verifying the exact challenge. Certificate
+issuance, Site B startup and HTTPS acceptance remain unrun/False. No Site B
+container, volume, network, credential or deployment directory was created.
+
+The initial statement below that no certificate order existed remains the
+historical pre-order checkpoint, not the current order state.
+
 ## Execution scope and current stop point
 
 The operator authorized PR #54 integration and staged deployment of the temporary
