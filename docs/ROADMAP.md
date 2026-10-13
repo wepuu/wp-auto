@@ -205,14 +205,20 @@ under a verified backup, followed by an unchanged-image Authorization restart
 the browser callback contained the correct issuer. That invocation did not
 record its executable identity; its historical root cause remains unconfirmed.
 Current fixed-executable CLI and app-server local callback tests pass. The
-operator has approved a single actual Desktop connection-panel retry; it is
-still pending. See `P3B1B_ISSUER_DIAGNOSTICS_VALIDATION_2026-10-13.md`.
+operator approved a single actual Desktop connection-panel retry. See
+`P3B1B_ISSUER_DIAGNOSTICS_VALIDATION_2026-10-13.md`.
 The current Desktop GUI did not list the temporary project's MCP server.
 The pinned backend's configuration probe found that project layer disabled.
 One approved temporary user-config entry now matches the exact existing OAuth
 profile; no other config bytes, production objects or credential stores changed.
-GUI loading and the actual OAuth/MCP retry remain unconfirmed. See
+For the preparation result, see
 `P3B1B_DESKTOP_CONFIG_LOADING_VALIDATION_2026-10-13.md`.
+The operator then completed the GUI retry on Desktop package `26.1007.2314.0`.
+The actual connected runtime exposed the frozen 23-tool name set and one direct
+WordPress site-health call passed, followed by unchanged Grant/Connector/Outbox
+postchecks. Only the owned temporary global config entry was removed; credentials
+and the active Grant were retained. P3-B1B is passed; P3-B2/P3-B3 remain pending.
+See `P3B1B_CODEX_DESKTOP_PRODUCTION_ACCEPTANCE_2026-10-13.md`.
 PR #33 and hosted CI passed. Exact `bb71226` control and authorization images
 were published, a fresh project backup was verified and the bounded production
 deployment, health smoke and positive Email OTP OAuth/PKCE/Consent/direct-MCP
@@ -282,8 +288,8 @@ See `P3A7_G2_TOKEN_REVOCATION_PRODUCTION_ACCEPTANCE_2026-10-12.md`.
 
 Positive OAuth/PKCE/MCP, normal Refresh rotation, G1 Replay and G2 explicit
 revocation have now all passed on the repaired active Site. Therefore
-`P3_CORE_OAUTH_MCP_PASS=True`. P3-B1B still requires real Desktop
-connection-panel OAuth/MCP acceptance after the exact callback registration, so
+`P3_CORE_OAUTH_MCP_PASS=True`. P3-B1B real Desktop OAuth/MCP is now passed,
+but P3-B2/P3-B3 still require separately scoped acceptance, so
 `P3_FULL_ACCEPTANCE_PASS=False`, `READY_FOR_CONTROLLED_USE=False`, and
 `NOT_READY_FOR_PUBLIC_REGISTRATION=True` remain in force.
 

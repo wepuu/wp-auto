@@ -2,6 +2,10 @@
 
 Date: 2026-10-13 (Asia/Shanghai)
 
+This record retains the earlier local diagnostic and pre-GUI state. The later
+single real GUI retry passed; see
+`P3B1B_CODEX_DESKTOP_PRODUCTION_ACCEPTANCE_2026-10-13.md` for current acceptance.
+
 ## Confirmed facts and remaining uncertainty
 
 The operator supplied a failed loopback callback containing one `iss` equal to

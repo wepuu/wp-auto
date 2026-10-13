@@ -2,6 +2,10 @@
 
 Date: 2026-10-13 (Asia/Shanghai)
 
+This is the preparation-time snapshot. The later real GUI acceptance and exact
+temporary-entry cleanup passed; see
+`P3B1B_CODEX_DESKTOP_PRODUCTION_ACCEPTANCE_2026-10-13.md` for the current result.
+
 ## Boundary and current result
 
 The operator approved completing the real Desktop acceptance, with a single

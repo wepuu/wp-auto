@@ -64,14 +64,17 @@ production registration and unchanged-image Authorization restart passed on
 2026-10-13; its operation record is in candidate PR #51. A subsequent
 task-terminal CLI retry failed with a missing issuer despite a correct issuer
 in the browser callback. Its historical root cause remains unconfirmed.
-Current fixed-executable CLI/app-server local issuer tests pass; actual
-Desktop connection-panel acceptance remains pending. See
+Current fixed-executable CLI/app-server local issuer tests pass. See
 `docs/P3B1B_ISSUER_DIAGNOSTICS_VALIDATION_2026-10-13.md`.
 The current Desktop did not list the temporary project server. A read-only
 configuration probe found a disabled project layer, and one approved temporary
-user-config entry now matches the fixed OAuth profile. GUI loading and actual
-OAuth/MCP remain unconfirmed; see
-`docs/P3B1B_DESKTOP_CONFIG_LOADING_VALIDATION_2026-10-13.md`. P4-A
+user-config entry enabled the fixed OAuth profile; see
+`docs/P3B1B_DESKTOP_CONFIG_LOADING_VALIDATION_2026-10-13.md`.
+The real GUI retry then passed on Desktop package `26.1007.2314.0`: the exact
+23-tool name set, one direct site-health call and unchanged Grant/Connector/Outbox
+postchecks passed. The temporary global entry was removed without clearing
+credentials or revoking the Grant. P3-B2/P3-B3 and full readiness remain pending.
+See `docs/P3B1B_CODEX_DESKTOP_PRODUCTION_ACCEPTANCE_2026-10-13.md`. P4-A
 is a local candidate that separates the SaaS console onto
 `app.wpauto.cc` while retaining Better Auth and the OAuth issuer on
 `auth.wpauto.cc`; no P4-A production change is authorized. See ADR-018 through
