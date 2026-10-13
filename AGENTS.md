@@ -51,8 +51,10 @@ The first real Desktop OAuth attempt on 2026-10-13 then failed closed with
 under `/callback/`, while the pre-registered client contains only the stable
 `/callback` path. No OAuth artifact or Grant change occurred. Full acceptance
 and controlled-use readiness remain false. A fixed-purpose exact callback
-registration and rollback candidate is locally validated but has not changed
-production.
+registration and rollback command was locally validated, merged and used once
+under a verified backup to add only the observed callback-specific redirect.
+The existing Authorization image was restarted and returned healthy; the
+Codex Grant was unchanged. The real Desktop retry has not run.
 The positive evidence and corrected lifecycle provisioning preflight are
 recorded in
 `docs/P3A_PRODUCTION_POSITIVE_ACCEPTANCE_2026-10-11.md` and
