@@ -86,8 +86,8 @@ test('real Authorization HTTP reproduces same-client cross-resource Session Gran
   const target = new URL(databaseUrl);
   target.pathname = `/${name}`;
   const database = new Database({ connectionString: target.href, applicationName: 'wepuu-multisite-test', migrationsDirectory: migrations });
-  let running: RunningAuthorizationService | undefined;
-  let accountAuth: AccountAuth | undefined;
+  let running: RunningAuthorizationService | undefined = undefined;
+  let accountAuth: AccountAuth | undefined = undefined;
   t.after(async () => {
     await running?.close();
     await accountAuth?.close();
