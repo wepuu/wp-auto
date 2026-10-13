@@ -51,8 +51,17 @@ The first real Desktop OAuth attempt on 2026-10-13 then failed closed with
 under `/callback/`, while the pre-registered client contains only the stable
 `/callback` path. No OAuth artifact or Grant change occurred. Full acceptance
 and controlled-use readiness remain false. A fixed-purpose exact callback
-registration and rollback candidate is locally validated but has not changed
-production.
+registration and rollback tooling was locally validated, then used under a
+verified backup to add only the observed exact callback. The existing
+Authorization image restarted healthy; the Codex Grant was unchanged. A
+subsequent retry reported a missing issuer, but its actual execution was
+`codex mcp login` in a task terminal, not a Desktop connection-panel test.
+The browser callback contained the correct issuer. The historical invocation
+did not record its executable identity and its root cause remains unconfirmed.
+Current fixed-executable CLI and app-server loopback tests pass for backend
+`0.162.0-alpha.17.2`, including fail-closed issuer and state cases. A real
+Desktop connection-panel retry is still pending. See
+`docs/P3B1B_ISSUER_DIAGNOSTICS_VALIDATION_2026-10-13.md`.
 The positive evidence and corrected lifecycle provisioning preflight are
 recorded in
 `docs/P3A_PRODUCTION_POSITIVE_ACCEPTANCE_2026-10-11.md` and

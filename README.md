@@ -59,8 +59,14 @@ OAuth attempt failed closed on 2026-10-13 because its callback-specific path
 did not match the pre-registered stable callback. No Grant changed. Full
 acceptance and controlled-use readiness remain false. A fixed-purpose local
 candidate now supports adding and exactly rolling back that single observed
-callback-specific redirect without changing the existing Grant; it has not
-been run against production and the real Desktop retry has not occurred. P4-A
+callback-specific redirect without changing the existing Grant. The exact
+production registration and unchanged-image Authorization restart passed on
+2026-10-13; its operation record is in candidate PR #51. A subsequent
+task-terminal CLI retry failed with a missing issuer despite a correct issuer
+in the browser callback. Its historical root cause remains unconfirmed.
+Current fixed-executable CLI/app-server local issuer tests pass; actual
+Desktop connection-panel acceptance remains pending. See
+`docs/P3B1B_ISSUER_DIAGNOSTICS_VALIDATION_2026-10-13.md`. P4-A
 is a local candidate that separates the SaaS console onto
 `app.wpauto.cc` while retaining Better Auth and the OAuth issuer on
 `auth.wpauto.cc`; no P4-A production change is authorized. See ADR-018 through
