@@ -73,6 +73,8 @@ Grant, Connector and Outbox postchecks support P3-B1B acceptance. Only the owned
 temporary global config entry was removed, without clearing credentials or
 revoking the Grant. P3-B2/P3-B3 and full/controlled-use readiness remain pending.
 See `docs/P3B1B_CODEX_DESKTOP_PRODUCTION_ACCEPTANCE_2026-10-13.md`.
+The independent production registration history is retained in
+`docs/P3B1B_PRODUCTION_CALLBACK_REGISTRATION_2026-10-13.md`.
 The positive evidence and corrected lifecycle provisioning preflight are
 recorded in
 `docs/P3A_PRODUCTION_POSITIVE_ACCEPTANCE_2026-10-11.md` and
