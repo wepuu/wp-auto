@@ -7,18 +7,19 @@ cores=(wpauto-control-1 wpauto-authorization-1 wpauto-postgres-1 wpauto-wordpres
 if [ "$stage" != preflight ]; then cores+=(wpauto-wordpress-e2e-b-database-1); fi
 if [ "$stage" = wpcli ] || [ "$stage" = test ]; then cores+=(wpauto-wordpress-e2e-b-wordpress-1); fi
 declare -A healthy_before oom_before restart_before
+read_docker() { timeout 5s docker "$@"; }
 cgroup_field() {
   local pid cg
-  pid=$(docker inspect "$1" --format '{{.State.Pid}}')
+  pid=$(read_docker inspect "$1" --format '{{.State.Pid}}')
   cg=$(awk -F: '$1=="0" {print $3}' "/proc/$pid/cgroup")
   [ -n "$cg" ] && [ -r "/sys/fs/cgroup$cg/$2" ] || return 1
   if [ "$2" = memory.events ]; then awk '$1=="oom_kill" {print $2}' "/sys/fs/cgroup$cg/$2"
   else cat "/sys/fs/cgroup$cg/$2"; fi
 }
 for name in "${cores[@]}"; do
-  healthy_before[$name]=$(docker inspect "$name" --format '{{.State.Health.Status}}')
+  healthy_before[$name]=$(read_docker inspect "$name" --format '{{.State.Health.Status}}')
   oom_before[$name]=$(cgroup_field "$name" memory.events)
-  restart_before[$name]=$(docker inspect "$name" --format '{{.RestartCount}}')
+  restart_before[$name]=$(read_docker inspect "$name" --format '{{.RestartCount}}')
 done
 database_peak=$(cgroup_field wpauto-wordpress-e2e-database-1 memory.peak)
 wordpress_peak=$(cgroup_field wpauto-wordpress-e2e-wordpress-1 memory.peak)
@@ -43,10 +44,10 @@ done
 printf '],"cores":['
 separator=''
 for name in "${cores[@]}"; do
-  after=$(docker inspect "$name" --format '{{.State.Health.Status}}')
+  after=$(read_docker inspect "$name" --format '{{.State.Health.Status}}')
   oom_after=$(cgroup_field "$name" memory.events)
-  oom_flag=$(docker inspect "$name" --format '{{.State.OOMKilled}}')
-  restarts=$(docker inspect "$name" --format '{{.RestartCount}}')
+  oom_flag=$(read_docker inspect "$name" --format '{{.State.OOMKilled}}')
+  restarts=$(read_docker inspect "$name" --format '{{.RestartCount}}')
   before=false; healthy=false
   [ "${healthy_before[$name]}" != healthy ] || before=true
   [ "$after" != healthy ] || healthy=true
@@ -58,19 +59,19 @@ conflicts=()
 if [ "$stage" = preflight ]; then
   if ss -H -ltn | awk '{print $4}' | grep -Eq ':3201$'; then conflicts+=(port); fi
   if [ -e /opt/wpauto-wordpress-e2e-b ]; then conflicts+=(directory); fi
-  if [ -n "$(docker ps -aq --filter label=com.docker.compose.project=wpauto-wordpress-e2e-b)" ]; then conflicts+=(project); fi
+  if [ -n "$(read_docker ps -aq --filter label=com.docker.compose.project=wpauto-wordpress-e2e-b)" ]; then conflicts+=(project); fi
   for name in wpauto_wordpress_e2e_b_database wpauto_wordpress_e2e_b_files; do
-    if docker volume inspect "$name" >/dev/null 2>&1; then conflicts+=(volume); fi
+    if read_docker volume inspect "$name" >/dev/null 2>&1; then conflicts+=(volume); fi
   done
-  if docker network inspect wpauto_wordpress_e2e_b_internal >/dev/null 2>&1; then conflicts+=(network); fi
+  if read_docker network inspect wpauto_wordpress_e2e_b_internal >/dev/null 2>&1; then conflicts+=(network); fi
   # Calculate CIDR overlap, including wider prefixes; do not just compare names.
   overlap=$(python3 - <<'PY'
 import ipaddress,json,subprocess
 target=ipaddress.ip_network('172.30.52.0/24')
-names=subprocess.check_output(['docker','network','ls','--format','{{.Name}}'],text=True).split()
-nets=json.loads(subprocess.check_output(['docker','network','inspect',*names],text=True))
+names=subprocess.check_output(['docker','network','ls','--format','{{.Name}}'],text=True,timeout=5).split()
+nets=json.loads(subprocess.check_output(['docker','network','inspect',*names],text=True,timeout=5))
 subnets=[v['Subnet'] for n in nets for v in n.get('IPAM',{}).get('Config',[]) or [] if v.get('Subnet')]
-routes=json.loads(subprocess.check_output(['ip','-j','-4','route','show'],text=True))
+routes=json.loads(subprocess.check_output(['ip','-j','-4','route','show'],text=True,timeout=5))
 subnets += [v['dst'] for v in routes if v.get('dst') not in (None,'default')]
 print('true' if any((n:=ipaddress.ip_network(s,strict=False)).version==4 and n.overlaps(target) for s in subnets) else 'false')
 PY
