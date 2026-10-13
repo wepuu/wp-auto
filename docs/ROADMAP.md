@@ -207,6 +207,12 @@ record its executable identity; its historical root cause remains unconfirmed.
 Current fixed-executable CLI and app-server local callback tests pass. The
 operator has approved a single actual Desktop connection-panel retry; it is
 still pending. See `P3B1B_ISSUER_DIAGNOSTICS_VALIDATION_2026-10-13.md`.
+The current Desktop GUI did not list the temporary project's MCP server.
+The pinned backend's configuration probe found that project layer disabled.
+One approved temporary user-config entry now matches the exact existing OAuth
+profile; no other config bytes, production objects or credential stores changed.
+GUI loading and the actual OAuth/MCP retry remain unconfirmed. See
+`P3B1B_DESKTOP_CONFIG_LOADING_VALIDATION_2026-10-13.md`.
 PR #33 and hosted CI passed. Exact `bb71226` control and authorization images
 were published, a fresh project backup was verified and the bounded production
 deployment, health smoke and positive Email OTP OAuth/PKCE/Consent/direct-MCP
