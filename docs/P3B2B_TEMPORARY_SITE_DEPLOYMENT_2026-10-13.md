@@ -1,5 +1,124 @@
 # P3-B2B temporary Site B deployment: preparation checkpoint
 
+## WP-CLI failure diagnosis and resume procedure (2026-10-13)
+
+### Findings
+
+PR #55 remains Draft at head `a85ebe89a5e4d7b7e336ded4b599769d9beb9e16`;
+its CI run `38386807497` passed. The two Site B service containers remain stopped
+with the previously recorded IDs, project labels, volumes and network. No
+production container was started during this diagnostic. All five existing
+Control/Authorization/PostgreSQL/Site A containers are healthy, OOM false and
+restart count zero. The Codex Grant baseline and seven-row Outbox remain
+unchanged.
+
+The original WP-CLI service ran as Compose user `33:33`, using the fixed
+`wordpress:cli-2.12.0-php8.3` digest. The image entrypoint is
+`docker-entrypoint.sh`; its image default command is `wp shell`, overridden by
+the command supplied to `docker compose run`. The effective Compose expansion
+confirms the WP-CLI image, UID/GID, mounted WordPress volume, and equality of
+database host/name/user/password values between the WP-CLI and MariaDB
+services. These comparisons were performed in memory; no secret values were
+printed. The protected admin and runtime files remain `root:root 0600`.
+
+The attempted command shape was:
+
+```text
+docker compose -p wpauto-wordpress-e2e-b --env-file <protected runtime.env> \
+  -f /opt/wpauto-wordpress-e2e-b/compose.yaml \
+  run --rm --no-deps -T wpcli core install \
+  --url=https://test2.wpauto.cc --title=<fixed Site B title> \
+  --admin_user=<fixed Site B admin name> --admin_email=<fixed Site B email> \
+  --skip-email --prompt=admin_password
+```
+
+The password was redirected from the protected file to standard input; its
+value is intentionally absent here. WP-CLI's official `core install` reference
+documents this same `--prompt=admin_password < admin_password.txt` pattern and
+`--skip-email`. This confirms the command shape is supported in general, but
+does not prove behavior of the exact pinned image in the unavailable local
+runtime: [WP-CLI core install](https://developer.wordpress.org/cli/commands/core/install/),
+[WP-CLI global parameters](https://make.wordpress.org/cli/handbook/config/).
+
+The one-shot container used `--rm`, so its inspect record no longer exists.
+Docker's retained event stream had no matching WP-CLI `die` event; the exit
+code and original standard output/error cannot be recovered. They were
+redirected to `/dev/null` by the execution wrapper. No OOM evidence points to
+the WP-CLI job; the retained B containers have false OOM flags, and the host
+and core OOM counters did not change during the observed run. The failure
+classification is therefore `unknown`, and a specific cause is **not
+confirmed**.
+
+Read-only checks found `wp-config.php` with the expected environment-variable
+references. The MariaDB data directory exists but contains no per-table InnoDB
+`.ibd` files for `wpauto_e2e_b`. This is evidence consistent with core tables
+not having been created, but is not a database query and cannot establish
+installation state while MariaDB is stopped. No WordPress table contents or
+site content were read. No production retry was made.
+
+### Local reproduction status
+
+The Windows host has Docker CLI 29.8.0 but no working engine. Docker Desktop
+reports unable to start; its expected executable is absent. WSL enumeration
+returned `E_ACCESSDENIED`. No Podman, local PHP+MariaDB stack, or local WP-CLI
+runtime is available. Consequently the fixed WordPress/MariaDB/WP-CLI images
+could not be run against fresh local volumes, and no local core-install result
+is claimed. No local test resources were created, so there was nothing to clean
+up. This is an environment blocker, not evidence that the production issue is
+fixed or reproduced.
+
+No command or Compose change is justified by current evidence. In particular,
+the prompt/stdin, service UID, and database environment configuration have not
+been shown to be the cause. Do not change the fixed image, resource limits, or
+WordPress database by guesswork.
+
+### Recovery plan for a separately authorized resume
+
+The initial deployment preflight correctly treats the retained Site B directory,
+containers, volumes and network as conflicts. Resume must use a dedicated
+read-only identity check that recognizes only this exact retained resource set;
+it must not ignore generic conflicts. The identity check should require the
+recorded container IDs/project labels, fixed image digests, exact two volume
+names and network ID/subnet, root-owned mode-0600 configuration, the expected
+Compose/ZIP hashes, and no Site B vhost. Any mismatch stops before startup.
+
+After a separate production-resume authorization:
+
+1. Recheck backups, resources, existing core health, memory pressure, OOM and
+   the Site A/Codex/Outbox baseline. Keep the existing Site B volumes and
+   configuration; do not regenerate its database passwords or admin password.
+2. Start only the identified Site B MariaDB service using its existing Compose
+   project/configuration and volume. Verify it is healthy and all five original
+   services remain healthy.
+3. Recollect resources, then start only the identified Site B WordPress
+   service. Verify its health and a bounded local HTTP install-page response.
+4. Before any installation write, run a one-shot read-only `wp core is-installed`
+   check. If installed, skip `core install` and verify only the expected host,
+   database and administrator identity metadata. If not installed, inspect the
+   table inventory using a read-only command: zero WordPress tables permits one
+   controlled install attempt; any partial WordPress table set stops for manual
+   review rather than rerunning a potentially non-idempotent installer.
+5. If a controlled install is later authorized, use the pinned WP-CLI image,
+   UID/GID `33:33`, `--rm --no-deps -T`, protected stdin, and fixed arguments.
+   Capture output only into a bounded root-owned mode-0600 temporary file;
+   report stage, exit code and a fixed error category (`cli`, `stdin`,
+   `database_auth`, `database_unreachable`, `already_installed`,
+   `filesystem_permission`, or `unknown`). Never echo or persist raw output,
+   command environment, password, or site content. Delete the temporary output
+   after classification. On failure, stop only Site B and retain its data.
+6. Recollect resource and health evidence before Connector installation. Install
+   and activate the fixed ZIP only after core installation is verified. Confirm
+   connection, pending pairing and identity state are absent; do not pair.
+7. Enable the dedicated HTTPS vhost only after certificate and DNS checks,
+   `nginx -t`, and another resource sample. Verify origin TLS and public HTTPS
+   independently.
+
+This is a procedure, not permission to resume or start any container. Until the
+exact one-shot WP-CLI failure is reproduced locally or safe classified output is
+available from a future authorized attempt, the production root cause remains
+unknown. This round made no runtime, Connector, database, DNS, certificate, or
+vhost changes; the certificate remains unreferenced. `design/` remains untouched.
+
 ## Current execution result: initialization failed, Site B stopped
 
 The operator added the TXT. Public resolvers `1.1.1.1` and `8.8.8.8` both
