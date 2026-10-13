@@ -208,9 +208,12 @@ test('real Authorization HTTP reproduces same-client cross-resource Session Gran
       assert.equal(callback.searchParams.get('iss') === issuer, true, 'callback_issuer');
       assert.equal(callback.searchParams.get('state') === first.state, true, 'callback_state');
       const exchange = await browser.request('/token', new URLSearchParams({ client_id: clientId, grant_type: 'authorization_code',
-        redirect_uri: 'http://127.0.0.1:49152/callback', code: callback.searchParams.get('code') ?? '', code_verifier: first.verifier }));
-      assert.equal(exchange.status, 200, 'first_exchange');
-      const body = await exchange.json() as { access_token: string };
+        redirect_uri: 'http://127.0.0.1:49152/callback', resource: resources[0],
+        code: callback.searchParams.get('code') ?? '', code_verifier: first.verifier }));
+      const body = await exchange.json() as { access_token: string; error?: string };
+      const category = ['invalid_grant', 'invalid_target', 'access_denied', 'invalid_request'].includes(body.error ?? '')
+        ? body.error : 'unknown';
+      assert.equal(exchange.status, 200, `first_exchange_${category}`);
       const verified = await jwtVerify(body.access_token, await importJWK(key.publicJwk, 'RS256'), {
         issuer, audience: resources[0], algorithms: ['RS256'] });
       assert.equal(verified.payload['grant_id'] === grants[0], true, 'first_grant_binding');
