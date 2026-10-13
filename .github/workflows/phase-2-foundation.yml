@@ -33,6 +33,8 @@ jobs:
       CONFORMANCE_DATABASE_URL: postgresql://postgres:conformance@127.0.0.1:5432/wepuu_test
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 26.7.0
@@ -53,7 +55,7 @@ jobs:
       - name: Build portable non-root OCI images
         run: |
           docker build --file deploy/Control.Containerfile --tag wepuu-control:candidate .
-          docker build --file deploy/Authorization.Containerfile --tag wepuu-authorization:candidate .
+          docker build --file deploy/Authorization.Containerfile --tag wepuu-authorization:candidate --label org.opencontainers.image.revision=${GITHUB_SHA} .
           test "$(docker image inspect wepuu-control:candidate --format '{{.Config.User}}')" = "node"
           test "$(docker image inspect wepuu-authorization:candidate --format '{{.Config.User}}')" = "node"
       - name: Local signing production-mode OCI gate
@@ -61,6 +63,8 @@ jobs:
           WEPUU_OCI_POSTGRES_ADMIN_URL: postgresql://postgres:conformance@127.0.0.1:5432/wepuu_test
           WEPUU_OCI_CONTAINER_DATABASE_URL: postgresql://postgres:conformance@host.docker.internal:5432/wepuu_test
         run: pnpm test:local-signing:oci
+      - name: Verify Authorization hotfix migration and entrypoint boundary
+        run: node scripts/verify-authorization-hotfix-image.mjs
       - name: PostgreSQL backup, restore, and tombstone replay
         run: >-
           WEPUU_POSTGRES_CONTAINER=$(docker ps --filter "ancestor=postgres:16.10-alpine" --format "{{.ID}}" | head -n 1)
@@ -85,3 +89,21 @@ jobs:
       - name: Contract and evidence checks
         working-directory: spikes/oauth-conformance
         run: npm run check && npm run check:evidence
+      - name: Save unpublished Authorization candidate
+        run: |
+          docker save wepuu-authorization:candidate | gzip -n > .tmp/authorization-hotfix/image.tar.gz
+          node scripts/verify-authorization-hotfix-image.mjs --archive
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: authorization-hotfix-${{ github.sha }}
+          path: .tmp/authorization-hotfix/
+          retention-days: 7
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: authorization-hotfix-manifest-${{ github.sha }}
+          path: |
+            .tmp/authorization-hotfix/manifest.json
+            .tmp/authorization-hotfix/image.tar.gz.sha256
+          retention-days: 7
+          if-no-files-found: error
