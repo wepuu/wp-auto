@@ -1,6 +1,12 @@
-# P3-B2D: dual-Site OAuth isolation preparation
+# P3-B2D: dual-Site OAuth isolation preparation and failed production authorization
 
 ## Current result
+
+The separately authorized production run on 2026-10-13 did not pass. Site A
+authorization and Token verification succeeded; Site B's interaction returned
+`temporarily_unavailable`. The runner received no B callback and ended with
+`authorization_timeout`. All six matrix steps were NOT_RUN. See the production
+evidence below; the preparation-only statements describe the earlier round.
 
 Local script preparation is complete. No production OAuth authorization,
 backup, Grant creation, Token issuance, matrix request, or cleanup was executed
@@ -124,6 +130,87 @@ revoke Grants, alter/requeue Outbox or restore the database. Retain test Grants
 until a later separately authorized cleanup. Actual outcomes will be appended
 to this record and the candidate PR; local simulation cannot establish a
 production PASS.
+
+## Authorized production attempt: failed before the matrix
+
+Candidate Head `cf6748090bacb9bce3fbd2b70576ff710fbca01c` passed hosted CI
+run `38415970866`. The operator separately authorized the production run and
+confirmed both WordPress administration sessions and the same platform account
+were ready. The run started at `2026-10-13T15:00:21Z` (UTC).
+
+### Fresh prechecks and backup
+
+- All seven containers were healthy, without OOM flags or restarts. Migrations
+  remained 001-013. Both active Sites matched their respective Connectors and
+  belonged to the original account/Tenant.
+- The lifecycle Client was active with its exact stable loopback registration;
+  neither exact test combination had a live lifecycle Grant.
+- Site A was v2, sequence 2, with the two existing G1/G2 Grant markers. Site B
+  was v2, sequence 0, without markers. The original Codex Grant was active with
+  its unchanged `2026-10-12T12:03:49.698212+00:00` timestamp and no revocation
+  reason. Historical Outbox rows were snapshotted by ID and metadata digest.
+- The six-sample temporary-resource gate allowed the test. Minimum available
+  memory was 842.137 MiB and latest available memory 906.727 MiB; historical
+  OOM counts and occupied swap were warnings, not new failures.
+- Backup: `/opt/wpauto/backups/pre-site-isolation/20261013T145916Z/wpauto.dump`,
+  custom format, 153366 bytes, root:root, 0600. SHA-256:
+  `32ac951354ef2ce256644274533553c40704c133ef530094fc7f86b67d9d93f4`.
+  Checksum and `pg_restore -l` passed. No restore was performed.
+
+### Actual partial results
+
+| Item | Result |
+| --- | --- |
+| Site A Code/PKCE exchange and Token signature/binding checks | PASS |
+| Site A verified Grant digest | `623c362c435d` |
+| Site B interaction | Operator observed `temporarily_unavailable` |
+| Site B callback, exchange and verified Token | NOT_COMPLETED |
+| Runner final result | Exit 1, `authorization_timeout` |
+| A_TO_A_PRE / B_TO_B_PRE | NOT_RUN / NOT_RUN |
+| A_TO_B / B_TO_A | NOT_RUN / NOT_RUN |
+| A_TO_A_POST / B_TO_B_POST | NOT_RUN / NOT_RUN |
+
+No MCP initialize, catalog, health-tool or cross-resource probe ran in this
+attempt. No refresh, replay or revocation request was made. The runner had
+already finished when the stop check ran; no automatic retry was performed.
+
+Read-only database inspection confirmed two distinct new lifecycle Grants:
+
+| Site | Grant SHA-256 prefix | Status | Scope | Revocation reason |
+| --- | --- | --- | --- | --- |
+| A | `623c362c435d` | active | mcp:read | null |
+| B | `f1f54908e651` | active | mcp:read | null |
+
+The B Grant being active proves business Consent progressed; it does not prove
+that B received an Authorization Code or that the runner acquired a B Token.
+Both Grants and all artifacts are preserved, not revoked or cleaned up.
+
+### Diagnostics and protected baselines
+
+At `2026-10-13T15:01:11.463175499Z`, Authorization emitted
+`oauth.request_failed` with `name=Error` and no fixed code or reason. Only the
+allowlisted structured projection was inspected; raw request/log contents were
+not copied. This evidence cannot identify the exact throwing branch.
+
+At the `2026-10-13T15:06:54Z` postcheck, the original Codex Grant's complete
+control-metadata baseline was unchanged. Both Connector state summaries and
+marker-set digests were unchanged. All historical Outbox row digests were
+identical, with no new event. Seven containers remained healthy, OOM=false,
+restart count 0, and migrations remained 001-013.
+The subsequent fresh six-sample resource gate also allowed the test-stage
+postcheck: minimum available memory 908.465 MiB, latest 1042 MiB, with only
+historical-OOM and occupied-swap warnings. This is health evidence, not a
+successful OAuth or isolation result.
+
+The next minimal diagnostic task is a local real-Provider/PostgreSQL test for
+two sequential resources under the same browser Session and Client. Inspect
+the Provider's selected Grant versus `resolveExact()` and
+`consentGrantUpdatePlan()`; the existing mismatch guard is an investigation
+lead, not a confirmed root cause. If necessary, add only allowlisted internal
+reason codes. Do not relax Grant binding or infer the cause from a generic
+503. Production fixes or another authorization run require a new decision;
+existing active test Grants mean the original zero-live-Grant prerequisite
+no longer holds. Do not silently reuse, replace or revoke them.
 
 ```text
 P3_CORE_OAUTH_MCP_PASS=True
