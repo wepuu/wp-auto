@@ -265,16 +265,17 @@ test('consent grant update fails closed on grant, resource, scope and OIDC expan
     scopes: ['mcp:read'],
     promptDetails: {}
   } as const;
-  assert.throws(() => consentGrantUpdatePlan(base), /grant_binding_mismatch/u);
+  assert.throws(() => consentGrantUpdatePlan(base), (error: unknown) =>
+    error instanceof Error && 'category' in error && error.category === 'grant.binding_mismatch');
   assert.throws(() => consentGrantUpdatePlan({
     ...base, providerGrantId: undefined, promptDetails: { missingOIDCScope: ['profile'] }
-  }), /unapproved_oidc_scope/u);
+  }), (error: unknown) => error instanceof Error && 'category' in error && error.category === 'grant.scope_mismatch');
   assert.throws(() => consentGrantUpdatePlan({
     ...base, providerGrantId: undefined,
     promptDetails: { missingResourceScopes: { 'https://other.example.test/mcp': ['mcp:read'] } }
-  }), /resource_binding_mismatch/u);
+  }), (error: unknown) => error instanceof Error && 'category' in error && error.category === 'grant.resource_mismatch');
   assert.throws(() => consentGrantUpdatePlan({
     ...base, providerGrantId: undefined,
     promptDetails: { missingResourceScopes: { [resource]: ['mcp:content.write'] } }
-  }), /scope_binding_mismatch/u);
+  }), (error: unknown) => error instanceof Error && 'category' in error && error.category === 'grant.scope_mismatch');
 });
