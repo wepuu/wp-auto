@@ -49,7 +49,8 @@ class Browser {
       .map((entry) => `${entry.name}=${entry.value}`).join('; ');
     const response = await fetch(`${this.base}${url.pathname}${url.search}`, {
       method: form === undefined ? 'GET' : 'POST', redirect: 'manual',
-      headers: { host: new URL(issuer).host, 'x-forwarded-proto': 'https', cookie,
+      headers: { host: new URL(issuer).host, 'x-forwarded-host': new URL(issuer).host,
+        'x-forwarded-proto': 'https', cookie,
         ...(form === undefined ? {} : { origin: issuer, 'content-type': 'application/x-www-form-urlencoded' }) },
       ...(form === undefined ? {} : { body: form }), signal: AbortSignal.timeout(10_000)
     });
