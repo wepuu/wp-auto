@@ -92,7 +92,17 @@ test('real Authorization HTTP binds same-client sequential and interleaved resou
     await running?.close();
     await accountAuth?.close();
     await database.close();
-    await admin.query(`DROP DATABASE ${name} WITH (FORCE)`);
+    // pg Pool.end can finish before PostgreSQL observes every socket close.
+    // Never terminate live clients to conceal a test/teardown failure.
+    let closed = false;
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const connections = await admin.query<{ count: string }>(
+        'SELECT count(*)::text AS count FROM pg_stat_activity WHERE datname=$1', [name]);
+      if (connections.rows[0]?.count === '0') { closed = true; break; }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    assert.equal(closed, true, 'test_cleanup_connections_closed');
+    await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
     await rm(directory, { recursive: true, force: true });
   });
@@ -289,6 +299,29 @@ test('real Authorization HTTP binds same-client sequential and interleaved resou
   const artifacts = await pool.query<{ artifact_id: string }>("SELECT artifact_id FROM oauth.provider_artifacts WHERE model='Grant'");
   assert.equal(artifacts.rows.length === 2 && grants.every((id) => artifacts.rows.some((r) => r.artifact_id === id)), true,
     'separate_provider_grants_saved');
+  const stored = await pool.query<{ payload: Record<string, unknown> }>(
+    "SELECT payload FROM oauth.provider_artifacts WHERE model='Grant' AND artifact_id=$1", [grants[0]]);
+  const originalPayload = stored.rows[0]?.payload;
+  assert.ok(originalPayload !== undefined);
+  for (const mutation of [
+    { accountId: 'account_UNRELATED' }, { clientId: 'client_UNRELATED' },
+    { resources: { [resources[1]]: 'mcp:read' } }, { resources: { [resources[0]]: 'mcp:content.write' } }
+  ]) {
+    // Adversarial corruption of test-owned Provider metadata only. Business
+    // Grants were still established through signed GrantService Consent.
+    await pool.query("UPDATE oauth.provider_artifacts SET payload=$2::jsonb WHERE model='Grant' AND artifact_id=$1",
+      [grants[0], JSON.stringify({ ...originalPayload, ...mutation })]);
+    try {
+      const params = new URLSearchParams({ client_id: clientId, response_type: 'code',
+        redirect_uri: 'http://127.0.0.1:49152/callback', resource: resources[0], scope: 'mcp:read',
+        code_challenge_method: 'S256', code_challenge: createHash('sha256').update(randomBytes(32)).digest('base64url') });
+      const denied = await browser.request(`/auth?${params}`);
+      assert.equal(denied.status >= 400, true, 'corrupt_provider_binding_denied');
+    } finally {
+      await pool.query("UPDATE oauth.provider_artifacts SET payload=$2::jsonb WHERE model='Grant' AND artifact_id=$1",
+        [grants[0], JSON.stringify(originalPayload)]);
+    }
+  }
   const offlineA = await issue(0, browser, 'mcp:read offline_access');
   assert.equal(typeof offlineA.refresh_token === 'string', true, 'test_refresh_created');
   async function refresh(token: string, index: number) {

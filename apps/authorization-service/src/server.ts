@@ -529,10 +529,10 @@ export async function startAuthorizationService(
     workerTimer.unref();
     runWorker();
     provider.on('authorization.error', (_context, error) => {
-      console.warn(JSON.stringify(authorizationErrorDiagnostic(error)));
+      console.warn(JSON.stringify(grantFailureDiagnostic(error)));
     });
     provider.on('server_error', (_context, error) => {
-      console.error(JSON.stringify(serverErrorDiagnostic(error)));
+      console.error(JSON.stringify(grantFailureDiagnostic(error)));
     });
     // These events deliberately record only the protocol stage. They make a
     // stalled authorization resume observable without logging request
