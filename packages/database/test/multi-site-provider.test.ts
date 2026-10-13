@@ -51,7 +51,8 @@ class Browser {
       method: form === undefined ? 'GET' : 'POST', redirect: 'manual',
       headers: { host: new URL(issuer).host, 'x-forwarded-host': new URL(issuer).host,
         'x-forwarded-proto': 'https', cookie,
-        ...(form === undefined ? {} : { origin: issuer, 'content-type': 'application/x-www-form-urlencoded' }) },
+        ...(form === undefined ? {} : { 'content-type': 'application/x-www-form-urlencoded',
+          ...(url.pathname.startsWith('/interaction/') ? { origin: issuer } : {}) }) },
       ...(form === undefined ? {} : { body: form }), signal: AbortSignal.timeout(10_000)
     });
     this.accept(response);
