@@ -57,13 +57,17 @@ done
 printf '],"conflicts":['
 conflicts=()
 if [ "$stage" = preflight ]; then
-  if ss -H -ltn | awk '{print $4}' | grep -Eq ':3201$'; then conflicts+=(port); fi
+  listeners=$(ss -H -ltn)
+  project_containers=$(read_docker ps -aq --filter label=com.docker.compose.project=wpauto-wordpress-e2e-b)
+  volume_names=$(read_docker volume ls --format '{{.Name}}')
+  network_names=$(read_docker network ls --format '{{.Name}}')
+  if printf '%s\n' "$listeners" | awk '{print $4}' | grep -Eq ':3201$'; then conflicts+=(port); fi
   if [ -e /opt/wpauto-wordpress-e2e-b ]; then conflicts+=(directory); fi
-  if [ -n "$(read_docker ps -aq --filter label=com.docker.compose.project=wpauto-wordpress-e2e-b)" ]; then conflicts+=(project); fi
+  if [ -n "$project_containers" ]; then conflicts+=(project); fi
   for name in wpauto_wordpress_e2e_b_database wpauto_wordpress_e2e_b_files; do
-    if read_docker volume inspect "$name" >/dev/null 2>&1; then conflicts+=(volume); fi
+    if printf '%s\n' "$volume_names" | grep -Fxq "$name"; then conflicts+=(volume); fi
   done
-  if read_docker network inspect wpauto_wordpress_e2e_b_internal >/dev/null 2>&1; then conflicts+=(network); fi
+  if printf '%s\n' "$network_names" | grep -Fxq wpauto_wordpress_e2e_b_internal; then conflicts+=(network); fi
   # Calculate CIDR overlap, including wider prefixes; do not just compare names.
   overlap=$(python3 - <<'PY'
 import ipaddress,json,subprocess

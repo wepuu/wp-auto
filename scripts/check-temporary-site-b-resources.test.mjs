@@ -111,6 +111,8 @@ test('collector is bounded/read-only and does not read secrets or mutate existin
   assert.ok(source.includes('/proc/pressure/memory'));
   assert.ok(source.includes('n.overlaps(target)'));
   assert.ok(source.includes('timeout 5s docker'));
+  assert.ok(source.includes('volume_names=$(read_docker volume ls'));
+  assert.ok(!source.includes('if read_docker'));
   assert.ok(!/(?:docker|read_docker)\s+(?:stop|restart|rm|run|prune)|compose\s+(?:up|down)|drop_caches|swapoff|swapon|\.Config\.Env|\/environ|pg_dump|psql/u.test(source));
   if (process.platform !== 'win32') {
     const syntax = spawnSync('bash', ['-n'], { input: source, encoding: 'utf8', timeout: 10_000 });
