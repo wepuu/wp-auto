@@ -76,9 +76,30 @@ async function fetchJson(url, options) {
   return { response, body };
 }
 
-async function waitForAuthorizationCode(expectedState) {
+export function validateAuthorizationCallback(callback, expectedState, expectedIssuer, expectedPath = '/callback') {
+  if (callback.pathname !== expectedPath) throw new Error('oauth_callback_path_invalid');
+  const issuers = callback.searchParams.getAll('iss');
+  if (issuers.length === 0) throw new Error('oauth_callback_issuer_missing');
+  if (issuers.length !== 1) throw new Error('oauth_callback_issuer_duplicate');
+  if (issuers[0] !== expectedIssuer) throw new Error('oauth_callback_issuer_mismatch');
+  const states = callback.searchParams.getAll('state');
+  const codes = callback.searchParams.getAll('code');
+  if (states.length !== 1 || states[0] !== expectedState) throw new Error('oauth_callback_state_invalid');
+  if (callback.searchParams.has('error')) throw new Error('oauth_callback_provider_error');
+  if (codes.length !== 1 || !codes[0]) throw new Error('oauth_callback_code_invalid');
+  return codes[0];
+}
+
+export async function waitForAuthorizationCode(expectedState, expectedIssuer, options = {}) {
+  if (typeof expectedIssuer !== 'string' || expectedIssuer.length === 0) {
+    throw new Error('oauth_callback_expected_issuer_required');
+  }
+  const report = options.report ?? ((line) => console.log(line));
   let settle;
   const completed = new Promise((resolve, reject) => { settle = { resolve, reject }; });
+  // Attach a handler immediately: a callback can arrive before code() is awaited.
+  void completed.catch(() => undefined);
+  let consumed = false;
   const server = createServer((request, response) => {
     const callback = new URL(request.url ?? '/', 'http://127.0.0.1');
     if (callback.pathname !== '/callback') {
@@ -86,13 +107,22 @@ async function waitForAuthorizationCode(expectedState) {
       response.end('Not found.');
       return;
     }
-    const state = callback.searchParams.get('state');
-    const code = callback.searchParams.get('code');
-    const error = callback.searchParams.get('error');
-    if (state !== expectedState || code === null || error !== null) {
+    if (consumed) {
       response.writeHead(400, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
       response.end('Authorization failed. You may close this tab.');
-      settle.reject(new Error(error ?? 'invalid_authorization_callback'));
+      return;
+    }
+    consumed = true;
+    const issuers = callback.searchParams.getAll('iss');
+    report(`OAUTH_CALLBACK_ISSUER_PRESENT=${issuers.length > 0 ? 'True' : 'False'}`);
+    report(`OAUTH_CALLBACK_ISSUER_MATCH=${issuers.length === 1 && issuers[0] === expectedIssuer ? 'True' : 'False'}`);
+    let code;
+    try {
+      code = validateAuthorizationCallback(callback, expectedState, expectedIssuer);
+    } catch (error) {
+      response.writeHead(400, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
+      response.end('Authorization failed. You may close this tab.');
+      settle.reject(error);
       return;
     }
     response.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
@@ -105,7 +135,7 @@ async function waitForAuthorizationCode(expectedState) {
   });
   const address = server.address();
   if (address === null || typeof address === 'string') throw new Error('callback_listener_failed');
-  const timer = setTimeout(() => settle.reject(new Error('authorization_timeout')), 5 * 60_000);
+  const timer = setTimeout(() => settle.reject(new Error('authorization_timeout')), options.timeoutMs ?? 5 * 60_000);
   timer.unref();
   return {
     redirectUri: `http://127.0.0.1:${address.port}/callback`,
@@ -336,7 +366,7 @@ const lifecycle = resolveLifecyclePlan(args.mode, accessOnly);
 const state = base64url(randomBytes(32));
 const verifier = base64url(randomBytes(64));
 const challenge = base64url(createHash('sha256').update(verifier, 'ascii').digest());
-const listener = await waitForAuthorizationCode(state);
+const listener = await waitForAuthorizationCode(state, issuer);
 const authorizationUrl = new URL('/auth', issuer);
 authorizationUrl.search = new URLSearchParams({
   response_type: 'code',

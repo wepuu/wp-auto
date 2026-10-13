@@ -198,9 +198,29 @@ The first real Desktop OAuth attempt on 2026-10-13 failed closed with
 path that was not one of the client's registered paths. No OAuth artifact or
 Grant change occurred; full acceptance and controlled-use readiness remain
 false. A fixed-purpose, fail-closed client-metadata command and exact rollback
-were locally validated. The exact callback-specific redirect was then added in
-production under a verified backup and the unchanged Authorization image
-restarted healthy; a real retry still requires separate authorization.
+were locally validated and the exact callback was registered in production
+under a verified backup, followed by an unchanged-image Authorization restart
+(independent operation record merged in PR #51). A subsequent retry was actually
+`codex mcp login` in a task terminal and reported a missing issuer, although
+the browser callback contained the correct issuer. That invocation did not
+record its executable identity; its historical root cause remains unconfirmed.
+Current fixed-executable CLI and app-server local callback tests pass. The
+operator approved a single actual Desktop connection-panel retry. See
+`P3B1B_ISSUER_DIAGNOSTICS_VALIDATION_2026-10-13.md`.
+The current Desktop GUI did not list the temporary project's MCP server.
+The pinned backend's configuration probe found that project layer disabled.
+One approved temporary user-config entry now matches the exact existing OAuth
+profile; no other config bytes, production objects or credential stores changed.
+For the preparation result, see
+`P3B1B_DESKTOP_CONFIG_LOADING_VALIDATION_2026-10-13.md`.
+The operator then completed the GUI retry on Desktop package `26.1007.2314.0`.
+The actual connected runtime exposed the frozen 23-tool name set and one direct
+WordPress site-health call passed, followed by unchanged Grant/Connector/Outbox
+postchecks. Only the owned temporary global config entry was removed; credentials
+and the active Grant were retained. P3-B1B is passed; P3-B2/P3-B3 remain pending.
+See `P3B1B_CODEX_DESKTOP_PRODUCTION_ACCEPTANCE_2026-10-13.md`.
+The production registration history is retained in
+`P3B1B_PRODUCTION_CALLBACK_REGISTRATION_2026-10-13.md`.
 PR #33 and hosted CI passed. Exact `bb71226` control and authorization images
 were published, a fresh project backup was verified and the bounded production
 deployment, health smoke and positive Email OTP OAuth/PKCE/Consent/direct-MCP
@@ -270,8 +290,8 @@ See `P3A7_G2_TOKEN_REVOCATION_PRODUCTION_ACCEPTANCE_2026-10-12.md`.
 
 Positive OAuth/PKCE/MCP, normal Refresh rotation, G1 Replay and G2 explicit
 revocation have now all passed on the repaired active Site. Therefore
-`P3_CORE_OAUTH_MCP_PASS=True`. P3-B1B is blocked on the exact callback-path
-real Desktop retry, so
+`P3_CORE_OAUTH_MCP_PASS=True`. P3-B1B real Desktop OAuth/MCP is now passed,
+but P3-B2/P3-B3 still require separately scoped acceptance, so
 `P3_FULL_ACCEPTANCE_PASS=False`, `READY_FOR_CONTROLLED_USE=False`, and
 `NOT_READY_FOR_PUBLIC_REGISTRATION=True` remain in force.
 

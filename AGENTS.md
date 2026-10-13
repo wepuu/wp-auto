@@ -51,10 +51,30 @@ The first real Desktop OAuth attempt on 2026-10-13 then failed closed with
 under `/callback/`, while the pre-registered client contains only the stable
 `/callback` path. No OAuth artifact or Grant change occurred. Full acceptance
 and controlled-use readiness remain false. A fixed-purpose exact callback
-registration and rollback command was locally validated, merged and used once
-under a verified backup to add only the observed callback-specific redirect.
-The existing Authorization image was restarted and returned healthy; the
-Codex Grant was unchanged. The real Desktop retry has not run.
+registration and rollback tooling was locally validated, then used under a
+verified backup to add only the observed exact callback. The existing
+Authorization image restarted healthy; the Codex Grant was unchanged. A
+subsequent retry reported a missing issuer, but its actual execution was
+`codex mcp login` in a task terminal, not a Desktop connection-panel test.
+The browser callback contained the correct issuer. The historical invocation
+did not record its executable identity and its root cause remains unconfirmed.
+Current fixed-executable CLI and app-server loopback tests pass for backend
+`0.162.0-alpha.17.2`, including fail-closed issuer and state cases. See
+`docs/P3B1B_ISSUER_DIAGNOSTICS_VALIDATION_2026-10-13.md`.
+The updated Desktop GUI did not list the project-scoped server. A fixed-backend
+`config/read` found its project layer disabled; a separately approved single
+temporary user-config entry then produced matching enabled definitions without
+changing other config bytes, credentials, production or protocol rules. See
+`docs/P3B1B_DESKTOP_CONFIG_LOADING_VALIDATION_2026-10-13.md`.
+The operator then completed the single real GUI login on Desktop package
+`26.1007.2314.0`. The connected runtime exposed the exact 23-tool name set and
+one direct WordPress site-health call passed. Origin access metadata and unchanged
+Grant, Connector and Outbox postchecks support P3-B1B acceptance. Only the owned
+temporary global config entry was removed, without clearing credentials or
+revoking the Grant. P3-B2/P3-B3 and full/controlled-use readiness remain pending.
+See `docs/P3B1B_CODEX_DESKTOP_PRODUCTION_ACCEPTANCE_2026-10-13.md`.
+The independent production registration history is retained in
+`docs/P3B1B_PRODUCTION_CALLBACK_REGISTRATION_2026-10-13.md`.
 The positive evidence and corrected lifecycle provisioning preflight are
 recorded in
 `docs/P3A_PRODUCTION_POSITIVE_ACCEPTANCE_2026-10-11.md` and

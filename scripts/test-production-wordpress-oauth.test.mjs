@@ -5,8 +5,91 @@ import {
   expectInvalidGrant,
   probeMcpRevocationState,
   resolveLifecyclePlan,
+  validateAuthorizationCallback,
+  waitForAuthorizationCode,
   waitForMcpDenial,
 } from './test-production-wordpress-oauth.mjs';
+
+const callbackIssuer = 'https://auth.example.test';
+
+test('callback validation accepts exact issuer and both explicitly expected paths', () => {
+  for (const path of ['/callback', '/callback/fixture_123456']) {
+    const callback = new URL(`http://127.0.0.1:49123${path}`);
+    callback.search = new URLSearchParams({ code: 'fixture-code', state: 'fixture-state', iss: callbackIssuer });
+    assert.equal(validateAuthorizationCallback(callback, 'fixture-state', callbackIssuer, path), 'fixture-code');
+  }
+});
+
+test('callback validation rejects missing, duplicate and non-exact issuers without sensitive errors', () => {
+  for (const [query, expected] of [
+    ['code=SECRET_CODE&state=fixture-state', 'oauth_callback_issuer_missing'],
+    [`code=SECRET_CODE&state=fixture-state&iss=${callbackIssuer}&iss=${callbackIssuer}`, 'oauth_callback_issuer_duplicate'],
+    ['code=SECRET_CODE&state=fixture-state&iss=https://SECRET_ISSUER.example', 'oauth_callback_issuer_mismatch'],
+    [`code=SECRET_CODE&state=fixture-state&iss=${callbackIssuer}/`, 'oauth_callback_issuer_mismatch'],
+  ]) {
+    assert.throws(
+      () => validateAuthorizationCallback(new URL(`http://127.0.0.1/callback?${query}`), 'fixture-state', callbackIssuer),
+      (error) => error.message === expected && !error.message.includes('SECRET'),
+    );
+  }
+});
+
+test('callback validation retains exact state, code, provider-error and path boundaries', () => {
+  for (const [path, query, expected] of [
+    ['/callback/other', `code=x&state=s&iss=${callbackIssuer}`, 'oauth_callback_path_invalid'],
+    ['/callback', `code=x&state=wrong&iss=${callbackIssuer}`, 'oauth_callback_state_invalid'],
+    ['/callback', `code=x&state=s&state=s&iss=${callbackIssuer}`, 'oauth_callback_state_invalid'],
+    ['/callback', `code=x&code=x&state=s&iss=${callbackIssuer}`, 'oauth_callback_code_invalid'],
+    ['/callback', `code=&state=s&iss=${callbackIssuer}`, 'oauth_callback_code_invalid'],
+    ['/callback', `error=SECRET_PROVIDER_ERROR&state=s&iss=${callbackIssuer}`, 'oauth_callback_provider_error'],
+  ]) {
+    assert.throws(
+      () => validateAuthorizationCallback(new URL(`http://127.0.0.1${path}?${query}`), 's', callbackIssuer),
+      (error) => error.message === expected,
+    );
+  }
+});
+
+test('real callback listener reports only issuer booleans and releases a code after validation', async () => {
+  const lines = [];
+  const listener = await waitForAuthorizationCode('SECRET_STATE', callbackIssuer, { report: (line) => lines.push(line) });
+  const completion = listener.code();
+  const callback = new URL(listener.redirectUri);
+  callback.search = new URLSearchParams({ code: 'SECRET_CODE', state: 'SECRET_STATE', iss: callbackIssuer });
+  const response = await fetch(callback);
+  assert.equal(response.status, 200);
+  assert.ok(!(await response.text()).includes('SECRET'));
+  assert.equal(await completion, 'SECRET_CODE');
+  assert.deepEqual(lines, ['OAUTH_CALLBACK_ISSUER_PRESENT=True', 'OAUTH_CALLBACK_ISSUER_MATCH=True']);
+});
+
+test('real callback listener fails before a simulated exchange on invalid issuer or state', async () => {
+  for (const [query, expected] of [
+    [{ code: 'SECRET_CODE', state: 's' }, 'oauth_callback_issuer_missing'],
+    [{ code: 'SECRET_CODE', state: 's', iss: 'https://SECRET_ISSUER.example' }, 'oauth_callback_issuer_mismatch'],
+    [{ code: 'SECRET_CODE', state: 'wrong', iss: callbackIssuer }, 'oauth_callback_state_invalid'],
+  ]) {
+    const lines = [];
+    let exchanges = 0;
+    const listener = await waitForAuthorizationCode('s', callbackIssuer, { report: (line) => lines.push(line) });
+    const completion = listener.code().then(() => { exchanges += 1; });
+    const rejected = assert.rejects(completion, (error) => error.message === expected);
+    const callback = new URL(listener.redirectUri);
+    callback.search = new URLSearchParams(query);
+    const response = await fetch(callback);
+    assert.equal(response.status, 400);
+    assert.ok(!(await response.text()).includes('SECRET'));
+    await rejected;
+    assert.equal(exchanges, 0);
+    assert.ok(!lines.join('\n').includes('SECRET'));
+  }
+});
+
+test('callback listener timeout is bounded and closes without receiving an authorization', async () => {
+  const listener = await waitForAuthorizationCode('s', callbackIssuer, { timeoutMs: 25, report: () => {} });
+  await assert.rejects(listener.code(), /authorization_timeout/u);
+  await assert.rejects(fetch(listener.redirectUri), TypeError);
+});
 
 function controlledPolling(probe, exp = 120) {
   let milliseconds = 0;
