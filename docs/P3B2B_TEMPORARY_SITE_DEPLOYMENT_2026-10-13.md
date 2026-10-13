@@ -4,8 +4,9 @@
 
 ### Findings
 
-PR #55 remains Draft at head `a85ebe89a5e4d7b7e336ded4b599769d9beb9e16`;
-its CI run `38386807497` passed. The two Site B service containers remain stopped
+At the start of this diagnosis, PR #55 was Draft at head
+`a85ebe89a5e4d7b7e336ded4b599769d9beb9e16`; its CI run `38386807497` passed.
+The two Site B service containers remain stopped
 with the previously recorded IDs, project labels, volumes and network. No
 production container was started during this diagnostic. All five existing
 Control/Authorization/PostgreSQL/Site A containers are healthy, OOM false and
