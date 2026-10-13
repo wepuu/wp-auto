@@ -1,6 +1,135 @@
 # P3-B2B temporary Site B deployment: preparation checkpoint
 
+## Authorized retained-Site-B recovery result (2026-10-13)
+
+This section records the later, separately authorized recovery and supersedes
+the earlier “initialization failed / Site B stopped” checkpoint as the current
+deployment status. The earlier failure evidence below is retained unchanged.
+
+### PR and WP-CLI recovery
+
+PR #55 was reviewed at its final head
+`8fc8c1e5c56f70e319b23d46ce4a26f9e4b0e51b`, marked Ready and merged to `main`
+with merge commit `c5828b01275a138aaf2e3d29f01a6d196308fbf4`. Post-merge main
+CI run `38392119166` succeeded.
+
+The initial WP-CLI failure was reproduced from the recorded invocation shape:
+the Compose `wpcli` service entrypoint received `core ...` instead of the
+explicit `wp core ...` executable invocation. The bare `core is-installed`
+form exited 127, while `wp --info` and the database connectivity query
+succeeded. Explicit `wp core is-installed` exited 1 and the read-only database
+inventory contained zero WordPress tables. The original attempt's raw output
+was not retained, so its original stderr remains unavailable; the command
+invocation defect is confirmed by the controlled reproduction, not by claiming
+to recover that discarded output.
+
+Exactly one authorized `wp core install` was then run against the retained
+database and files, using WP-CLI image
+`wordpress:cli-2.12.0-php8.3@sha256:9e1e5309e3e3b27bef70e62874978d5fecac970e4b1d46ca95f596a711ef3dc1`,
+UID/GID `33:33`, the existing protected administrator-password file on stdin,
+`--skip-email`, and a bounded one-shot `docker compose run --rm --no-deps -T`.
+It exited 0. A subsequent
+`wp core is-installed` exited 0, and read-only metadata checks confirmed the
+expected `https://test2.wpauto.cc` home/site URLs and the dedicated temporary
+administrator. No password or raw command output is recorded. No second
+installation attempt was made.
+
+### Connector and HTTPS
+
+The fixed Connector ZIP matched SHA-256
+`f59406eaa07c8d6d8518ef5d5d71cd496a7952fa781b263d7bc306ec5fd3d960`. The
+installed plugin is active at version `0.1.0`; its main plugin file SHA-256 is
+`216aa058e728b2f96956ccd77e4ff2f096040437c8d143c321a88756a40509b8`. A
+read-only WordPress option check found no Connector platform-connection
+record, no Site ID, and no revocation state: Site B remains disconnected and
+unpaired. No pairing or platform request was made.
+
+The previously issued dedicated certificate was not replaced. Its SAN matched
+`test2.wpauto.cc`; it was in date, had a three-certificate chain that verified
+against the system trust store, and its public key matched the protected
+private key. The operator had confirmed the proxied Cloudflare record and Full
+(strict); no DNS, Cloudflare or certificate setting was changed in this
+recovery. The dedicated vhost was installed atomically at
+`/www/server/panel/vhost/nginx/test2.wpauto.cc.conf`, with SHA-256
+`26660b5a5eb59ef3a89777549ab0daade80c825906efd7c0d662339e95330bc5`. `nginx
+-t` passed before reload. Source TLS (SNI/hostname/certificate verification)
+and public HTTPS both returned HTTP 200 with TLS verification result 0 for
+`/wp-login.php`; no response content was retained.
+
+### Final resource and platform checks
+
+The fresh `test`-stage resource assessment allowed the final ingress stage:
+six samples over 25 seconds, minimum available memory 1002.367 MiB, latest
+1200.520 MiB, 15355 MiB disk available, and 4000091 inodes. Swap remained in
+use (approximately 2694–2696 MiB) but observed I/O stayed below 0.21 MiB/s;
+memory PSI `some` and `full` remained zero and the host OOM counter stayed at
+174. There were no new container OOMs or restarts. The resource gate returned
+`allowed=true` with only the expected occupied-swap and historical-OOM
+warnings.
+
+Post-recovery read-only checks confirmed:
+
+- Control, Authorization, PostgreSQL, Site A WordPress/MariaDB, and both Site B
+  services were healthy; all OOM flags were false and restart counts remained
+  zero.
+- The database remained at 13 migrations, latest
+  `013_email_otp_login.sql`; the platform still had one active Site and no
+  `test2.wpauto.cc` Site row.
+- Codex Grant `grant_Q0YY...GETM` remained active with
+  `updated_at=2026-10-12 12:03:49.698212+00` and no revocation reason;
+  `wepuu-e2e-lifecycle` had zero live Grants.
+- Site A Connector remained active with v2 revocation state, sequence 2,
+  exactly two Grant deny markers, zero token/key markers, and no `deny_all`.
+  Its stored connection Site ID and revocation-state Site ID hashes matched.
+- Outbox totals remained seven rows, four delivered and three failed; no
+  Outbox row was changed or requeued. The five old-site history rows were not
+  modified.
+
+Site B retained its original project, containers, volumes, network and
+configuration. The exact container identities were database
+`fe7d9f0ab8fef52d8787facad145fde92b3833ee3f2f1e4f4fc3febd357b5524` and
+WordPress `16f4661588c8e1468a8195cba34bd284558f1ac4eaf4ebe4c909c3e3935d4831`;
+the retained volumes are `wpauto_wordpress_e2e_b_database` and
+`wpauto_wordpress_e2e_b_files`, and the network ID is
+`e93732b833b7a7c2dedac7c94e4824f957bdabb46871748f353a5a5f51d96c95`. The
+pre-recovery volume backup remains at
+`/opt/wpauto/backups/site-b-resume/20261013T115627Z` (database archive
+SHA-256 `3f39f6d3f76c1faf1d61670087cb5a7d9da9b70129eda48ec49eea337d3e1fa5`,
+WordPress files archive SHA-256
+`a5b439cb672800a5bf86f66374ab55b4164149d4508a42e16bf13299cbd48769`). The
+exact retained service images were MariaDB
+`sha256:345fa26d595e8c7fe298e0c4098ed400356f502458769c8902229b3437d6da2b`
+and WordPress `sha256:85c24b4b92dc7fcea65317d2be635643189d0d8ad4bba65d79a660fd018fe246`.
+The Compose file hash remained
+`bf91b8f23b3736af759bfdd2a315b7f8460ee7117b4c043df3eba01645535595`, the
+private Docker subnet remained `172.30.52.0/24`, and WordPress stayed bound to
+`127.0.0.1:3201` behind the dedicated vhost. No database, WordPress volume,
+Network, runtime credentials, administrator password or Site A state was
+recreated or deleted.
+
+```text
+P3B2_TEMPORARY_4GB_MODE=True
+P3B2_DEPLOYMENT_PREFLIGHT_PASS=True
+P3B2_SITE_B_DEPLOYED=True
+P3B2_SITE_B_CONNECTOR_INSTALLED=True
+P3B2_SITE_B_HTTPS_PASS=True
+P3B2_SITE_B_PAIRED=False
+P3B2_PRODUCTION_ISOLATION_TESTED=False
+P3_FULL_ACCEPTANCE_PASS=False
+READY_FOR_CONTROLLED_USE=False
+NOT_READY_FOR_PUBLIC_REGISTRATION=True
+```
+
+The next separately authorized step is formal Site B pairing. No OAuth Grant,
+token, cross-Site isolation test, Application Password, Replay, Revocation,
+database migration 014, or P4-A operation was performed. The original
+deployment backup and Site B resources remain available; `design/` was not
+modified or staged.
+
 ## WP-CLI failure diagnosis and resume procedure (2026-10-13)
+
+The observations below describe the original diagnosis checkpoint before the
+separate recovery authorization. The later recovery result is recorded above.
 
 ### Findings
 
@@ -114,13 +243,19 @@ After a separate production-resume authorization:
    `nginx -t`, and another resource sample. Verify origin TLS and public HTTPS
    independently.
 
-This is a procedure, not permission to resume or start any container. Until the
-exact one-shot WP-CLI failure is reproduced locally or safe classified output is
-available from a future authorized attempt, the production root cause remains
-unknown. This round made no runtime, Connector, database, DNS, certificate, or
-vhost changes; the certificate remains unreferenced. `design/` remains untouched.
+At the original diagnosis checkpoint, this was only a procedure, not permission
+to resume or start any container. The local image reproduction was unavailable
+then, and the original raw output remains unrecoverable. A controlled production
+reproduction later identified the command invocation defect, and the separately
+authorized recovery is recorded above. The certificate was unreferenced at the
+original checkpoint and the later recovery installed its dedicated vhost.
+`design/` remains untouched.
 
-## Current execution result: initialization failed, Site B stopped
+## Original execution checkpoint: initialization failed, Site B stopped
+
+This section preserves the original attempt and its failure facts; it is not
+the current Site B status. See the authorized retained-resource recovery
+result at the top of this document.
 
 The operator added the TXT. Public resolvers `1.1.1.1` and `8.8.8.8` both
 matched the original order's challenge. That same order was finalized once;
@@ -323,7 +458,7 @@ matched SHA-256
 `f59406eaa07c8d6d8518ef5d5d71cd496a7952fa781b263d7bc306ec5fd3d960`.
 No installed plugin directory, database, identity or credentials were copied.
 
-## Dynamic resource assessment
+## Dynamic resource assessment at the original checkpoint
 
 The current repository collector was streamed through authorized SSH into Bash
 read-only, then its six-sample output evaluated by the matching local checker.
@@ -336,7 +471,11 @@ This assessment permits only the next database-start stage within its validity
 window. It does not prove all subsequent stages or future runtime safety. No
 1408 MiB hard gate, Swap change, cap reduction or unrelated service stop was used.
 
-## Ingress blocker and remaining steps
+## Ingress blocker at the original checkpoint (resolved later)
+
+The DNS ownership and certificate blocker described below was resolved by the
+operator and the later authorized recovery recorded above. The initial facts
+are retained as historical evidence.
 
 Public DNS currently resolves `test2.wpauto.cc` to Cloudflare edge addresses.
 That does **not** establish whether an exact or wildcard record is used, its
@@ -354,7 +493,7 @@ verify origin TLS and public HTTPS separately and unchanged Site A/core/Grant/
 revocation metadata. Failure rollback stops only newly owned Site B containers,
 retains files/volumes/database and restores only owned ingress changes.
 
-## Status at this checkpoint
+## Status at the original preparation checkpoint
 
 ```text
 P3B2_TEMPORARY_4GB_MODE=True
