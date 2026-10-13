@@ -1,5 +1,122 @@
 # P3-B2B temporary Site B deployment: preparation checkpoint
 
+## Current execution result: initialization failed, Site B stopped
+
+The operator added the TXT. Public resolvers `1.1.1.1` and `8.8.8.8` both
+matched the original order's challenge. That same order was finalized once;
+no replacement order was created. The dedicated certificate was issued into
+`/www/server/panel/vhost/letsencrypt/test2.wpauto.cc`, with protected directory
+and file permissions. SAN is exactly `test2.wpauto.cc`; validity is
+2026-10-13 09:46:21Z through 2027-01-11 09:46:20Z. Hostname, system-trusted
+certificate-chain and public/private key matching checks passed without
+disabling TLS verification or printing private key material. No vhost references
+the certificate yet. The operator may remove only this order's exact TXT value;
+other same-name TXT records must not be removed.
+
+All three pinned images were already cached and matched the template digests.
+The ZIP matched the fixed SHA-256; its plugin header version is `0.1.0`, with
+789 archive files. The archive was copied cleanly, not Site A installed state.
+
+Entry preparation/backup directory:
+`/opt/wpauto/backups/site-b-deployment/20261013T104644Z`. Existing auth/Site A
+vhosts were copied with preserved metadata and later source hashes matched:
+
+- auth vhost: `f44e9086951b488c5763f3d9adfd516cc8fad51ac7a4954df2fb4bdaccb57656`
+- Site A vhost: `3c310af3b4b967c7a7d430d1a49a78522b880e1bdb07bd2838653c5081ab5e8b`
+
+The Site B vhost was absent before and after execution. No DNS A/wildcard record
+was changed by the agent; existing DNS configuration was confirmed by the
+operator. A dedicated candidate vhost was uploaded to the preparation directory,
+but not installed, and Nginx was not reloaded.
+
+Fresh stage assessments and actual outcomes:
+
+| Stage | Minimum/latest available MiB | Next budget MiB | Assessment and actual result |
+| --- | --- | --- | --- |
+| preflight | 1332.465 / 1332.465 | 222 | allowed; independent MariaDB started and became healthy |
+| wordpress | 1114.645 / 1192.359 | 479 | allowed; WordPress healthy; loopback install page HTTP 200 |
+| wpcli | 969.828 / 1061.949 | 192 | allowed; single `core install` invocation failed; stopped |
+| test/HTTPS | not sampled | not assessed | not run |
+
+The WordPress assessment emitted transient paging/pressure warnings as well as
+occupied Swap/historical OOM warnings; no sustained-pressure stop condition was
+observed. The other two assessments emitted occupied Swap/historical OOM
+warnings. Startup polls checked core health, OOM and pressure; no existing
+container was restarted or stopped. Source-byte hash was verified before
+creating Site B and database startup occurred within the fresh sample window.
+
+`wp core install` was attempted once with the administrator password supplied
+from the protected file on stdin, `--prompt=admin_password`, `--skip-email`,
+and a one-shot `run --rm --no-deps -T` container. It returned nonzero before
+the install-success marker. Output was discarded to avoid leaking prompt or
+credential data, so the underlying error classification was not retained.
+**The root cause is unconfirmed.** Do not attribute it to memory, credentials,
+stdin prompting or database connectivity without isolated evidence. The
+one-shot container was automatically removed; it is not resident.
+
+Connector installation/activation and its installed-file manifest verification
+were never reached. The WordPress files and `wp-config.php` exist, but the
+installation/database initialization outcome is unconfirmed; no second
+initialization was attempted. No Connector plugin directory exists in Site B.
+
+The failure handler stopped only the two owned Site B containers, leaving
+volumes, database, network, files and root-owned `0600` credentials intact.
+No `down -v`, prune, database restore or resource deletion occurred. At
+`2026-10-13T10:52:52Z`, the five original cores remained running/healthy,
+OOM flags false and restart counts zero. Site B containers were exited, OOM
+flags false and restart counts zero; their stopped health state is not
+misrepresented as healthy. Migrations remained 001–013, active Site count one,
+Codex Grant remained active with the original timestamp/null reason, and
+Outbox remained seven rows/four delivered.
+
+Owned retained resources (all project labels `wpauto-wordpress-e2e-b`):
+
+- directory `/opt/wpauto-wordpress-e2e-b`; Compose `compose.yaml`, protected
+  `config/runtime.env` and `config/admin_password`, clean `artifacts/connector.zip`;
+- stopped database container
+  `fe7d9f0ab8fef52d8787facad145fde92b3833ee3f2f1e4f4fc3febd357b5524`;
+- stopped WordPress container
+  `16f4661588c8e1468a8195cba34bd284558f1ac4eaf4ebe4c909c3e3935d4831`;
+- volumes `wpauto_wordpress_e2e_b_database` and `wpauto_wordpress_e2e_b_files`,
+  mounted under their exact `/var/lib/docker/volumes/<name>/_data` paths;
+- network `wpauto_wordpress_e2e_b_internal`, subnet `172.30.52.0/24`, ID
+  `e93732b833b7a7c2dedac7c94e4824f957bdabb46871748f353a5a5f51d96c95`;
+- dedicated, unreferenced certificate directory and the original order reference;
+  preparation/backup directory listed above.
+
+No platform Site, Grant, Token or pairing was created. No lifecycle tests,
+Application Passwords, migrations, P4-A, core image/limit changes or Connector
+code changes occurred. The final read-only check also confirmed Site A v2,
+sequence 2, two Grant markers and the unchanged state digest; five old Site
+Outbox rows remained. Local targeted template/resource tests passed 11/11.
+Full `pnpm check` passed typecheck/lint and 164 tests with zero failures and
+18 environment-gated skips (182 total). Compose dummy-credential rendering
+and `git diff --check` passed. The new dedicated vhost is tested as a candidate,
+not claimed to have passed a live Nginx syntax/reload or HTTPS acceptance.
+Next task is isolated reproduction of the exact
+WP-CLI invocation with safe error categorization, followed by an explicitly
+approved resume procedure that recognizes the owned retained resources.
+The initial preflight checker correctly rejects these resources as conflicts;
+do not falsify or ignore that result to resume. Current result:
+
+```text
+P3B2_TEMPORARY_4GB_MODE=True
+P3B2_DEPLOYMENT_PREFLIGHT_PASS=True
+P3B2_SITE_B_DEPLOYED=False
+P3B2_SITE_B_HTTPS_PASS=False
+P3B2_SITE_B_CONNECTOR_INSTALLED=False
+P3B2_SITE_B_PAIRED=False
+P3B2_PRODUCTION_ISOLATION_TESTED=False
+P3_CORE_OAUTH_MCP_PASS=True
+P3_FULL_ACCEPTANCE_PASS=False
+READY_FOR_CONTROLLED_USE=False
+NOT_READY_FOR_PUBLIC_REGISTRATION=True
+```
+
+Preflight True records the actual successful historical stage checks, not
+current permission to resume or full deployment success. Sections below are
+earlier checkpoints, retained without rewriting their historical results.
+
 ## Later DNS-01 preparation checkpoint
 
 After the initial checkpoint below, the operator confirmed the Cloudflare
