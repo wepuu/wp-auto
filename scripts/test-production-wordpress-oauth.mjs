@@ -11,7 +11,7 @@ const { createRemoteJWKSet, decodeProtectedHeader, jwtVerify } = await import(
   pathToFileURL(requireFromKeyCustody.resolve('jose')).href
 );
 
-const EXPECTED_TOOLS = [
+export const EXPECTED_TOOLS = [
   'wp-auto-site-health',
   'wp-auto-site-info',
   'wp-auto-posts-search',
@@ -137,20 +137,27 @@ export async function waitForAuthorizationCode(expectedState, expectedIssuer, op
   if (address === null || typeof address === 'string') throw new Error('callback_listener_failed');
   const timer = setTimeout(() => settle.reject(new Error('authorization_timeout')), options.timeoutMs ?? 5 * 60_000);
   timer.unref();
+  async function close() {
+    clearTimeout(timer);
+    if (server.listening) await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
   return {
     redirectUri: `http://127.0.0.1:${address.port}/callback`,
+    async close() {
+      settle.reject(new Error('authorization_cancelled'));
+      await close();
+    },
     async code() {
       try {
         return await completed;
       } finally {
-        clearTimeout(timer);
-        await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+        await close();
       }
     },
   };
 }
 
-async function verifyAccessToken(token, context) {
+export async function verifyAccessToken(token, context) {
   const header = decodeProtectedHeader(token);
   if (header.alg !== 'RS256' || header.typ !== 'at+jwt' || typeof header.kid !== 'string') {
     throw new Error('invalid_access_token_header');
@@ -166,6 +173,11 @@ async function verifyAccessToken(token, context) {
     requiredClaims: ['sub', 'client_id', 'tenant_id', 'site_id', 'grant_id', 'scope', 'nbf'],
   });
   const claims = verified.payload;
+  if (context.strictBindings && (claims.aud !== context.resource
+      || claims.sub !== context.accountId
+      || !['iat', 'nbf', 'exp'].every((claim) => Number.isSafeInteger(claims[claim])))) {
+    throw new Error('access_token_binding_mismatch');
+  }
   if (claims.client_id !== context.clientId || claims.tenant_id !== context.tenantId
       || claims.site_id !== context.siteId || claims.scope !== 'mcp:read') {
     throw new Error('access_token_binding_mismatch');
@@ -174,7 +186,7 @@ async function verifyAccessToken(token, context) {
     throw new Error('access_token_grant_missing');
   }
   if (typeof claims.exp !== 'number') throw new Error('access_token_exp_missing');
-  return { grantId: claims.grant_id, kid: header.kid, exp: claims.exp };
+  return { grantId: claims.grant_id, kid: header.kid, exp: claims.exp, accountId: claims.sub };
 }
 
 function parseEvent(event) {
@@ -215,7 +227,8 @@ async function readMcpMessage(response) {
   }
 }
 
-async function probeMcp(resource, token) {
+export async function probeMcp(resource, token, options = {}) {
+  const fetchRequest = options.request ?? fetch;
   let sessionId;
   let protocolVersion;
   async function request(payload, expectMessage = true) {
@@ -226,10 +239,16 @@ async function probeMcp(resource, token) {
     };
     if (sessionId) headers['mcp-session-id'] = sessionId;
     if (protocolVersion) headers['mcp-protocol-version'] = protocolVersion;
-    const response = await fetch(resource, {
-      method: 'POST', headers, body: JSON.stringify(payload), signal: AbortSignal.timeout(20_000),
+    const response = await fetchRequest(resource, {
+      method: 'POST', headers, body: JSON.stringify(payload),
+      signal: options.signal ?? AbortSignal.timeout(20_000),
+      ...(options.strictTransport ? { redirect: 'error' } : {}),
     });
-    if (!response.ok) throw new Error(`mcp_http_${response.status}`);
+    if (!response.ok || (options.strictTransport
+        && response.status !== 200 && !(!expectMessage && response.status === 202))) {
+      await response.body?.cancel();
+      throw new Error(`mcp_http_${response.status}`);
+    }
     sessionId = response.headers.get('mcp-session-id') ?? sessionId;
     if (!expectMessage) {
       await response.body?.cancel();
