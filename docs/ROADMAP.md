@@ -200,7 +200,7 @@ Grant change occurred; full acceptance and controlled-use readiness remain
 false. A fixed-purpose, fail-closed client-metadata command and exact rollback
 were locally validated and the exact callback was registered in production
 under a verified backup, followed by an unchanged-image Authorization restart
-(operation evidence candidate PR #51). A subsequent retry was actually
+(independent operation record merged in PR #51). A subsequent retry was actually
 `codex mcp login` in a task terminal and reported a missing issuer, although
 the browser callback contained the correct issuer. That invocation did not
 record its executable identity; its historical root cause remains unconfirmed.
@@ -219,6 +219,8 @@ WordPress site-health call passed, followed by unchanged Grant/Connector/Outbox
 postchecks. Only the owned temporary global config entry was removed; credentials
 and the active Grant were retained. P3-B1B is passed; P3-B2/P3-B3 remain pending.
 See `P3B1B_CODEX_DESKTOP_PRODUCTION_ACCEPTANCE_2026-10-13.md`.
+The production registration history is retained in
+`P3B1B_PRODUCTION_CALLBACK_REGISTRATION_2026-10-13.md`.
 PR #33 and hosted CI passed. Exact `bb71226` control and authorization images
 were published, a fresh project backup was verified and the bounded production
 deployment, health smoke and positive Email OTP OAuth/PKCE/Consent/direct-MCP

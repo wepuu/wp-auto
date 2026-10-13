@@ -61,7 +61,7 @@ acceptance and controlled-use readiness remain false. A fixed-purpose local
 candidate now supports adding and exactly rolling back that single observed
 callback-specific redirect without changing the existing Grant. The exact
 production registration and unchanged-image Authorization restart passed on
-2026-10-13; its operation record is in candidate PR #51. A subsequent
+2026-10-13; its independent operation record was merged in PR #51. A subsequent
 task-terminal CLI retry failed with a missing issuer despite a correct issuer
 in the browser callback. Its historical root cause remains unconfirmed.
 Current fixed-executable CLI/app-server local issuer tests pass. See
@@ -103,7 +103,9 @@ passed, followed by the successful isolated G1 and G2 lifecycle tests. See
 record linked above.
 The callback mismatch and local correction validation are recorded in
 `docs/P3B1B_CODEX_DESKTOP_CALLBACK_MISMATCH_2026-10-13.md` and
-`docs/P3B1B_EXACT_CALLBACK_FIX_VALIDATION_2026-10-13.md`.
+`docs/P3B1B_EXACT_CALLBACK_FIX_VALIDATION_2026-10-13.md`. The bounded
+production registration is recorded in
+`docs/P3B1B_PRODUCTION_CALLBACK_REGISTRATION_2026-10-13.md`.
 
 ## Architecture
 
