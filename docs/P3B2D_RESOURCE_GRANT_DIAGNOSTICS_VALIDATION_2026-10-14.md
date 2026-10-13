@@ -61,7 +61,9 @@ The candidate regression exercises:
 - Interleaved pending A/B Consent, with each completed Code exchanged promptly.
 - A deferred session-bound Code denied after B changes the Session's Client
   Grant. This is expected `invalid_grant`, not a successful parallel exchange.
-- Cross-resource Code exchange denied with no Token issuance.
+- Cross-resource Code and Refresh exchange denied with no Token issuance.
+  These checks require an explicit target/scope/access error, not expiry or an
+  unrelated invalid_grant. A potentially consumed failed refresh is not retried.
 - Adversarial test-owned Provider artifact corruption of account, Client,
   resource and scope, with normal checks preserved.
 - Local offline refresh rotation, explicit B RFC 7009 revocation, A refresh
@@ -74,11 +76,19 @@ claims/scopes, inactive account, database failures, and a sensitive exception
 sentinel absent from diagnostic JSON. Session pointers are not consulted by
 the resource loader. No refresh_families integration is added.
 
-Local Node is 26.11.1. Typecheck and lint passed during development; focused
-Provider/Consent/diagnostic tests passed. Local Docker is unavailable, so real
-PostgreSQL/HTTP and OCI outcomes must be taken from the exact hosted CI Head,
-not inferred from local skips. Final validation results are recorded below
-after the candidate completes CI.
+Local Node is 26.11.1. Typecheck and lint passed; 22 focused
+Consent/diagnostic tests passed without skips. Full local `pnpm check` did not
+pass: 166 passed, 1 failed, 19 environment-gated skips (186 total). The unchanged
+pairing HTTPS fixture cannot load Windows PowerShell Security/Cert support;
+it fails during certificate generation, before transport. No TLS validation
+was disabled or test suppressed. Local Docker/PostgreSQL is unavailable, so
+real HTTP/DB and OCI outcomes are obtained from hosted CI, not local skips.
+
+Runtime repair Head `c4edd08` passed complete hosted run `38428977028`:
+strict checks, real HTTP/DB regressions, PostgreSQL tests, OCI/local signing,
+backup/restore, PHP interop, audit, SBOM, and retained OAuth conformance.
+The subsequent focused hardening adds explicit Refresh target denial and
+diagnostic-enum/tampering checks; its exact final Head CI is reported on PR #58.
 
 ## Existing active production Grants and next boundary
 

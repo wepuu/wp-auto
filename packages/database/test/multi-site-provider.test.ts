@@ -291,7 +291,7 @@ test('real Authorization HTTP binds same-client sequential and interleaved resou
   assert.equal(wrongTarget.status, 400, 'cross_resource_exchange_denied');
   const wrongBody = await wrongTarget.json() as { error?: string; access_token?: string };
   assert.equal(wrongBody.access_token === undefined, true, 'no_cross_resource_token');
-  assert.equal(['invalid_target', 'access_denied', 'invalid_grant'].includes(wrongBody.error ?? ''), true);
+  assert.equal(['invalid_target', 'invalid_scope', 'access_denied'].includes(wrongBody.error ?? ''), true);
   assert.equal(JSON.stringify((await pool.query('SELECT id,status,updated_at,revocation_reason FROM platform.grants ORDER BY id')).rows)
     === JSON.stringify(activeBaseline.rows), true, 'reconsent_does_not_update_business_grants');
   const states = await pool.query<{ status: string }>('SELECT status FROM platform.grants ORDER BY id');
@@ -338,6 +338,14 @@ test('real Authorization HTTP binds same-client sequential and interleaved resou
   assert.equal(typeof rotatedA.refresh_token === 'string' && rotatedA.refresh_token !== offlineA.refresh_token, true, 'refresh_rotation');
   const offlineB = await issue(1, browser, 'mcp:read offline_access');
   assert.equal(typeof offlineB.refresh_token === 'string', true);
+  const crossRefreshA = await issue(0, browser, 'mcp:read offline_access');
+  const crossRefresh = await refresh(crossRefreshA.refresh_token ?? '', 1);
+  assert.equal(crossRefresh.status, 400, 'cross_resource_refresh_denied');
+  const crossRefreshBody = await crossRefresh.json() as { error?: string; access_token?: string };
+  assert.equal(crossRefreshBody.access_token === undefined, true, 'no_refresh_resource_switch');
+  assert.equal(['invalid_target', 'invalid_scope', 'access_denied'].includes(crossRefreshBody.error ?? ''), true);
+  // Do not retry that refresh: Provider may consume it before a target denial.
+  // Other A lineage must remain usable across B's explicit revocation below.
   const revoked = await browser.request('/token/revocation', new URLSearchParams({ client_id: clientId,
     token: offlineB.refresh_token ?? '', token_type_hint: 'refresh_token' }));
   assert.equal(revoked.status, 200, 'rfc7009_success');

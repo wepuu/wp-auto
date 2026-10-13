@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createResourceGrantLoader, grantFailureDiagnostic, GrantDiagnosticError,
+import { createResourceGrantLoader, grantFailureDiagnostic, GrantDiagnosticError, GRANT_DIAGNOSTIC_CODES,
   type ResourceGrantLoader, type ResourceGrantResolver } from '../src/index.js';
 
 const resource = 'https://site.example.test/wp-json/wp-auto/mcp';
@@ -72,4 +72,12 @@ test('lookup failure and inactive account fail closed without leaking causes', a
   for (const stage of ['binding', 'grant_load', 'consent_plan', 'grant_save', 'interaction_finish', 'interaction'] as const) {
     assert.equal(Object.keys(grantFailureDiagnostic(new Error(sentinel), stage)).length, 4);
   }
+  for (const category of GRANT_DIAGNOSTIC_CODES) {
+    const record = grantFailureDiagnostic(new GrantDiagnosticError('grant_load', category, new Error(sentinel)));
+    assert.equal(record.category, category);
+    assert.equal(JSON.stringify(record).includes(sentinel), false);
+  }
+  const tampered = Object.assign(new GrantDiagnosticError('grant_load', 'unknown'), { category: sentinel, stage: sentinel });
+  assert.equal(grantFailureDiagnostic(tampered).category, 'unknown');
+  assert.equal(JSON.stringify(grantFailureDiagnostic(tampered)).includes(sentinel), false);
 });
