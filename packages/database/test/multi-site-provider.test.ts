@@ -8,10 +8,10 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { Client } from 'pg';
 import { CompactSign, exportJWK, generateKeyPair, importJWK, jwtVerify } from 'jose';
-import { createAccountAuth, ACCOUNT_AUTH_DELIVERY_ID_HEADER } from '../../account-auth/src/index.js';
+import { createAccountAuth, ACCOUNT_AUTH_DELIVERY_ID_HEADER, type AccountAuth } from '../../account-auth/src/index.js';
 import { GrantService } from '@wepuu/pairing';
 import { localPkcs8KeyCustodyFromEnvironment } from '@wepuu/key-custody';
-import { startAuthorizationService, consentGrantUpdatePlan } from '../../../apps/authorization-service/src/server.js';
+import { startAuthorizationService, consentGrantUpdatePlan, type RunningAuthorizationService } from '../../../apps/authorization-service/src/server.js';
 import { Database, PostgresAccountAuthLinkStore, PostgresGrantRepository,
   PostgresOAuthClientRepository, PostgresSigningKeyRepository } from '../src/index.js';
 
@@ -86,7 +86,11 @@ test('real Authorization HTTP reproduces same-client cross-resource Session Gran
   const target = new URL(databaseUrl);
   target.pathname = `/${name}`;
   const database = new Database({ connectionString: target.href, applicationName: 'wepuu-multisite-test', migrationsDirectory: migrations });
+  let running: RunningAuthorizationService | undefined;
+  let accountAuth: AccountAuth | undefined;
   t.after(async () => {
+    await running?.close();
+    await accountAuth?.close();
     await database.close();
     await admin.query(`DROP DATABASE ${name} WITH (FORCE)`);
     await admin.end();
@@ -122,7 +126,7 @@ test('real Authorization HTTP reproduces same-client cross-resource Session Gran
   let otp = '';
   const auth = createAccountAuth({ databaseUrl: target.href, applicationName: 'wepuu-multisite-auth', publicOrigin: issuer,
     secrets, emailSender: { async send(message) { otp = message.otp; return 'accepted'; } } });
-  t.after(() => auth.close());
+  accountAuth = auth;
   const headers = { origin: issuer, 'content-type': 'application/json', [ACCOUNT_AUTH_DELIVERY_ID_HEADER]: 'delivery_MULTISITE_0001' };
   const send = await auth.handle(new Request(`${issuer}/api/auth/email-otp/send-verification-otp`, {
     method: 'POST', headers, body: JSON.stringify({ email: 'multisite@example.test', type: 'sign-in' })
@@ -150,7 +154,7 @@ test('real Authorization HTTP reproduces same-client cross-resource Session Gran
   const port = await freePort();
   const service = await startAuthorizationService({ issuer, databaseUrl: target.href, host: '127.0.0.1', port,
     cookieKeys: [randomBytes(32).toString('base64url'), randomBytes(32).toString('base64url')] }, environment);
-  t.after(() => service.close());
+  running = service;
   const browser = new Browser(`http://127.0.0.1:${port}`);
   browser.accept(login);
   const business = new GrantService({ repository: new PostgresGrantRepository(database, {
