@@ -2,7 +2,129 @@
 
 Date: 2026-10-13 (Asia/Shanghai).
 
-## Scope and dependency
+## Current decision: operator-authorized temporary 4 GiB E2E mode
+
+The operator elected to use the existing four-vCPU/approximately 4 GiB VPS,
+without resizing, for temporary P3-B2/P3-B3 only. The historical 1408 MiB
+whole-stack threshold, 640 MiB WP-CLI threshold and 8 GiB recommendation below
+are superseded, not retroactively changed into passes. Preparation, code/tests,
+PR #53 integration and read-only checks are authorized; actual Site B deployment,
+ingress changes, pairing, Grants/Tokens, Application Passwords and destructive
+cleanup each remain separately authorized operations.
+
+PR #53 head `74b6f63c65cb6cc08b9dce0dd5025834e651630f` was reviewed against
+its seven planned files, no review-thread blockers, no Site A/Connector/provider/
+migration changes, and successful CI `38364720758`. It was marked Ready and
+normally merged as `76dc11219a3de1b0c1b67f34df02b0c1dd07f4a1`; main CI
+`38369042602` passed. No production OAuth configuration or Desktop connection
+was touched.
+
+Temporary candidate changes retain the verified image digests and hard caps
+(WordPress 512 MiB, MariaDB 384 MiB, WP-CLI 128 MiB). All Site B services now
+have `restart: "no"`; WP-CLI stays on-demand. Keeping caps is deliberate:
+Site A recorded charged high-water marks of about 414/158 MiB. No existing
+container limit, database durability, TLS, OAuth or Connector check was changed.
+
+### Immediate read-only evidence: 08:30:08Z–08:30:34Z
+
+The new bounded collector was streamed into Bash through approved SSH without
+installing it on the VPS or writing a production file. It collected six samples,
+plus before/after core health and OOM counters and exact resource-conflict checks.
+
+- MemAvailable: 904.020, 1265.387, 1220.324, 1223.738, 1223.859,
+  1171.465 MiB. The old 1408 MiB standard was not applied.
+- Swap used declined from 2626.633 to 2578.633 MiB; sampled paging rate
+  peaked at 1.894 MiB/s, not sustained severe paging under the temporary rules.
+- Memory PSI `some avg10` declined from 2.43% to 0.42%; `full avg10` from
+  1.98% to 0.31%. Pressure was present, not falsely described as zero.
+- Host cumulative OOM kills stayed at 174. Core cgroup OOM kills stayed at 0,
+  OOM flags false and restart deltas 0; all five core services healthy before
+  and after. A separate 08:32:49Z all-container check found all sixteen running
+  containers healthy, OOM flags false and restart counts 0. The retained kernel
+  journal query at 08:34:59Z found zero matching events in the previous 30 minutes
+  after excluding its no-entries marker; this is not an exhaustive historical
+  OOM audit or proof that the historical count is harmless forever.
+- Available disk: 15775 MiB; free inodes: 4005054. Port 3201, project,
+  directory, named volumes/network and CIDR overlap checks had no conflicts.
+- Site A charged peaks used for staged estimates: MariaDB 157.996 MiB,
+  WordPress 414.273 MiB. Existing images/services remained unchanged.
+
+The resource evaluator returned `allowed=true` for **preflight/database startup
+only**, with minimum available RAM 904.020 MiB and a next-stage estimate of
+ceil(157.996)+64=222 MiB. Its warnings explicitly report occupied Swap,
+observed pressure and historical OOM counts. It does not authorize startup,
+certify a complete running Site B, or reuse this old snapshot at a later stage.
+
+Final-stage-bound collector recheck at **08:38:27Z–08:38:52Z** also passed:
+MemAvailable 1072.031, 1135.598, 1139.570, 1125.836, 968.969,
+1032.730 MiB; occupied Swap fell from 2471.160 to 2427.410 MiB. One interval
+reached 9.137 MiB/s paging with PSI some/full avg10 1.92%, followed by
+0.334 MiB/s and 1.30%/1.17%. This was explicitly reported as transient paging
+and pressure, not described as no paging; it did not meet the three-consecutive
+sample stop rule. All core health checks and OOM/restart counters were unchanged,
+conflicts remained empty, disk 15775 MiB and free inodes 4005168. The output
+again permits only the next database stage (222 MiB estimate), not later stages.
+
+### Dynamic stage rules and stop behavior
+
+Six valid observations over at least 20 seconds are required (collector targets
+25 seconds), last sample no more than 120 seconds old. Existing core health
+must remain healthy, without a new host/core OOM kill, restart or counter reset.
+Invalid/missing evidence fails closed. In `wordpress`/`wpcli`/`test` stages,
+already-started Site B services are checked as well.
+
+The following are project temporary-test thresholds, not Linux-defined standards:
+three consecutive samples with PSI full avg10 >= 5% or some >= 10%, or paging
+>= 4 MiB/s together with some >= 2% / full >= 1%, stop progression. One burst,
+occupied Swap or low MemAvailable alone is not a failure. Measured next-stage
+headroom is checked instead of reserving the full stack: database peak +64 MiB
+initially; WordPress peak +64 MiB after database health; WP-CLI cap +64 MiB
+after both services are healthy; during tests keep a 64 MiB transient floor
+and continue checking pressure/health. This small margin is not a guarantee
+of safe future demand and is not a permanent production release gate.
+
+An authorized deployment must start MariaDB, observe, then WordPress, observe,
+then initialize/install/activate the clean fixed Connector with one-shot WP-CLI,
+observe, and configure HTTPS last. Each stage needs a fresh collector result
+and a real bounded HTTP smoke, not just a TCP socket. Any new OOM/core health
+failure stops further work; rollback may stop only Site B, never existing apps.
+No Swap increase, cache dropping, existing-service stop or cap reduction is used.
+
+### Temporary lifetime and cleanup boundary
+
+After P3-B2/P3-B3, request explicit cleanup approval. Enumerate and verify B's
+exact project labels/IDs/mounts, disconnect B through normal product flows,
+process its own temporary Grants and remove its one-time Application Password.
+Then remove only B containers, its two volumes/database/files, named network,
+validated `/opt/wpauto-wordpress-e2e-b` directory, owned Nginx/DNS entry and
+dedicated certificate/renewal configuration. Shared certificates and Site A
+resources are excluded. Cleanup of a Site A isolation-test Grant requires its
+own explicit scope, not an implicit side effect of deleting B. Keep platform
+audit and all historical G1/G2/Outbox facts. No prune, SQL repair, broad path
+deletion or cleanup command is executed now; report recoverability when cleanup
+is actually authorized and performed.
+
+The pressure accounting follows the [Linux PSI documentation](https://docs.kernel.org/accounting/psi.html).
+The implementation adds only a read-only collector, pure evaluator and tests,
+not a daemon, worker, Redis, metrics service or migration. Native Site B startup,
+HTTPS, pairing, production isolation and Application Password access are unrun.
+
+Temporary-mode local validation: **40 focused tests passed**, zero failures or
+skips, including eight new dynamic-resource cases and the prior 32 regressions.
+Full `pnpm check`: **163 passed, zero failures, 18 environment-gated skips**
+(181 total); typecheck/lint passed. Node/Bash syntax, diff checks and Compose
+rendering with dummy credentials passed. Linux CI syntax-checks the collector
+without running it; local Windows used the installed Git Bash for syntax only.
+Site B was not started locally or on the VPS, so basic usability after staged
+startup remains a later acceptance condition rather than a claimed test pass.
+The temporary-policy candidate will receive its own hosted CI; PR #53's previous
+success is not substituted for new-head validation.
+
+This preflight pass permits requesting approval for the first controlled stage,
+not declaring overall acceptance or bypassing subsequent observations. The
+remaining sections preserve the original preparation/conservative-budget facts.
+
+## Historical preparation scope and integration
 
 This is preparation only. No Site B deployment, DNS/Nginx/certificate change,
 production pairing, Grant creation, Token issuance, lifecycle request, database
@@ -154,7 +276,7 @@ Major process observations:
 Accounting references: [Linux /proc documentation](https://docs.kernel.org/filesystems/proc.html)
 and [cgroup v2 memory counters](https://docs.kernel.org/admin-guide/cgroup-v2.html).
 
-### Budget conclusion
+### Historical conservative budget conclusion (superseded)
 
 Site B caps remain WordPress 512 MiB + MariaDB 384 MiB = 896 MiB, plus the
 512 MiB reserve = 1408 MiB required before deployment. WP-CLI's separate
@@ -168,8 +290,9 @@ kernel requirement. A 6 GiB size could bridge the sampled deficit but offers les
 headroom for existing PHP/worker bursts and the new instance. Recheck actual
 capacity/pressure after any separately approved resize; do not assume adding RAM
 alone proves readiness. No provider, paid plan, resize or reboot was selected or
-performed. Current `P3B2_DEPLOYMENT_PREFLIGHT_PASS` stays False solely on the
-observed capacity shortfall once GitHub integration/CI completes.
+performed. At that earlier conservative-policy checkpoint,
+`P3B2_DEPLOYMENT_PREFLIGHT_PASS` stayed False on the observed capacity shortfall.
+The operator's later temporary-mode decision above supersedes that policy.
 
 ## Implementation and data-flow boundary
 
@@ -197,7 +320,7 @@ observed capacity shortfall once GitHub integration/CI completes.
   revocation propagation is claimed; retained automated claim/RLS tests and
   P3-A G1/G2 evidence cover their previously demonstrated contracts.
 
-## Validation
+## Historical validation of the original P3-B2A candidate
 
 Focused tests: 32 passed, zero failed/skipped (original lifecycle tests included).
 These cover real local HTTP matrix requests and callback listeners, real Node
@@ -218,16 +341,17 @@ the later approved run; fixture tests inject an opener and validate the actual
 one-use local HTTP handoff instead of opening a browser. The initial candidate
 head `a8b4f3a…` passed hosted CI `38361022016`. After main integration, the
 32 focused regressions/Compose render and full `pnpm check` were rerun with
-the same passing totals. New-head hosted CI is awaited after this record is
-pushed; its exact result is reported on PR #53 without assuming the old-head
-run proves the new head.
+the same passing totals. Its then-new head `74b6f63…` subsequently passed CI
+`38364720758`, followed by the #53 merge/main CI stated above. The temporary-mode
+changes and validation are recorded in the current section, not claimed to have
+existed in those earlier runs.
 Real Site B HTTPS, pairing, two production Grants,
 cross-site Token requests, Application Password regression and revocation
 propagation isolation were not run.
 
-## Next approvals and recovery
+## Next approvals and recovery (current temporary mode)
 
-After dependencies/CI and resource checks pass, request approval only for fresh
+Under the current temporary-mode policy above, request approval only for fresh
 prechecks, owned ingress backups, Site B directories/credentials/containers,
 the clean fixed Connector install in disabled/disconnected state, and its own
 DNS/vhost/certificate operations if public ingress is needed. Validate existing
@@ -240,8 +364,12 @@ restore, manual Grant/state repair or history deletion. Later test Grants are
 not automatically revoked; cleanup is separately approved. Site B can be reused
 for P3-B3, which remains outside this task.
 
+Current status from the final timestamped dynamic precheck above:
+
 ```text
-P3B2_DEPLOYMENT_PREFLIGHT_PASS=False
+P3B2_TEMPORARY_4GB_MODE=True
+P3B2_DEPLOYMENT_PREFLIGHT_PASS=True
+P3B2_SITE_B_DEPLOYED=False
 P3B2_PRODUCTION_ISOLATION_TESTED=False
 P3_CORE_OAUTH_MCP_PASS=True
 P3_FULL_ACCEPTANCE_PASS=False

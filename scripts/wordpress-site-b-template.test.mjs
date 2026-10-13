@@ -21,12 +21,14 @@ test('Site B template freezes distinct project, volumes, subnet, loopback ingres
   assert.ok(!b.includes('127.0.0.1:3200'));
   assert.ok(!/external:|container_name:|privileged:|network_mode:|\/opt\/wpauto\/|\/var\/run\/docker.sock/u.test(b));
   assert.equal((b.match(/ports:/gu) ?? []).length, 1);
+  assert.equal((b.match(/restart: "no"/gu) ?? []).length, 3);
+  assert.ok(!b.includes('restart: unless-stopped'));
 });
 
 test('Docker Compose renders the isolated template using dummy credentials only', (t) => {
   const docker = process.env.WEPUU_TEST_DOCKER_BINARY ?? 'docker';
   const result = spawnSync(docker, ['compose', '--env-file', process.platform === 'win32' ? 'NUL' : '/dev/null',
-    '-f', templatePath, 'config', '--format', 'json'], {
+    '-f', templatePath, '--profile', 'tools', 'config', '--format', 'json'], {
     encoding: 'utf8', timeout: 30_000,
     env: { ...process.env, WPAUTO_E2E_B_DATABASE_PASSWORD: 'fixture-only-password',
       WPAUTO_E2E_B_DATABASE_ROOT_PASSWORD: 'fixture-only-root-password', COMPOSE_PROFILES: '' },
@@ -43,4 +45,7 @@ test('Docker Compose renders the isolated template using dummy credentials only'
   assert.equal(config.networks.backend.ipam.config[0].subnet, '172.30.52.0/24');
   assert.equal(config.volumes['database-data'].name, 'wpauto_wordpress_e2e_b_database');
   assert.equal(config.volumes['wordpress-data'].name, 'wpauto_wordpress_e2e_b_files');
+  assert.equal(config.services.database.restart, 'no');
+  assert.equal(config.services.wordpress.restart, 'no');
+  assert.equal(config.services.wpcli.restart, 'no');
 });

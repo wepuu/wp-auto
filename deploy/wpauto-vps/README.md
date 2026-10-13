@@ -62,7 +62,7 @@ test vhost is independent from `auth.wpauto.cc` and every existing BaoTa site.
 client for this manually managed vhost; it accepts only `test.wpauto.cc` and the
 fixed acceptance webroot and never prints certificate private material.
 
-## Second WordPress acceptance-site candidate (P3-B2A)
+## Temporary second WordPress acceptance site (P3-B2/P3-B3)
 
 `compose.wordpress-e2e-b.yaml` is a candidate, not an approved deployment.
 It fixes project `wpauto-wordpress-e2e-b`, directory
@@ -73,12 +73,55 @@ It uses the same pinned WordPress, MariaDB and WP-CLI images as Site A.
 Never use `-p wpauto-wordpress-e2e`, Site A's runtime file, volumes, database,
 administrator password, WordPress files or persisted Connector settings.
 
-Future deployment requires a fresh read-only collision/resource check and
-separate approval. Default long-running caps total 896 MiB; require at least
-1408 MiB `MemAvailable` before adding them, retaining a 512 MiB reserve.
-WP-CLI is an on-demand tool with a separate 128 MiB cap: require at least
-640 MiB `MemAvailable` before running it, and do not run parallel provisioning jobs. Do not reduce
-the validated caps or stop unrelated applications to make this check pass.
+The operator selected the existing 4 GiB/four-vCPU VPS for a short E2E run and
+later cleanup, not a permanent Site B. The former 1408 MiB whole-stack gate and
+resize recommendation are superseded. Low `MemAvailable` or occupied Swap alone
+does not fail this temporary mode. Keep existing services/caps unchanged; no
+additional Swap, cache dropping, unrelated service termination or safety bypass.
+Site B retains proven caps (WordPress 512 MiB, MariaDB 384 MiB, WP-CLI 128 MiB),
+because Site A recorded peaks about 414/158 MiB. These caps are not allocations
+or a requirement to reserve their sum. All three Site B services use `restart:
+"no"` to avoid automatic reboot/OOM restart load. WP-CLI remains tools-only.
+
+Use the bounded read-only collector `inspect-wordpress-e2e-b-resources.sh` and
+`scripts/check-temporary-site-b-resources.mjs --stage <stage>` on its safe JSON
+output. The collector may be streamed over the approved SSH session; it need
+not be installed, and it never changes the host. It samples six times over at
+least 25 seconds, checks core health at both ends, OOM/restart deltas, disk,
+inodes, and initial port/project/volume/network/CIDR conflicts. Missing, stale
+or incomplete evidence fails closed. Each decision covers only the next stage.
+
+Project temporary-test stop rules (not Linux-prescribed production standards):
+three consecutive samples with memory PSI `full avg10 >= 5%` or `some >= 10%`,
+or paging >= 4 MiB/s together with `some >= 2%` / `full >= 1%`, stop progression.
+Any new host/core OOM kill, restart, unhealthy core service, deployment collision
+or inadequate disk/inodes also stops. Mild/declining pressure is reported as a
+warning, not silently treated as no pressure. Historical OOM totals are not new
+events; do not reset counters. The observation window cannot prove future safety.
+
+Staged startup after separate authorization:
+
+1. `preflight`: allow only MariaDB startup when available RAM during the window
+   exceeds its measured Site A peak plus a 64 MiB transient margin (current
+   estimate 158+64=222 MiB). Start `database` only and wait for health.
+2. Recollect with `wordpress`: check all existing cores and Site B MariaDB;
+   use measured WordPress peak plus 64 MiB (current estimate 415+64=479 MiB),
+   then start WordPress only. Verify TCP health and a bounded HTTP read-only
+   login/install-page smoke with discarded body; a TCP check alone is not full
+   WordPress readiness.
+3. Recollect with `wpcli`: require existing cores and both B services healthy,
+   plus 128+64=192 MiB available. Initialize WordPress/install/activate the
+   fixed clean Connector once; do not run parallel WP-CLI jobs. Leave pairing
+   disconnected. No durability/security settings or auth validation are weakened.
+4. Recollect with `test`: observe both B services and the unchanged cores;
+   establish the separately approved HTTPS ingress last. Repeat this observation
+   before/after the later separately authorized tests. Never approve all stages
+   from the initial snapshot or retry an OOM loop.
+
+These stage estimates use charged historical peaks, which include file cache,
+and remain conservative hints, not guarantees. At a failed stage stop further
+work and safely stop only the newly started Site B services under deployment
+rollback authorization; never reclaim capacity by changing Site A or other apps.
 
 Under that future approval, create Site B's root-owned protected configuration
 directory and `config/runtime.env` (`0600`) containing independently generated
@@ -111,7 +154,26 @@ owned ingress configuration and retain its volumes. Do not use `down -v`,
 remove networks attached to other applications, or restore any whole database.
 Failure after later pairing requires normal disconnect/recovery, not SQL repair.
 Site B may subsequently support P3-B3 Application Password regression; no third
-WordPress instance is required.
+WordPress instance is required. It is temporary, not a retained third production
+application.
+
+### Separately authorized end-of-test cleanup
+
+Before deletion, enumerate exact Site B project labels, container IDs, volume
+mounts and paths and compare Site A/Codex Grant baselines. Disconnect Site B
+normally and process only its temporary Grants; do not use SQL to delete audit
+history or quietly revoke Site A's lifecycle/Codex Grants. Delete the one-time
+Application Password through its normal WordPress action before removing B.
+Only after these checks and explicit cleanup approval remove B containers,
+`wpauto_wordpress_e2e_b_database`, `wpauto_wordpress_e2e_b_files`,
+`wpauto_wordpress_e2e_b_internal` and the validated exact directory
+`/opt/wpauto-wordpress-e2e-b`. Do not use global prune or delete a computed broad
+path. Remove only the operation-owned `test2.wpauto.cc` vhost/DNS record and
+dedicated certificate/configuration, never a shared/wildcard certificate or
+other certificate renewal entry. Keep platform audit and G1/G2/old Outbox
+records. Verify surviving services/Grant/state again and record what was deleted
+and whether a verified backup allows recovery. No cleanup command is executed
+by this preparation or by the resource checker.
 
 Pairing and the production cross-Site test require another explicit approval.
 Immediately before that test, read-only record both site/tenant bindings,
