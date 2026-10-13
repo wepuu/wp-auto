@@ -5,6 +5,17 @@ import { test } from 'node:test';
 
 const templatePath = 'deploy/wpauto-vps/compose.wordpress-e2e-b.yaml';
 
+test('Site B DNS-01 ingress uses dedicated TLS files and loopback target only', async () => {
+  const source = await readFile('deploy/wpauto-vps/nginx.test2.wpauto.cc.conf', 'utf8');
+  assert.equal((source.match(/server_name test2\.wpauto\.cc;/gu) ?? []).length, 2);
+  assert.ok(source.includes('return 301 https://test2.wpauto.cc$request_uri;'));
+  assert.ok(source.includes('proxy_pass http://127.0.0.1:3201;'));
+  assert.ok(source.includes('ssl_certificate /www/server/panel/vhost/letsencrypt/test2.wpauto.cc/fullchain.pem;'));
+  assert.ok(source.includes('ssl_certificate_key /www/server/panel/vhost/letsencrypt/test2.wpauto.cc/privkey.pem;'));
+  assert.ok(source.includes('proxy_set_header X-Forwarded-Proto https;'));
+  assert.ok(!/test\.wpauto\.cc|auth\.wpauto\.cc|app\.wpauto\.cc|3200|3000|3001|ssl_verify_client off/u.test(source));
+});
+
 test('Site B template freezes distinct project, volumes, subnet, loopback ingress and images', async () => {
   const a = await readFile('deploy/wpauto-vps/compose.wordpress-e2e.yaml', 'utf8');
   const b = await readFile(templatePath, 'utf8');
