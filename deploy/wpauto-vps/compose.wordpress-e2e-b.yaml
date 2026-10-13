@@ -1,10 +1,11 @@
 name: wpauto-wordpress-e2e-b
 
-# Candidate only. Never use Site A's runtime.env, database or WordPress files.
+# Temporary E2E candidate only; staged startup, no automatic restart.
+# Never use Site A's runtime.env, database or WordPress files.
 services:
   database:
     image: mariadb:11.8.5@sha256:345fa26d595e8c7fe298e0c4098ed400356f502458769c8902229b3437d6da2b
-    restart: unless-stopped
+    restart: "no"
     mem_limit: 384m
     cpus: 0.50
     environment:
@@ -24,7 +25,7 @@ services:
 
   wordpress:
     image: wordpress:6.9-php8.3-apache@sha256:85c24b4b92dc7fcea65317d2be635643189d0d8ad4bba65d79a660fd018fe246
-    restart: unless-stopped
+    restart: "no"
     mem_limit: 512m
     cpus: 0.75
     ports:
@@ -55,6 +56,7 @@ services:
 
   wpcli:
     profiles: [tools]
+    restart: "no"
     image: wordpress:cli-2.12.0-php8.3@sha256:9e1e5309e3e3b27bef70e62874978d5fecac970e4b1d46ca95f596a711ef3dc1
     user: "33:33"
     mem_limit: 128m
