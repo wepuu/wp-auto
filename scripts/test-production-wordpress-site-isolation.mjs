@@ -15,6 +15,35 @@ export const CLIENT_ID = 'wepuu-e2e-lifecycle';
 export const RESOURCE_A = 'https://test.wpauto.cc/wp-json/wp-auto/mcp';
 export const RESOURCE_B = 'https://test2.wpauto.cc/wp-json/wp-auto/mcp';
 export const MATRIX_TIMEOUT_MS = 45_000;
+export const MATRIX_STEPS = Object.freeze([
+  'A_TO_A_PRE', 'B_TO_B_PRE', 'A_TO_B', 'B_TO_A', 'A_TO_A_POST', 'B_TO_B_POST',
+]);
+
+const FAILURE_CODES = new Set([
+  'isolation_arguments_invalid', 'isolation_explicit_execution_required', 'isolation_ids_invalid',
+  'isolation_browser_launch_failed', 'isolation_token_exchange_failed', 'isolation_token_response_invalid',
+  'isolation_token_binding_invalid', 'isolation_authorization_failed', 'authorization_timeout',
+  'authorization_cancelled', 'isolation_pair_binding_invalid', 'isolation_request_timeout',
+  'isolation_network_failed', 'isolation_denial_contract_invalid', 'isolation_token_lifetime_insufficient',
+  'isolation_token_expired', 'isolation_matrix_timeout', 'mcp_protocol_mismatch',
+  'mcp_tool_contract_mismatch', 'mcp_site_health_failed', 'invalid_mcp_response_type', 'empty_mcp_response',
+]);
+
+function failureCode(error) {
+  return FAILURE_CODES.has(error?.message) ? error.message : 'isolation_probe_failed';
+}
+
+export function secondAuthorizationTimeoutMs(exp, now = Date.now()) {
+  if (!Number.isSafeInteger(exp) || !Number.isSafeInteger(now)) {
+    throw new Error('isolation_token_lifetime_insufficient');
+  }
+  // Reserve 30 seconds for exchange/verification, then 60 seconds for the matrix.
+  const budget = Math.min(300_000, exp * 1_000 - now - 90_000);
+  if (!Number.isSafeInteger(budget) || budget <= 0) {
+    throw new Error('isolation_token_lifetime_insufficient');
+  }
+  return budget;
+}
 
 export function parseIsolationArguments(argv) {
   const names = ['account-id', 'tenant-id', 'site-a-id', 'site-b-id', 'execute'];
@@ -162,10 +191,12 @@ export async function assertCrossSiteDenial(resource, token, options = {}) {
 
 export async function runIsolationMatrix(a, b, options = {}) {
   const now = options.now ?? Date.now;
+  const report = options.report ?? (() => undefined);
   const start = now();
   const deadline = start + MATRIX_TIMEOUT_MS;
   for (const item of [a, b]) {
     if (!Number.isSafeInteger(item.binding.exp) || item.binding.exp * 1_000 - start < 60_000) {
+      for (const step of MATRIX_STEPS) report({ step, status: 'NOT_RUN', code: 'isolation_token_lifetime_insufficient' });
       throw new Error('isolation_token_lifetime_insufficient');
     }
   }
@@ -188,44 +219,73 @@ export async function runIsolationMatrix(a, b, options = {}) {
     }
     assertTime();
   };
-  await step((transport) => probe(a.resource, a.token, transport));
-  await step((transport) => probe(b.resource, b.token, transport));
-  await step((transport) => denial(b.resource, a.token, transport));
-  await step((transport) => denial(a.resource, b.token, transport));
-  await step((transport) => probe(a.resource, a.token, transport));
-  await step((transport) => probe(b.resource, b.token, transport));
+  const operations = [
+    (transport) => probe(a.resource, a.token, transport),
+    (transport) => probe(b.resource, b.token, transport),
+    (transport) => denial(b.resource, a.token, transport),
+    (transport) => denial(a.resource, b.token, transport),
+    (transport) => probe(a.resource, a.token, transport),
+    (transport) => probe(b.resource, b.token, transport),
+  ];
+  for (let index = 0; index < operations.length; index++) {
+    try { await step(operations[index]); }
+    catch (error) {
+      const code = failureCode(error);
+      report({ step: MATRIX_STEPS[index], status: 'FAIL', code });
+      for (const remaining of MATRIX_STEPS.slice(index + 1)) report({ step: remaining, status: 'NOT_RUN', code });
+      throw error;
+    }
+    report({ step: MATRIX_STEPS[index], status: 'PASS' });
+  }
   return { ownSites: true, crossSitesDenied: true, ownSitesStillUsable: true };
+}
+
+export async function runIsolationAcceptance(context, siteAId, siteBId, options = {}) {
+  const acquire = options.acquire ?? acquireAccessOnly;
+  const report = options.report ?? ((line) => console.log(line));
+  const now = options.now ?? Date.now;
+  const reportStep = ({ step, status, code }) => {
+    report(`MATRIX_${step}=${status}`);
+    if (code) report(`MATRIX_${step}_ERROR=${code}`);
+  };
+  const reportGrant = (label, item) => {
+    report(`SITE_${label}_GRANT_DIGEST=${createHash('sha256').update(item.binding.grantId).digest('hex').slice(0, 12)}`);
+  };
+  let matrixStarted = false;
+  try {
+    report('SITE_A_APPROVAL_REQUIRED=True');
+    const a = await acquire({ ...context, resource: RESOURCE_A, siteId: siteAId });
+    reportGrant('A', a);
+    const timeoutMs = secondAuthorizationTimeoutMs(a.binding.exp, now());
+    report('SITE_B_APPROVAL_REQUIRED=True');
+    const b = await acquire({ ...context, resource: RESOURCE_B, siteId: siteBId }, { timeoutMs });
+    reportGrant('B', b);
+    assertIsolationBindings(a, b, context.accountId);
+    matrixStarted = true;
+    await runIsolationMatrix(a, b, { ...options, now, report: reportStep });
+    for (const label of ['OAUTH_PKCE_BINDINGS', 'TOOL_CATALOG_23', 'SITE_HEALTH', 'CROSS_SITE_DENIAL',
+      'OWN_SITE_POSTCHECK', 'SAME_TENANT_CROSS_SITE_RESOURCE_GRANT_ISOLATION']) report(`${label}=True`);
+    report('REVOCATION_PROPAGATION_ISOLATION_TESTED=False');
+    report('TENANT_ISOLATION_INDEPENDENTLY_TESTED=False');
+  } catch (error) {
+    if (!matrixStarted) {
+      for (const step of MATRIX_STEPS) reportStep({ step, status: 'NOT_RUN', code: failureCode(error) });
+    }
+    throw error;
+  }
 }
 
 async function main() {
   const args = parseIsolationArguments(process.argv.slice(2));
   const context = { issuer: ISSUER, clientId: CLIENT_ID, accountId: args['account-id'],
     tenantId: args['tenant-id'], jwks: createRemoteJWKSet(new URL('/jwks', ISSUER)) };
-  console.log('SITE_A_APPROVAL_REQUIRED=True');
-  const a = await acquireAccessOnly({ ...context, resource: RESOURCE_A, siteId: args['site-a-id'] });
-  console.log('SITE_B_APPROVAL_REQUIRED=True');
-  const b = await acquireAccessOnly({ ...context, resource: RESOURCE_B, siteId: args['site-b-id'] });
-  assertIsolationBindings(a, b, context.accountId);
-  await runIsolationMatrix(a, b);
-  for (const label of ['OAUTH_PKCE_BINDINGS', 'TOOL_CATALOG_23', 'SITE_HEALTH', 'CROSS_SITE_DENIAL',
-    'OWN_SITE_POSTCHECK', 'SAME_TENANT_CROSS_SITE_RESOURCE_GRANT_ISOLATION']) console.log(`${label}=True`);
-  for (const [label, item] of [['A', a], ['B', b]]) {
-    console.log(`SITE_${label}_GRANT_DIGEST=${createHash('sha256').update(item.binding.grantId).digest('hex').slice(0, 12)}`);
-  }
-  console.log('REVOCATION_PROPAGATION_ISOLATION_TESTED=False');
-  console.log('TENANT_ISOLATION_INDEPENDENTLY_TESTED=False');
+  await runIsolationAcceptance(context, args['site-a-id'], args['site-b-id']);
 }
 
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try { await main(); }
   catch (error) {
-    const allowed = ['isolation_arguments_invalid', 'isolation_explicit_execution_required', 'isolation_ids_invalid',
-      'isolation_browser_launch_failed', 'isolation_token_exchange_failed', 'isolation_token_response_invalid',
-      'isolation_token_binding_invalid', 'isolation_authorization_failed', 'authorization_timeout',
-      'authorization_cancelled', 'isolation_pair_binding_invalid', 'isolation_request_timeout',
-      'isolation_network_failed', 'isolation_denial_contract_invalid', 'isolation_token_lifetime_insufficient',
-      'isolation_token_expired', 'isolation_matrix_timeout'];
-    console.error(`SITE_ISOLATION_FAILURE=${allowed.includes(error?.message) ? error.message : 'isolation_probe_failed'}`);
+    console.error(`SITE_ISOLATION_FAILURE=${failureCode(error)}`);
     process.exitCode = 1;
   }
 }
