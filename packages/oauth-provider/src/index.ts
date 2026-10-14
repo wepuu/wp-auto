@@ -1,4 +1,4 @@
-import { ExternalSigningKey, Provider, errors, type ClientMetadata } from 'oidc-provider';
+import { ExternalSigningKey, Provider, errors, type ClientMetadata, type Configuration, type Grant } from 'oidc-provider';
 import { z } from 'zod';
 import type { KeyCustody, SigningKeyDescriptor } from '@wepuu/key-custody';
 
@@ -43,6 +43,107 @@ export interface GrantClaimsResolver {
 
 export interface AccountRegistry {
   isActive(accountId: string): Promise<boolean>;
+}
+
+export type GrantDiagnosticStage = 'interaction' | 'binding' | 'grant_load' | 'consent_plan' | 'grant_save' | 'interaction_finish';
+export const GRANT_DIAGNOSTIC_CODES = [
+  'grant.binding_mismatch', 'grant.account_mismatch', 'grant.client_mismatch', 'grant.resource_mismatch',
+  'grant.scope_mismatch', 'grant.provider_missing', 'grant.lookup_failed', 'grant.save_failed',
+  'interaction.finish_failed', 'unknown'
+] as const;
+export type GrantDiagnosticCode = typeof GRANT_DIAGNOSTIC_CODES[number];
+const stages = new Set<GrantDiagnosticStage>(['interaction', 'binding', 'grant_load', 'consent_plan', 'grant_save', 'interaction_finish']);
+const codes = new Set<string>(GRANT_DIAGNOSTIC_CODES);
+
+/** Never serialize cause, message, IDs, or Provider request context. */
+export class GrantDiagnosticError extends Error {
+  constructor(readonly stage: GrantDiagnosticStage, readonly category: GrantDiagnosticCode, cause?: unknown) {
+    super('oauth_grant_failed', { cause });
+    this.name = 'GrantDiagnosticError';
+  }
+}
+
+export function grantFailureDiagnostic(error: unknown, fallbackStage: GrantDiagnosticStage = 'interaction'): Readonly<{
+  occurredAt: string; event: 'oauth.grant_failed'; stage: GrantDiagnosticStage; category: GrantDiagnosticCode;
+}> {
+  const valid = error instanceof GrantDiagnosticError && stages.has(error.stage) && codes.has(error.category);
+  const stage = valid ? error.stage : fallbackStage;
+  const fallback: Partial<Record<GrantDiagnosticStage, GrantDiagnosticCode>> = {
+    binding: 'grant.lookup_failed', grant_load: 'grant.lookup_failed',
+    grant_save: 'grant.save_failed', interaction_finish: 'interaction.finish_failed'
+  };
+  return { occurredAt: new Date().toISOString(), event: 'oauth.grant_failed', stage,
+    category: valid ? error.category : fallback[stage] ?? 'unknown' };
+}
+
+export interface ResourceGrantResolver {
+  resolveExact(input: Readonly<{ subjectId: string; clientId: string; resource: string; scopes: readonly string[] }>):
+    Promise<Readonly<{ grantId: string; subjectId: string; clientId: string; resource: string; scopes: readonly string[] }> | undefined>;
+}
+
+export type ResourceGrantLoader = NonNullable<Configuration['loadExistingGrant']>;
+const mcpScopes = ['mcp:read', 'mcp:content.write', 'mcp:media.write', 'mcp:taxonomy.write', 'mcp:seo.write'] as const;
+function scopeSet(value: readonly string[]): string { return [...new Set(value)].sort().join(' '); }
+
+/** Select by authoritative resource binding, never by the Session's last Client Grant. */
+export function createResourceGrantLoader(resolver: ResourceGrantResolver, accounts: AccountRegistry): ResourceGrantLoader {
+  return async (context) => {
+    const accountId = context.oidc.account?.accountId;
+    const clientId = context.oidc.client?.clientId;
+    if (typeof clientId !== 'string') throw new GrantDiagnosticError('grant_load', 'grant.client_mismatch');
+    const rawResource = context.oidc.params?.['resource'];
+    const resource: unknown = Array.isArray(rawResource) && rawResource.length === 1 ? rawResource[0] : rawResource;
+    if (typeof accountId !== 'string') throw new GrantDiagnosticError('grant_load', 'grant.account_mismatch');
+    if (typeof resource !== 'string') throw new GrantDiagnosticError('grant_load', 'grant.resource_mismatch');
+    try {
+      if (assertExactResource(resource) !== resource) throw new Error('noncanonical');
+    } catch { throw new GrantDiagnosticError('grant_load', 'grant.resource_mismatch'); }
+    const rawScope = context.oidc.params?.['scope'];
+    if (typeof rawScope !== 'string') throw new GrantDiagnosticError('grant_load', 'grant.scope_mismatch');
+    const requested = rawScope.split(' ').filter(Boolean);
+    if (requested.some((scope) => ![...mcpScopes, 'openid', 'offline_access'].includes(scope))) {
+      throw new GrantDiagnosticError('grant_load', 'grant.scope_mismatch');
+    }
+    const scopes = requested.filter((scope) => (mcpScopes as readonly string[]).includes(scope));
+    if (scopes.length === 0) throw new GrantDiagnosticError('grant_load', 'grant.scope_mismatch');
+    let binding: Awaited<ReturnType<ResourceGrantResolver['resolveExact']>>;
+    try {
+      if (!await accounts.isActive(accountId)) throw new GrantDiagnosticError('grant_load', 'grant.account_mismatch');
+      binding = await resolver.resolveExact({ subjectId: accountId, clientId, resource, scopes: [...new Set(scopes)] });
+    } catch (cause) {
+      if (cause instanceof GrantDiagnosticError) throw cause;
+      throw new GrantDiagnosticError('grant_load', 'grant.lookup_failed', cause);
+    }
+    const submittedId = context.oidc.result?.consent?.grantId;
+    if (submittedId !== undefined && (binding === undefined || submittedId !== binding.grantId)) {
+      throw new GrantDiagnosticError('grant_load', 'grant.binding_mismatch');
+    }
+    if (binding === undefined) return undefined;
+    if (binding.subjectId !== accountId) throw new GrantDiagnosticError('grant_load', 'grant.account_mismatch');
+    if (binding.clientId !== clientId) throw new GrantDiagnosticError('grant_load', 'grant.client_mismatch');
+    if (binding.resource !== resource) throw new GrantDiagnosticError('grant_load', 'grant.resource_mismatch');
+    if (scopeSet(binding.scopes) !== scopeSet(scopes)) throw new GrantDiagnosticError('grant_load', 'grant.scope_mismatch');
+    let grant: Grant | undefined;
+    try { grant = await context.oidc.provider.Grant.find(binding.grantId); }
+    catch (cause) { throw new GrantDiagnosticError('grant_load', 'grant.lookup_failed', cause); }
+    if (grant === undefined) {
+      if (submittedId !== undefined) throw new GrantDiagnosticError('grant_load', 'grant.provider_missing');
+      return undefined; // business Consent exists; normal interaction persists the Provider Grant
+    }
+    if (grant.jti !== binding.grantId) throw new GrantDiagnosticError('grant_load', 'grant.binding_mismatch');
+    if (grant.accountId !== accountId) throw new GrantDiagnosticError('grant_load', 'grant.account_mismatch');
+    if (grant.clientId !== clientId) throw new GrantDiagnosticError('grant_load', 'grant.client_mismatch');
+    const grantedResources = Object.keys(grant.resources ?? {});
+    if (grantedResources.length !== 1 || grantedResources[0] !== resource) {
+      throw new GrantDiagnosticError('grant_load', 'grant.resource_mismatch');
+    }
+    if (scopeSet(grant.getResourceScope(resource).split(' ').filter(Boolean)) !== scopeSet(binding.scopes)
+      || grant.getOIDCScope().split(' ').filter(Boolean).some((scope) => !['openid', 'offline_access'].includes(scope))
+      || grant.getOIDCClaims().some((claim) => claim !== 'sub') || grant.rar !== undefined) {
+      throw new GrantDiagnosticError('grant_load', 'grant.scope_mismatch');
+    }
+    return grant;
+  };
 }
 
 export interface OidcAdapterShape {
@@ -124,6 +225,7 @@ export interface AuthorizationProviderOptions {
   readonly resourceRegistry: ResourceRegistry;
   readonly grantClaimsResolver: GrantClaimsResolver;
   readonly accountRegistry: AccountRegistry;
+  readonly resourceGrantResolver?: ResourceGrantResolver;
   readonly clients?: readonly PublicClientDefinition[];
 }
 
@@ -222,6 +324,9 @@ export async function createAuthorizationProvider(options: AuthorizationProvider
     // active custody is first; published/retiring keys are verification-only.
     jwks: { keys: [externalKey, ...verificationKeys] },
     clients,
+    ...(options.resourceGrantResolver === undefined ? {} : {
+      loadExistingGrant: createResourceGrantLoader(options.resourceGrantResolver, options.accountRegistry)
+    }),
     scopes: oidcScopes,
     pkce: { required: () => true },
     rotateRefreshToken: true,

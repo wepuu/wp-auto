@@ -24,7 +24,8 @@ import {
   signingKeyDescriptorFromPublicJwk,
   type KeyCustody
 } from '@wepuu/key-custody';
-import { allowRegisteredNativeLoopbackPort, createAuthorizationProvider } from '@wepuu/oauth-provider';
+import { allowRegisteredNativeLoopbackPort, createAuthorizationProvider, GrantDiagnosticError,
+  grantFailureDiagnostic, type GrantDiagnosticStage } from '@wepuu/oauth-provider';
 import { HttpsRevocationDelivery, RevocationWorker } from './revocation-worker.js';
 import {
   escapeHtml,
@@ -373,11 +374,11 @@ export interface ConsentGrantUpdatePlan {
   readonly resourceScopes: readonly Readonly<{ resource: string; scopes: readonly string[] }>[];
 }
 
-function boundedStringArray(value: unknown, errorCode: string): readonly string[] | undefined {
+function boundedStringArray(value: unknown): readonly string[] | undefined {
   if (value === undefined) return undefined;
   if (!Array.isArray(value) || value.length === 0 || value.length > 32
       || value.some((item) => typeof item !== 'string' || item.length === 0 || item.length > 128)) {
-    throw new Error(errorCode);
+    throw new GrantDiagnosticError('consent_plan', 'grant.scope_mismatch');
   }
   return [...new Set(value as string[])];
 }
@@ -390,31 +391,31 @@ export function consentGrantUpdatePlan(input: Readonly<{
   promptDetails: Readonly<Record<string, unknown>>;
 }>): ConsentGrantUpdatePlan {
   if (input.providerGrantId !== undefined && typeof input.providerGrantId !== 'string') {
-    throw new Error('invalid_provider_grant_id');
+    throw new GrantDiagnosticError('consent_plan', 'grant.binding_mismatch');
   }
   if (typeof input.providerGrantId === 'string' && input.providerGrantId !== input.platformGrantId) {
-    throw new Error('grant_binding_mismatch');
+    throw new GrantDiagnosticError('consent_plan', 'grant.binding_mismatch');
   }
-  if (input.promptDetails['rar'] !== undefined) throw new Error('unsupported_authorization_details');
+  if (input.promptDetails['rar'] !== undefined) throw new GrantDiagnosticError('consent_plan', 'grant.scope_mismatch');
 
-  const oidcScopes = boundedStringArray(input.promptDetails['missingOIDCScope'], 'invalid_missing_oidc_scope') ?? [];
+  const oidcScopes = boundedStringArray(input.promptDetails['missingOIDCScope']) ?? [];
   if (oidcScopes.some((scope) => scope !== 'openid' && scope !== 'offline_access')) {
-    throw new Error('unapproved_oidc_scope');
+    throw new GrantDiagnosticError('consent_plan', 'grant.scope_mismatch');
   }
-  const oidcClaims = boundedStringArray(input.promptDetails['missingOIDCClaims'], 'invalid_missing_oidc_claim') ?? [];
-  if (oidcClaims.some((claim) => claim !== 'sub')) throw new Error('unapproved_oidc_claim');
+  const oidcClaims = boundedStringArray(input.promptDetails['missingOIDCClaims']) ?? [];
+  if (oidcClaims.some((claim) => claim !== 'sub')) throw new GrantDiagnosticError('consent_plan', 'grant.scope_mismatch');
 
   const missingResources = input.promptDetails['missingResourceScopes'];
   const resourceScopes: Array<Readonly<{ resource: string; scopes: readonly string[] }>> = [];
   if (missingResources !== undefined) {
     if (typeof missingResources !== 'object' || missingResources === null || Array.isArray(missingResources)) {
-      throw new Error('invalid_missing_resource_scope');
+      throw new GrantDiagnosticError('consent_plan', 'grant.resource_mismatch');
     }
     const entries = Object.entries(missingResources);
-    if (entries.length !== 1 || entries[0]?.[0] !== input.resource) throw new Error('resource_binding_mismatch');
-    const missing = boundedStringArray(entries[0][1], 'invalid_missing_resource_scope');
+    if (entries.length !== 1 || entries[0]?.[0] !== input.resource) throw new GrantDiagnosticError('consent_plan', 'grant.resource_mismatch');
+    const missing = boundedStringArray(entries[0][1]);
     if (missing === undefined || missing.some((scope) => !input.scopes.includes(scope))) {
-      throw new Error('scope_binding_mismatch');
+      throw new GrantDiagnosticError('consent_plan', 'grant.scope_mismatch');
     }
     resourceScopes.push({ resource: input.resource, scopes: missing });
   }
@@ -481,6 +482,7 @@ export async function startAuthorizationService(
     const rateLimitCodec = rateLimitSubjectCodecFromEnvironment(environment);
     const clients = await new PostgresOAuthClientRepository(database).loadActivePublicClients();
     const providerRequestContext = createGrantRevocationContext();
+    const authorizationGrants = new PostgresAuthorizationGrantRepository(database);
     const provider = await createAuthorizationProvider({
       issuer: config.issuer,
       cookieKeys: config.cookieKeys,
@@ -495,6 +497,7 @@ export async function startAuthorizationService(
       resourceRegistry: new PostgresResourceRegistry(database),
       grantClaimsResolver: new PostgresGrantClaimsResolver(database),
       accountRegistry: new PostgresAccountRegistry(database),
+      resourceGrantResolver: authorizationGrants,
       clients
     });
     provider.use(async (context, next): Promise<void> => {
@@ -504,7 +507,6 @@ export async function startAuthorizationService(
       );
     });
     const accountAuthLinks = new PostgresAccountAuthLinkStore(database);
-    const authorizationGrants = new PostgresAuthorizationGrantRepository(database);
     const rateLimiter = new PostgresOAuthRateLimiter(database, rateLimitCodec);
     const revocationSigner = activeCustody.revocationEventSigner();
     const revocationWorker = new RevocationWorker({
@@ -527,10 +529,10 @@ export async function startAuthorizationService(
     workerTimer.unref();
     runWorker();
     provider.on('authorization.error', (_context, error) => {
-      console.warn(JSON.stringify(authorizationErrorDiagnostic(error)));
+      console.warn(JSON.stringify(grantFailureDiagnostic(error)));
     });
     provider.on('server_error', (_context, error) => {
-      console.error(JSON.stringify(serverErrorDiagnostic(error)));
+      console.error(JSON.stringify(grantFailureDiagnostic(error)));
     });
     // These events deliberately record only the protocol stage. They make a
     // stalled authorization resume observable without logging request
@@ -547,6 +549,7 @@ export async function startAuthorizationService(
     provider.proxy = true;
     const callback = provider.callback();
     const server = createServer((request, response) => {
+      let diagnosticStage: GrantDiagnosticStage = 'interaction';
       void (async () => {
       const path = new URL(request.url ?? '/', config.issuer).pathname;
       if (request.method === 'GET' && path === '/assets/wepuu-v1.css') {
@@ -627,6 +630,7 @@ export async function startAuthorizationService(
           authenticationTime: Math.floor(accountSession.createdAt.getTime() / 1_000)
         };
         if (details.prompt.name === 'login') {
+          diagnosticStage = 'interaction_finish';
           await provider.interactionFinished(request, response, {
             login: { accountId: session.accountId, ts: session.authenticationTime }
           }, { mergeWithLastSubmission: false });
@@ -678,6 +682,7 @@ export async function startAuthorizationService(
               writeInteractionError(response, 400, 'oauth_consent_bootstrap_invalid');
             }
             if (bootstrapValid) {
+              diagnosticStage = 'interaction_finish';
               await provider.interactionFinished(request, response, {
                 error: 'access_denied', error_description: 'The resource owner denied the request.'
               }, { mergeWithLastSubmission: false });
@@ -685,6 +690,7 @@ export async function startAuthorizationService(
             return;
           }
         }
+        diagnosticStage = 'binding';
         const binding = await authorizationGrants.resolveExact({
           subjectId: session.accountId, clientId, resource, scopes
         });
@@ -745,11 +751,13 @@ export async function startAuthorizationService(
           return;
         }
         if (form.get('decision') !== 'approve') {
+          diagnosticStage = 'interaction_finish';
           await provider.interactionFinished(request, response, {
             error: 'access_denied', error_description: 'The resource owner denied the request.'
           }, { mergeWithLastSubmission: false });
           return;
         }
+        diagnosticStage = 'consent_plan';
         const update = consentGrantUpdatePlan({
           providerGrantId: details.grantId,
           platformGrantId: binding.grantId,
@@ -757,18 +765,21 @@ export async function startAuthorizationService(
           scopes,
           promptDetails: details.prompt.details
         });
+        diagnosticStage = 'grant_load';
         const grant = update.existingGrantId === undefined
           ? new provider.Grant({ accountId: session.accountId, clientId })
           : await provider.Grant.find(update.existingGrantId);
-        if (grant === undefined) throw new Error('provider_grant_not_found');
+        if (grant === undefined) throw new GrantDiagnosticError('grant_load', 'grant.provider_missing');
         if (update.existingGrantId === undefined) Object.assign(grant, { jti: binding.grantId });
         if (update.oidcScopes.length > 0) grant.addOIDCScope(update.oidcScopes.join(' '));
         if (update.oidcClaims.length > 0) grant.addOIDCClaims([...update.oidcClaims]);
         for (const missing of update.resourceScopes) {
           grant.addResourceScope(missing.resource, missing.scopes.join(' '));
         }
+        diagnosticStage = 'grant_save';
         const savedGrantId = await grant.save();
-        if (savedGrantId !== binding.grantId) throw new Error('grant_binding_mismatch');
+        if (savedGrantId !== binding.grantId) throw new GrantDiagnosticError('grant_save', 'grant.binding_mismatch');
+        diagnosticStage = 'interaction_finish';
         await provider.interactionFinished(
           request,
           response,
@@ -789,12 +800,12 @@ export async function startAuthorizationService(
       try {
         await callback(request, response);
       } catch (error) {
-        console.error(JSON.stringify({ event: 'oauth.provider_callback_failed', ...safeOAuthFailure(error) }));
+        console.error(JSON.stringify(grantFailureDiagnostic(error, diagnosticStage)));
         if (!response.headersSent) response.writeHead(500, { 'content-type': 'application/json', 'cache-control': 'no-store' });
         if (!response.writableEnded) response.end('{"error":"temporarily_unavailable"}');
       }
       })().catch((error: unknown) => {
-        console.error(JSON.stringify({ event: 'oauth.request_failed', ...safeOAuthFailure(error) }));
+        console.error(JSON.stringify(grantFailureDiagnostic(error, diagnosticStage)));
         if (!response.headersSent) {
           response.writeHead(503, { 'content-type': 'application/json', 'cache-control': 'no-store' });
         }
