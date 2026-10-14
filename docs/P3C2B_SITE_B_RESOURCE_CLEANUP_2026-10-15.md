@@ -44,8 +44,8 @@ readiness remain unproven/false.
 - The #64 document remains a historical snapshot. The later #65 record
   documents subsequent Site A recovery and Site B Disconnect; neither
   rewrites the other.
-- No production deployment, migration 014, P4-A, OAuth test, or Grant cleanup
-  was performed as part of this cleanup.
+- No production deployment, migration 014, P4-A, OAuth test, or additional Grant
+  operation was performed as part of this resource cleanup.
 
 ## Pre-cleanup backup
 
@@ -82,7 +82,7 @@ Only resources whose Compose project identity matched
   `e93732b833b7a7c2dedac7c94e4824f957bdabb46871748f353a5a5f51d96c95`,
   name `wpauto_wordpress_e2e_b_internal`, subnet `172.30.52.0/24`.
 - Project directory `/opt/wpauto-wordpress-e2e-b`.
-- Host port `127.0.0.1:3201) is released.
+- Host port `127.0.0.1:3201` is released.
 
 The removal used exact IDs/names after confirming project labels, backup hashes,
 network attachments, and the resolved project path. No global prune or
@@ -134,7 +134,7 @@ DNS record or certificate based solely on hostname resolution.
   replacement Grant created through the separately approved Site A recovery;
   it must not be conflated with the older revoked Grant.
 - Site A Connector remained active at sequence 0 with zero deny markers and
-  `deny_all=false). Site B local deny state was already `deny_all=true`
+  `deny_all=false`. Site B local deny state was already `deny_all=true`
   after its delivered disconnect event; its local state files were subsequently
   removed with the authorized Site B project deletion.
 - The five surviving containers (Control, Authorization, PostgreSQL, Site A
