@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
 import { EXPECTED_TOOLS } from './test-production-wordpress-oauth.mjs';
-import { RESOURCE, runApplicationPasswordAcceptance } from './test-production-application-password.mjs';
+import { RESOURCE, remoteCore, readApplicationPasswordExecutionConfig,
+  runApplicationPasswordAcceptance } from './test-production-application-password.mjs';
 
 function fixture(change = {}) {
   const calls = [], lines = [], operations = [];
@@ -97,4 +99,62 @@ test('Core helper uses native exact-password deletion and dependency-gated test-
   assert.ok(bootstrap >= 0);
   assert.ok(source.indexOf('$action = $p3b3_action;') > bootstrap);
   assert.ok(source.indexOf('$run = $p3b3_run;') > bootstrap);
+});
+
+const explicitEnvironment = { WEPUU_P3B3_SSH_HOST: 'isolated.example.test',
+  WEPUU_P3B3_SSH_USER: 'e2e_operator', WEPUU_P3B3_WORDPRESS_CONTAINER: 'isolated-wordpress-1' };
+
+test('execution configuration has no host, user or container defaults', () => {
+  for (const missing of Object.keys(explicitEnvironment)) {
+    const environment = { ...explicitEnvironment }; delete environment[missing];
+    assert.throws(() => readApplicationPasswordExecutionConfig(environment), /application_core_configuration_required/u);
+  }
+  assert.deepEqual(readApplicationPasswordExecutionConfig(explicitEnvironment), {
+    host: 'isolated.example.test', user: 'e2e_operator', container: 'isolated-wordpress-1' });
+});
+
+test('SSH and remote-shell configuration injection is rejected with fixed errors', () => {
+  for (const [name, value] of [['WEPUU_P3B3_SSH_HOST', '-proxycmd=secret'],
+    ['WEPUU_P3B3_SSH_HOST', 'host;secret'], ['WEPUU_P3B3_SSH_USER', 'root@secret'],
+    ['WEPUU_P3B3_WORDPRESS_CONTAINER', 'name;secret'], ['WEPUU_P3B3_WORDPRESS_CONTAINER', '$(secret)']]) {
+    assert.throws(() => readApplicationPasswordExecutionConfig({ ...explicitEnvironment, [name]: value }),
+      error => error.message === 'application_core_configuration_invalid');
+  }
+});
+
+test('remote helper refuses missing configuration before invoking any process', async () => {
+  let called = false;
+  await assert.rejects(remoteCore('preflight', '11111111-1111-4111-8111-111111111111', {
+    environment: {}, execFile: () => { called = true; } }), /application_core_configuration_required/u);
+  assert.equal(called, false);
+});
+
+test('configured remote helper uses separated SSH arguments and only validated container command', async () => {
+  let sent = '';
+  const r = await remoteCore('preflight', '11111111-1111-4111-8111-111111111111', {
+    environment: explicitEnvironment, execFile: (command, args, settings, callback) => {
+      assert.equal(command, 'plink');
+      assert.deepEqual(args.slice(0, 4), ['-batch', '-l', 'e2e_operator', 'isolated.example.test']);
+      assert.equal(args[4], 'docker exec -i isolated-wordpress-1 php /dev/stdin preflight 11111111-1111-4111-8111-111111111111');
+      assert.equal(settings.windowsHide, true);
+      return { stdin: { on() {}, end(source) { sent = source;
+        queueMicrotask(() => callback(null, '{"supported":true,"subscribers":0}')); } } };
+    } });
+  assert.equal(r.supported, true); assert.ok(sent.startsWith('<?php'));
+});
+
+test('CLI explicit execute without configuration remains inert and emits no secret', () => {
+  const environment = { ...process.env };
+  for (const name of Object.keys(explicitEnvironment)) delete environment[name];
+  let result;
+  try { execFileSync(process.execPath, ['scripts/test-production-application-password.mjs', '--execute', 'true'],
+    { env: environment, encoding: 'utf8', stdio: 'pipe' }); assert.fail('must reject absent configuration'); }
+  catch (error) { result = `${error.stdout ?? ''}${error.stderr ?? ''}`; assert.equal(error.status, 1); }
+  assert.ok(result.includes('application_core_configuration_required'));
+  assert.ok(!result.includes('APPLICATION_PASSWORD_CREATED=True'));
+});
+
+test('test runner contains no built-in VPS address or root SSH target', async () => {
+  const source = await readFile(new URL('./test-production-application-password.mjs', import.meta.url), 'utf8');
+  assert.ok(!source.includes('root@')); assert.ok(!source.includes('5.255.99.225'));
 });
