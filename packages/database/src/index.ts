@@ -2396,6 +2396,7 @@ export class PostgresAuthorizationGrantRepository {
          LIMIT 2`,
         [input.subjectId, input.clientId, input.resource, requested]
       );
+      if (result.rowCount !== null && result.rowCount > 1) throw new Error('authorization_grant_ambiguous');
       const row = result.rows[0];
       if (result.rowCount !== 1 || row === undefined) return undefined;
       return {

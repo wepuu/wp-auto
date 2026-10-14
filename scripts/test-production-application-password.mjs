@@ -8,13 +8,30 @@ export const RESOURCE = 'https://test2.wpauto.cc/wp-json/wp-auto/mcp';
 const INIT = { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18',
   capabilities: {}, clientInfo: { name: 'wepuu-application-password-probe', version: '0.1.0' } } };
 
-export async function remoteCore(action, run) {
+export function readApplicationPasswordExecutionConfig(environment = process.env) {
+  const host = environment.WEPUU_P3B3_SSH_HOST;
+  const user = environment.WEPUU_P3B3_SSH_USER;
+  const container = environment.WEPUU_P3B3_WORDPRESS_CONTAINER;
+  if ([host, user, container].some(value => typeof value !== 'string' || value.length === 0)) {
+    throw new Error('application_core_configuration_required');
+  }
+  if (!/^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$/u.test(host)
+      || !/^[a-z_][a-z0-9_-]{0,31}$/u.test(user)
+      || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/u.test(container)) {
+    throw new Error('application_core_configuration_invalid');
+  }
+  return Object.freeze({ host, user, container });
+}
+
+export async function remoteCore(action, run, options = {}) {
   if (!['preflight', 'create', 'ambient', 'cleanup'].includes(action)
       || !/^[a-f0-9-]{36}$/u.test(run)) throw new Error('application_core_arguments_invalid');
+  // No default SSH host, user or container; configuration is validated before I/O.
+  const config = readApplicationPasswordExecutionConfig(options.environment ?? process.env);
   const source = await readFile(new URL('./p3b3-application-password-core.php', import.meta.url), 'utf8');
   return new Promise((resolve, reject) => {
-    const child = execFile('plink', ['-batch', 'root@5.255.99.225',
-      `docker exec -i wpauto-wordpress-e2e-b-wordpress-1 php /dev/stdin ${action} ${run}`],
+    const child = (options.execFile ?? execFile)('plink', ['-batch', '-l', config.user, config.host,
+      `docker exec -i ${config.container} php /dev/stdin ${action} ${run}`],
     { timeout: 30_000, maxBuffer: 65536, windowsHide: true }, (error, stdout) => {
       // Never propagate stderr/stdout/execFile error: create output contains a secret.
       if (error) { reject(new Error('application_core_operation_failed')); return; }
@@ -118,6 +135,7 @@ export async function runApplicationPasswordAcceptance(options) {
       'application_permission_denial_invalid', 'application_denial_contract_invalid',
       'application_ambient_identity_invalid', 'application_basic_identity_invalid', 'application_basic_postcheck_failed',
       'application_core_operation_failed', 'application_core_response_invalid', 'application_core_input_failed',
+      'application_core_configuration_required', 'application_core_configuration_invalid',
       'application_response_oversize', 'application_response_invalid',
       'mcp_tool_contract_mismatch', 'mcp_site_health_failed', 'mcp_protocol_mismatch']);
     report(`APPLICATION_PASSWORD_FAILURE=${allowed.has(error?.message) ? error.message : 'application_probe_failed'}`);
