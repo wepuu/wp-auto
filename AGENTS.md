@@ -71,10 +71,27 @@ The operator then completed the single real GUI login on Desktop package
 one direct WordPress site-health call passed. Origin access metadata and unchanged
 Grant, Connector and Outbox postchecks support P3-B1B acceptance. Only the owned
 temporary global config entry was removed, without clearing credentials or
-revoking the Grant. P3-B2/P3-B3 and full/controlled-use readiness remain pending.
+revoking the Grant. At that point P3-B2/P3-B3 and full/controlled-use readiness
+remained pending.
 See `docs/P3B1B_CODEX_DESKTOP_PRODUCTION_ACCEPTANCE_2026-10-13.md`.
 The independent production registration history is retained in
 `docs/P3B1B_PRODUCTION_CALLBACK_REGISTRATION_2026-10-13.md`.
+On 2026-10-14, the bounded resource-bound Authorization hotfix was deployed from
+the original validated artifact, with migrations remaining 001-013. The formal
+two-Site revalidation passed all six checks using the two existing lifecycle
+Grants; this proves same-Tenant Site/resource/Grant combination isolation, not
+independent Tenant or revocation propagation isolation. A separately authorized
+Site B Application Password run then passed the frozen catalog, native permission,
+invalid-credential and invalid-Bearer cookie-nonfallback checks. Its only temporary
+credential and Subscriber were removed. The earlier isolation and PHP-helper
+preflight failures remain historical evidence. See
+`docs/P3B2D_AUTHORIZATION_HOTFIX_PRODUCTION_DEPLOYMENT_2026-10-14.md`,
+`docs/P3B2D_SECOND_SITE_ISOLATION_ACCEPTANCE_2026-10-14.md`, and
+`docs/P3B3_APPLICATION_PASSWORD_PRODUCTION_ACCEPTANCE_2026-10-14.md`.
+P3B2_SITE_ISOLATION_PASS and P3B3_APPLICATION_PASSWORD_PASS are True;
+P3_FULL_ACCEPTANCE_PASS and READY_FOR_CONTROLLED_USE remain False, and
+NOT_READY_FOR_PUBLIC_REGISTRATION remains True. Main integration does not
+authorize deployment of main, migration 014, Site B removal or Grant cleanup.
 The positive evidence and corrected lifecycle provisioning preflight are
 recorded in
 `docs/P3A_PRODUCTION_POSITIVE_ACCEPTANCE_2026-10-11.md` and

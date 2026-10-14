@@ -73,8 +73,20 @@ user-config entry enabled the fixed OAuth profile; see
 The real GUI retry then passed on Desktop package `26.1007.2314.0`: the exact
 23-tool name set, one direct site-health call and unchanged Grant/Connector/Outbox
 postchecks passed. The temporary global entry was removed without clearing
-credentials or revoking the Grant. P3-B2/P3-B3 and full readiness remain pending.
-See `docs/P3B1B_CODEX_DESKTOP_PRODUCTION_ACCEPTANCE_2026-10-13.md`. P4-A
+credentials or revoking the Grant. At that point P3-B2/P3-B3 remained pending.
+See `docs/P3B1B_CODEX_DESKTOP_PRODUCTION_ACCEPTANCE_2026-10-13.md`.
+The 2026-10-14 resource-bound Authorization hotfix, six-step same-Tenant
+Site/resource/Grant isolation revalidation and independent Site B Application
+Password acceptance subsequently passed. Their failure history and exact
+temporary-credential cleanup are preserved separately:
+`docs/P3B2D_AUTHORIZATION_HOTFIX_PRODUCTION_DEPLOYMENT_2026-10-14.md`,
+`docs/P3B2D_SECOND_SITE_ISOLATION_ACCEPTANCE_2026-10-14.md`, and
+`docs/P3B3_APPLICATION_PASSWORD_PRODUCTION_ACCEPTANCE_2026-10-14.md`.
+`P3B2_SITE_ISOLATION_PASS=True` and `P3B3_APPLICATION_PASSWORD_PASS=True`;
+`P3_FULL_ACCEPTANCE_PASS=False`, `READY_FOR_CONTROLLED_USE=False`, and
+`NOT_READY_FOR_PUBLIC_REGISTRATION=True` remain unchanged. This is not independent
+Tenant/revocation isolation proof or permission to deploy main/014 or clean up.
+P4-A
 is a local candidate that separates the SaaS console onto
 `app.wpauto.cc` while retaining Better Auth and the OAuth issuer on
 `auth.wpauto.cc`; no P4-A production change is authorized. See ADR-018 through

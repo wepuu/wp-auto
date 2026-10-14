@@ -217,7 +217,8 @@ The operator then completed the GUI retry on Desktop package `26.1007.2314.0`.
 The actual connected runtime exposed the frozen 23-tool name set and one direct
 WordPress site-health call passed, followed by unchanged Grant/Connector/Outbox
 postchecks. Only the owned temporary global config entry was removed; credentials
-and the active Grant were retained. P3-B1B is passed; P3-B2/P3-B3 remain pending.
+and the active Grant were retained. P3-B1B passed; at that point P3-B2/P3-B3
+remained pending.
 See `P3B1B_CODEX_DESKTOP_PRODUCTION_ACCEPTANCE_2026-10-13.md`.
 The production registration history is retained in
 `P3B1B_PRODUCTION_CALLBACK_REGISTRATION_2026-10-13.md`.
@@ -290,8 +291,20 @@ See `P3A7_G2_TOKEN_REVOCATION_PRODUCTION_ACCEPTANCE_2026-10-12.md`.
 
 Positive OAuth/PKCE/MCP, normal Refresh rotation, G1 Replay and G2 explicit
 revocation have now all passed on the repaired active Site. Therefore
-`P3_CORE_OAUTH_MCP_PASS=True`. P3-B1B real Desktop OAuth/MCP is now passed,
-but P3-B2/P3-B3 still require separately scoped acceptance, so
+`P3_CORE_OAUTH_MCP_PASS=True`. P3-B1B real Desktop OAuth/MCP passed. The
+separately authorized 2026-10-14 six-step two-Site OAuth matrix and Site B
+Application Password compatibility run subsequently passed:
+`P3B2_SITE_ISOLATION_PASS=True`, `P3B3_APPLICATION_PASSWORD_PASS=True`.
+This is same-Tenant Site/resource/Grant combination isolation, not independent
+Tenant or cross-Site revocation propagation proof. The original business Grants,
+Connector/Outbox baseline and migrations 001-013 remained intact; the sole
+temporary Application Password and Subscriber were removed. Historical failures
+remain in their original records. See
+`P3B2D_AUTHORIZATION_HOTFIX_PRODUCTION_DEPLOYMENT_2026-10-14.md`,
+`P3B2D_SECOND_SITE_ISOLATION_ACCEPTANCE_2026-10-14.md`,
+`P3B3_APPLICATION_PASSWORD_ACCEPTANCE_2026-10-14.md`, and
+`P3B3_APPLICATION_PASSWORD_PRODUCTION_ACCEPTANCE_2026-10-14.md`.
+Aggregate readiness is not promoted by this code/evidence integration:
 `P3_FULL_ACCEPTANCE_PASS=False`, `READY_FOR_CONTROLLED_USE=False`, and
 `NOT_READY_FOR_PUBLIC_REGISTRATION=True` remain in force.
 
