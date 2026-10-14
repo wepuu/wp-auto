@@ -5,9 +5,9 @@ import { createServer } from 'node:http';
 import { test } from 'node:test';
 import { pathToFileURL } from 'node:url';
 import { EXPECTED_TOOLS, probeMcp, verifyAccessToken } from './test-production-wordpress-oauth.mjs';
-import { acquireAccessOnly, assertCrossSiteDenial, assertIsolationBindings, CLIENT_ID,
+import { acquireAccessOnly, assertCrossSiteDenial, assertIsolationBindings, CLIENT_ID, MATRIX_STEPS,
   createBrowserHandoff, ISSUER, parseIsolationArguments, RESOURCE_A, RESOURCE_B,
-  runIsolationMatrix } from './test-production-wordpress-site-isolation.mjs';
+  runIsolationAcceptance, runIsolationMatrix, secondAuthorizationTimeoutMs } from './test-production-wordpress-site-isolation.mjs';
 
 const requireFromKeyCustody = createRequire(new URL('../packages/key-custody/package.json', import.meta.url));
 const { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } = await import(
@@ -215,6 +215,123 @@ test('matrix never passes insufficient lifetime, natural expiry, deadline or req
   await assert.rejects(runIsolationMatrix(a, b, { now: () => now,
     probe: async () => { throw new DOMException('SECRET', 'TimeoutError'); },
   }), { message: 'isolation_request_timeout' });
+});
+
+test('second authorization reserves ninety seconds, caps waiting and rejects an exhausted budget', () => {
+  assert.equal(secondAuthorizationTimeoutMs(1_300, 1_000_000), 210_000);
+  assert.equal(secondAuthorizationTimeoutMs(2_000, 1_000_000), 300_000);
+  assert.equal(secondAuthorizationTimeoutMs(1_091, 1_000_000), 1_000);
+  for (const [exp, clock] of [[1_090, 1_000_000], [1_089, 1_000_000], [NaN, 0],
+    [1_300.5, 1_000_000], [1_300, NaN], [1_300, 1_000_000.5]]) {
+    assert.throws(() => secondAuthorizationTimeoutMs(exp, clock), { message: 'isolation_token_lifetime_insufficient' });
+  }
+});
+
+test('matrix reporter emits six ordered PASS results and preserves the aggregate return contract', async () => {
+  const [a, b] = pair();
+  const reports = [];
+  const result = await runIsolationMatrix(a, b, { now: () => now, report: (event) => reports.push(event),
+    probe: async () => undefined, denial: async () => undefined });
+  assert.deepEqual(reports, MATRIX_STEPS.map((step) => ({ step, status: 'PASS' })));
+  assert.deepEqual(result, { ownSites: true, crossSitesDenied: true, ownSitesStillUsable: true });
+  assert.ok(!JSON.stringify(reports).includes('SECRET'));
+});
+
+test('failure at any matrix step preserves PASS evidence, reports FAIL and skips all later operations', async () => {
+  const [a, b] = pair();
+  for (let failedIndex = 0; failedIndex < MATRIX_STEPS.length; failedIndex++) {
+    let calls = 0;
+    const reports = [];
+    const operation = async () => {
+      if (calls++ === failedIndex) throw new Error('isolation_denial_contract_invalid');
+    };
+    await assert.rejects(runIsolationMatrix(a, b, { now: () => now,
+      probe: operation, denial: operation, report: (event) => reports.push(event) }),
+    { message: 'isolation_denial_contract_invalid' });
+    assert.equal(calls, failedIndex + 1);
+    assert.deepEqual(reports, MATRIX_STEPS.map((step, index) => index < failedIndex
+      ? { step, status: 'PASS' }
+      : { step, status: index === failedIndex ? 'FAIL' : 'NOT_RUN', code: 'isolation_denial_contract_invalid' }));
+  }
+});
+
+test('matrix reports insufficient lifetime as NOT_RUN and masks unexpected exception content', async () => {
+  const [a, b] = pair();
+  const reports = [];
+  await assert.rejects(runIsolationMatrix(a, b, { now: () => a.binding.exp * 1_000 - 59_000,
+    report: (event) => reports.push(event), probe: async () => assert.fail('must not run') }),
+  { message: 'isolation_token_lifetime_insufficient' });
+  assert.deepEqual(reports, MATRIX_STEPS.map((step) => ({ step, status: 'NOT_RUN', code: 'isolation_token_lifetime_insufficient' })));
+  reports.length = 0;
+  await assert.rejects(runIsolationMatrix(a, b, { now: () => now,
+    report: (event) => reports.push(event), probe: async () => { throw new Error('SECRET_EXCEPTION'); } }),
+  { message: 'SECRET_EXCEPTION' });
+  assert.equal(reports[0].status, 'FAIL');
+  assert.equal(reports[0].code, 'isolation_probe_failed');
+  assert.ok(!JSON.stringify(reports).includes('SECRET'));
+});
+
+test('matrix reporting never calls a late success PASS after expiry or the global deadline', async () => {
+  const [a, b] = pair();
+  for (const [advance, code] of [[45_000, 'isolation_matrix_timeout'], [121_000, 'isolation_token_expired']]) {
+    let clock = now;
+    const reports = [];
+    await assert.rejects(runIsolationMatrix(a, b, { now: () => clock, report: (event) => reports.push(event),
+      probe: async () => { clock += advance; } }), { message: code });
+    assert.deepEqual(reports, MATRIX_STEPS.map((step, index) => ({ step, status: index === 0 ? 'FAIL' : 'NOT_RUN', code })));
+  }
+});
+
+test('acceptance retains the first Grant digest before second authorization failure and passes its budget', async () => {
+  const [a] = pair();
+  const lines = [];
+  let calls = 0;
+  await assert.rejects(runIsolationAcceptance({ issuer: ISSUER, clientId: CLIENT_ID, accountId, tenantId },
+    'site_fixture_a', 'site_fixture_b', { now: () => now, report: (line) => lines.push(line),
+      acquire: async (context, options) => {
+        calls++;
+        if (calls === 1) { assert.equal(context.resource, RESOURCE_A); return a; }
+        assert.equal(context.resource, RESOURCE_B);
+        assert.deepEqual(options, { timeoutMs: secondAuthorizationTimeoutMs(a.binding.exp, now) });
+        assert.ok(lines.some((line) => /^SITE_A_GRANT_DIGEST=[0-9a-f]{12}$/u.test(line)));
+        throw new Error('authorization_timeout');
+      }, probe: async () => assert.fail('matrix must not run') }), { message: 'authorization_timeout' });
+  assert.equal(calls, 2);
+  assert.ok(!lines.some((line) => line.startsWith('SITE_B_GRANT_DIGEST=')));
+  for (const step of MATRIX_STEPS) assert.ok(lines.includes(`MATRIX_${step}=NOT_RUN`));
+  assert.ok(!lines.join('\n').includes('SECRET'));
+});
+
+test('acceptance refuses a second browser authorization when the first Token has no waiting budget', async () => {
+  const [a] = pair();
+  const lines = [];
+  let calls = 0;
+  await assert.rejects(runIsolationAcceptance({ issuer: ISSUER, clientId: CLIENT_ID, accountId, tenantId },
+    'site_fixture_a', 'site_fixture_b', { now: () => a.binding.exp * 1_000 - 90_000,
+      report: (line) => lines.push(line), acquire: async () => { calls++; return a; } }),
+  { message: 'isolation_token_lifetime_insufficient' });
+  assert.equal(calls, 1);
+  assert.ok(lines.some((line) => line.startsWith('SITE_A_GRANT_DIGEST=')));
+  assert.ok(!lines.includes('SITE_B_APPROVAL_REQUIRED=True'));
+  for (const step of MATRIX_STEPS) assert.ok(lines.includes(`MATRIX_${step}=NOT_RUN`));
+});
+
+test('acceptance reports both Grant digests before the matrix without exposing tokens or Grant IDs', async () => {
+  const [a, b] = pair();
+  const lines = [];
+  let calls = 0;
+  await runIsolationAcceptance({ issuer: ISSUER, clientId: CLIENT_ID, accountId, tenantId },
+    a.siteId, b.siteId, { now: () => now, report: (line) => lines.push(line),
+      acquire: async () => [a, b][calls++], probe: async () => undefined, denial: async () => undefined });
+  assert.equal(calls, 2);
+  assert.ok(lines.findIndex((line) => line.startsWith('SITE_A_GRANT_DIGEST=')) < lines.indexOf('SITE_B_APPROVAL_REQUIRED=True'));
+  assert.ok(lines.findIndex((line) => line.startsWith('SITE_B_GRANT_DIGEST=')) < lines.indexOf('MATRIX_A_TO_A_PRE=PASS'));
+  for (const step of MATRIX_STEPS) assert.ok(lines.includes(`MATRIX_${step}=PASS`));
+  assert.ok(lines.includes('SAME_TENANT_CROSS_SITE_RESOURCE_GRANT_ISOLATION=True'));
+  assert.ok(lines.includes('REVOCATION_PROPAGATION_ISOLATION_TESTED=False'));
+  assert.ok(!lines.join('\n').includes('SECRET'));
+  assert.ok(!lines.join('\n').includes(a.binding.grantId));
+  assert.ok(!lines.join('\n').includes(b.binding.grantId));
 });
 
 test('real Node Responses preserve exact tool order and use independent MCP sessions', async () => {
