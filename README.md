@@ -85,7 +85,13 @@ temporary-credential cleanup are preserved separately:
 `P3B2_SITE_ISOLATION_PASS=True` and `P3B3_APPLICATION_PASSWORD_PASS=True`;
 `P3_FULL_ACCEPTANCE_PASS=False`, `READY_FOR_CONTROLLED_USE=False`, and
 `NOT_READY_FOR_PUBLIC_REGISTRATION=True` remain unchanged. This is not independent
-Tenant/revocation isolation proof or permission to deploy main/014 or clean up.
+Tenant/revocation isolation proof. A separately authorized P3-C2B operation
+removed Site B's containers, volumes, network, and project files after backup;
+the DNS record, dedicated Nginx vhost, and certificate remain because exact
+Cloudflare DNS ownership was not established. The origin fails closed at the
+retained Site B vhost rather than falling through to a default site. No Grant
+history was deleted. Main deployment, migration 014, and P4-A remain out of
+scope. See `docs/P3C2B_SITE_B_RESOURCE_CLEANUP_2026-10-15.md`.
 P4-A
 is a local candidate that separates the SaaS console onto
 `app.wpauto.cc` while retaining Better Auth and the OAuth issuer on
