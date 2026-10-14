@@ -1,37 +1,59 @@
-name: Publish production images
+name: Publish verified Authorization archive only
 
 on:
   workflow_dispatch:
 
 permissions:
   contents: read
+  actions: read
   packages: write
 
 jobs:
   publish:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Authenticate to GHCR
-        shell: bash
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io --username "${{ github.actor }}" --password-stdin
-      - name: Build and publish immutable images
+        with:
+          ref: 4fbe9ca3d221f430ee039111ec513ef5f65c63cf
+          fetch-depth: 0
+      - name: Verify original archive and load without rebuilding
         shell: bash
         run: |
           set -euo pipefail
-          owner="${GITHUB_REPOSITORY_OWNER,,}"
-          tag="git-${GITHUB_SHA}"
-          control="ghcr.io/${owner}/wp-auto-control:${tag}"
-          authorization="ghcr.io/${owner}/wp-auto-authorization:${tag}"
-          docker build --file deploy/Control.Containerfile --tag "${control}" .
-          docker build --file deploy/Authorization.Containerfile --tag "${authorization}" .
-          test "$(docker image inspect "${control}" --format '{{.Config.User}}')" = "node"
-          test "$(docker image inspect "${authorization}" --format '{{.Config.User}}')" = "node"
-          docker push "${control}"
-          docker push "${authorization}"
-          {
-            echo "### Published immutable images"
-            echo "- \`${control}\`"
-            echo "- \`${authorization}\`"
-          } >> "${GITHUB_STEP_SUMMARY}"
+          test "$(git rev-parse 'HEAD^{tree}')" = d2689e64ffed5e86a6994ec34576d48b3758f115
+          gh api repos/wepuu/wp-auto/actions/runs/38484253873 > /tmp/run.json
+          gh api repos/wepuu/wp-auto/actions/runs/38484253873/artifacts > /tmp/artifacts.json
+          node -e 'const fs=require("fs"),a=require("assert/strict"),r=JSON.parse(fs.readFileSync("/tmp/run.json"));a.equal(r.conclusion,"success");a.equal(r.head_sha,"4fbe9ca3d221f430ee039111ec513ef5f65c63cf");const xs=JSON.parse(fs.readFileSync("/tmp/artifacts.json")).artifacts;for(const id of [11858414458,11858584416]){const x=xs.find(x=>x.id===id);a.ok(x&&!x.expired&&Date.parse(x.expires_at)>Date.now());}'
+          gh run download 38484253873 --repo wepuu/wp-auto --name authorization-hotfix-c960519c715473d91fbedd6055c004678097dc8a --dir .tmp/original-image
+          gh run download 38484253873 --repo wepuu/wp-auto --name authorization-hotfix-manifest-c960519c715473d91fbedd6055c004678097dc8a --dir .tmp/original-manifest
+          echo '8f8688f32921b1be1ad97eed9a7848d06d8ba9ffdb388acf674c6456bf7a96b3  .tmp/original-image/image.tar.gz' | sha256sum --check
+          cmp .tmp/original-image/manifest.json .tmp/original-manifest/manifest.json
+          node -e 'const a=require("assert/strict"),m=require("./.tmp/original-image/manifest.json");a.equal(m.imageId,"sha256:f429f59839cd07a5f350805a119b2a93b48e7f7e1e44da678cffb04004bbe0f1");a.equal(m.sourceCommit,"c960519c715473d91fbedd6055c004678097dc8a");a.equal(m.baseline,"5fab3eadbf23ae72ffae6e984a24947a510f43ab");a.equal(m.registryDigest,null);'
+          docker load --input .tmp/original-image/image.tar.gz
+          test "$(docker image inspect wepuu-authorization:candidate --format '{{.Id}}')" = sha256:f429f59839cd07a5f350805a119b2a93b48e7f7e1e44da678cffb04004bbe0f1
+          GITHUB_SHA=c960519c715473d91fbedd6055c004678097dc8a node scripts/verify-authorization-hotfix-image.mjs
+      - name: Authenticate to GHCR
+        shell: bash
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io --username "${{ github.actor }}" --password-stdin
+      - name: Publish Authorization only and pull by digest
+        shell: bash
+        run: |
+          set -euo pipefail
+          ref=ghcr.io/wepuu/wp-auto-authorization:p3b2d-hotfix-4fbe9ca-38484253873
+          if docker manifest inspect "$ref" >/dev/null 2>&1; then echo 'PUBLICATION_TAG_CONFLICT'; exit 1; fi
+          docker tag wepuu-authorization:candidate "$ref"
+          docker push "$ref"
+          digest=$(docker image inspect "$ref" --format '{{index .RepoDigests 0}}')
+          [[ "$digest" =~ ^ghcr.io/wepuu/wp-auto-authorization@sha256:[a-f0-9]{64}$ ]]
+          docker pull "$digest"
+          test "$(docker image inspect "$digest" --format '{{.Id}}')" = sha256:f429f59839cd07a5f350805a119b2a93b48e7f7e1e44da678cffb04004bbe0f1
+          REGISTRY_REFERENCE="$digest" node -e 'const fs=require("fs");fs.writeFileSync(".tmp/authorization-hotfix/publication.json",JSON.stringify({registryReference:process.env.REGISTRY_REFERENCE,sourceHead:"4fbe9ca3d221f430ee039111ec513ef5f65c63cf",originalRun:38484253873,imageArtifact:11858414458,manifestArtifact:11858584416,archiveSha256:"8f8688f32921b1be1ad97eed9a7848d06d8ba9ffdb388acf674c6456bf7a96b3",imageId:"sha256:f429f59839cd07a5f350805a119b2a93b48e7f7e1e44da678cffb04004bbe0f1"},null,2));'
+          echo "AUTHORIZATION_REGISTRY_REFERENCE=$digest"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: authorization-only-publication
+          path: .tmp/authorization-hotfix/*.json
+          retention-days: 14
