@@ -34,7 +34,7 @@ import {
   type SecurityEventView
 } from '@wepuu/database';
 import type { OAuthConsentBootstrapClaims } from '@wepuu/key-custody';
-import { pairingDiagnostic, type PairingDiagnosticCode, type PairingDiagnosticStage } from '@wepuu/pairing';
+import { pairingDiagnostic, type PairingDiagnosticCode, type PairingDiagnosticStage, type PairingDiagnosticDetail } from '@wepuu/pairing';
 import type { SecurityAuditEvent, SecurityAuditSink } from '@wepuu/security-audit';
 import {
   loadPublicDeploymentConfig,
@@ -431,6 +431,7 @@ export interface PairingDiagnosticEvent {
   readonly correlationId: string;
   readonly stage: PairingDiagnosticStage;
   readonly code: PairingDiagnosticCode;
+  readonly detail?: PairingDiagnosticDetail;
 }
 
 export interface PairingDiagnosticSink {
@@ -1496,7 +1497,8 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
         occurredAt: new Date().toISOString(),
         correlationId: context.correlationId,
         stage: classified.stage,
-        code: classified.code
+        code: classified.code,
+        ...(classified.detail === undefined ? {} : { detail: classified.detail })
       });
       await safeAudit({
         occurredAt: new Date().toISOString(), eventName: 'pairing.denied', outcome: 'denied', reason: 'proof_invalid',
