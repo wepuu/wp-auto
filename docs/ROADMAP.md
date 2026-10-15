@@ -304,6 +304,20 @@ remain in their original records. See
 `P3B2D_SECOND_SITE_ISOLATION_ACCEPTANCE_2026-10-14.md`,
 `P3B3_APPLICATION_PASSWORD_ACCEPTANCE_2026-10-14.md`, and
 `P3B3_APPLICATION_PASSWORD_PRODUCTION_ACCEPTANCE_2026-10-14.md`.
+
+A separately authorized P3-C2B cleanup then removed the temporary Site B
+WordPress/MariaDB containers, project-only volumes and network, and project
+directory after a verified backup. Site B's platform records and delivered
+historical revocation events remain; no Site A data, OAuth Grant history,
+Outbox row, or database migration was deleted or rewritten. Because the
+Cloudflare-proxied DNS target could not be proven to be an exact Site B record,
+the DNS record, dedicated Nginx vhost, and certificate were deliberately
+retained. The retained vhost still targets the now-absent loopback service,
+so origin-direct HTTPS returns 502 and does not fall through to a default
+virtual host. Ingress retirement remains incomplete and requires exact DNS
+ownership confirmation and a separate safe removal step. See
+`P3C2B_SITE_B_RESOURCE_CLEANUP_2026-10-15.md`.
+
 Aggregate readiness is not promoted by this code/evidence integration:
 `P3_FULL_ACCEPTANCE_PASS=False`, `READY_FOR_CONTROLLED_USE=False`, and
 `NOT_READY_FOR_PUBLIC_REGISTRATION=True` remain in force.
