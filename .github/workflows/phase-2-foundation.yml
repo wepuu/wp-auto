@@ -43,6 +43,13 @@ jobs:
         run: npm install --global pnpm@11.19.0
       - name: Install foundation dependencies
         run: pnpm install --frozen-lockfile
+      - name: Prevent isolated PostgreSQL faults echoing synthetic secrets or SQL
+        run: |
+          database_container=$(docker ps --filter "ancestor=postgres:16.10-alpine" --format "{{.ID}}" | head -n 1)
+          test -n "$database_container"
+          docker exec "$database_container" psql -U postgres -d wepuu_test -v ON_ERROR_STOP=1 -c "ALTER SYSTEM SET log_min_messages = 'panic'"
+          docker exec "$database_container" psql -U postgres -d wepuu_test -v ON_ERROR_STOP=1 -c "ALTER SYSTEM SET log_min_error_statement = 'panic'"
+          docker exec "$database_container" psql -U postgres -d wepuu_test -v ON_ERROR_STOP=1 -c "SELECT pg_reload_conf()"
       - name: Validate wpauto VPS deployment manifest
         run: >-
           docker compose

@@ -84,6 +84,12 @@ Recorded green precursor artifact (not a Registry Digest):
 This documentation-only evidence update also reruns CI. The final delivery
 must use the final successful PR Head's original artifact and manifest recorded
 in the PR, not silently substitute the precursor or rebuild an expired artifact.
+Final log review found expected synthetic commit-fault text in the PostgreSQL
+service's own logs, despite sanitized application errors. The isolated CI
+database now suppresses error-message/statement logging before fault injection;
+the actual error, rollback and fail-closed assertions still execute unchanged.
+This is test-server logging only, not a production database configuration change.
+The final CI log must be checked for synthetic secret sentinels before delivery.
 The artifact contains baseline.json, manifest.json, archive and SHA-256;
 manifest fixes source Commit/Tree, Image ID, commands/user and migration hashes.
 CI may use a synthetic merge commit: record it and its exact source tree rather
