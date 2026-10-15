@@ -1192,6 +1192,12 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
         message: 'We could not send a code right now.'
       }));
     }
+    if (response.status === 503 && outcome === undefined) {
+      return htmlHeaders(reply.status(503)).type('text/html; charset=utf-8').send(renderEmailVerification({
+        csrfToken: form.csrf, transactionToken: form.transaction, email, delivery: 'unknown',
+        message: 'Code sending is temporarily unavailable. You can still enter a valid code you already received.'
+      }));
+    }
     if (!response.ok || outcome === undefined) throw new PlatformError('temporarily_unavailable', 503);
     const delivery: OtpDeliveryOutcome = outcome;
     return htmlHeaders(reply.status(delivery === 'unknown' ? 202 : 200)).type('text/html; charset=utf-8')
