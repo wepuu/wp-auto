@@ -87,7 +87,7 @@ explicit paths were added to the allowlist. No source, dependency, migration,
 runtime validation or whole-directory comparison was loosened. Remaining gates
 and artifact upload did NOT run on this failed attempt; its image is not approved.
 
-Hosted validation and artifact identity: PENDING until actual execution.
+Hosted validation and artifact identity: executed successfully below.
 Mandatory gates include OTP rolling quota/DB faults/Better Auth HTTP/provider
 mock tests, real signer, baseline identity, exact image boundary, actual Control
 runtime/HMAC custody/send pause/unchanged ledger, fixed Authorization/JWKS,
@@ -101,14 +101,59 @@ archive and compare ID, metadata, migration hashes and all inventoried files.
 `registryDigest` remains null. Record latest successful Run/Artifact IDs and
 expiry separately; expired or changed bytes require a new reviewed candidate.
 
+### Successful complete candidate execution
+
+[Hosted run 38818479623](https://github.com/wepuu/wp-auto/actions/runs/38818479623)
+succeeded at code Head `b315e3ddf1fbb75892dd8c954f5339183ba8e200`, source Tree
+`8bf87e56ccb1816c6c14ccdf60f548f9dc7b73c4`.
+
+- Strict: 154 PASS, 0 FAIL, 1 existing opt-in raw PHP SKIP; explicit raw PHP
+  interoperability executed separately and passed.
+- Real ZIP signer PHP 8.2.28 and 8.1.34: each 9 positive + 9 PEM mismatch
+  rejections PASS; ZIP extraction safety 3 PASS.
+- PostgreSQL: 22 PASS, 0 FAIL, 0 SKIP. Registry/config/source identity,
+  candidate complete file inventory/approved compiled changes, migrations
+  001–013 +015, non-root direct CMD and fixture exclusion: PASS.
+- Real Control startup: migration ledger unchanged and actual send flag false.
+  HMAC permission failures/valid custody, fixed Authorization/JWKS, guard,
+  backup/restore/tombstone, audit and SBOM gates: PASS.
+- Retained OAuth conformance: 37 PASS, 0 FAIL, 1 existing SKIP (not claimed as
+  a pass). Secret-sentinel scan of the complete Hosted log: 0 matches.
+- Saved archive reloaded successfully; Image ID, metadata and all inventoried
+  files/migrations remained identical. Nothing was pushed to a registry.
+
+This green code-run's original artifacts (historical precursor evidence):
+
+| Identity | Value |
+|---|---|
+| Image artifact | 12011253125 |
+| Independent manifest artifact | 12011313043 |
+| Image ID/config digest | `sha256:eadd3b3e924a410e08b0dc08529cf25bf0f48afae81f4116b096ea27abdef8a5` |
+| Archive SHA-256 | `b560941f73a4ad5aeb31170cdf70060c9ef65f7cd7cab49f4b0cebd2c99a3563` |
+| Registry Digest | None; unpublished |
+| Expiry | 2026-10-30 approximately 06:41 Asia/Shanghai |
+
+Runtime Node v26.7.0, build pnpm 11.19.0 and unchanged digest-pinned Node
+Containerfile/lockfile. Lockfile SHA-256:
+`be0701f43ac3fb0e6f2b2837d293f9c145f069f1874750ef46419b7d2ab56f45`.
+The workflow event was synthetic merge `7c45b292263ff1e25513b09a7548f41360e33b74`,
+but it explicitly checked out and labeled the actual code Head above.
+
+This documentation-only results update creates a new Head and must rerun CI.
+The delivery artifact MUST be the latest successful Head's original archive,
+not the precursor above. Final Head/Run, manifest, Artifact IDs, archive hash
+and expiry are pinned in [Draft PR #75](https://github.com/wepuu/wp-auto/pull/75)
+after the final run. Re-read that exact identity before a separately authorized
+publication; never substitute or rebuild an approved artifact silently.
+
 ## Follow-up and states
 
 See [E1C/E1D operation sheet](P3E1C_E1D_DEPLOYMENT_AND_RECOVERY_HANDOFF_2026-10-16.md).
 It is not publication, deployment or recovery authority.
 
 ```text
-P3E1B_PRODUCTION_BASELINE_VERIFIED=False
-P3E1B_CONTROL_DIAGNOSTICS_HOTFIX_CANDIDATE_PASS=False
+P3E1B_PRODUCTION_BASELINE_VERIFIED=True
+P3E1B_CONTROL_DIAGNOSTICS_HOTFIX_CANDIDATE_PASS=True
 P3E1B_CONTROL_DIAGNOSTICS_DEPLOYED=False
 P3E1_PAIRING_PROOF_HOSTED_INTEROP_PASS=True
 P3E1_CLAIMS_DIAGNOSTICS_CANDIDATE_PASS=True
@@ -121,7 +166,8 @@ READY_FOR_CONTROLLED_USE=False
 NOT_READY_FOR_PUBLIC_REGISTRATION=True
 ```
 
-The first two flags require both the live image metadata and the executed
-isolated gates; the live read alone is insufficient. Historical root cause and
+The first two flags are supported by both live metadata and executed isolated
+gates; the live read alone is insufficient. Latest-head CI is also required
+before final artifact delivery. Historical root cause and
 new-site pairing stay unconfirmed/failed even if this candidate passes. No
 production-proof or synthetic production diagnostic event was requested.
