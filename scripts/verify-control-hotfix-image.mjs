@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { P3D_BASELINE, P3D_MIGRATIONS } from '../packages/database/dist/p3d-migration.js';
 
 const baselineImage = 'ghcr.io/wepuu/wp-auto-control@sha256:3a4eed82715339076947aaa9ada0a8a065b1784041bc2f4c353d79f8a3d6038f';
@@ -48,6 +48,7 @@ try {
       command: metadata.Config.Cmd, entrypoint: metadata.Config.Entrypoint, user: metadata.Config.User,
       migrationHashes: hashes }, null, 2));
     if (process.argv.includes('--archive')) {
+      await copyFile('.tmp/phase-2-0-6-sbom.json', `${directory}/sbom.json`);
       await writeFile(`${directory}/image.tar.gz.sha256`, `${hash(await readFile(`${directory}/image.tar.gz`))}  image.tar.gz\n`);
     }
   }

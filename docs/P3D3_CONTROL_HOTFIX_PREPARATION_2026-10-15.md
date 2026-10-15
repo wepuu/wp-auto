@@ -10,7 +10,7 @@ PR #68 (one historical assessment file) merged normally as
 PR #69 was updated by normal merge from that main, Head
 1abf6741314a2f0c6b2f36cf042537461f80674c, CI 38697669269 succeeded.
 Its intended 15-file scope remained unchanged. It merged normally as
-e8778da33d850303d1ccbdfbebf088610bf6ac5f; final main CI is a separate gate.
+e8778da33d850303d1ccbdfbebf088610bf6ac5f; final main CI 38698209507 succeeded.
 No force push or primary-workspace edits were used. design/ remains untouched.
 
 ## Baseline and identity gates
@@ -56,6 +56,15 @@ synthetic secrets, paused sends and a fake Resend key; no real email call.
 The Nginx rollback fixture checks normalized/encoded send paths and confirms
 verify/login/app/OAuth paths remain routed. New CI tests must execute, not skip.
 
+First candidate CI 38698454047 proved the baseline source identity and image
+boundary, strict checks (114 passed, zero failed, one skipped), PostgreSQL
+(22 passed, zero skipped) and real Nginx guard. The subsequent actual Control
+startup check failed; the fixture lacked the baseline's mandatory Grant
+idempotency key. A synthetic random key was added without changing runtime
+validation. Failure remains evidence, not a production outage or acceptance.
+Local typecheck/lint pass; full local check has the already reproduced Windows
+certificate-provider HTTPS fixture failure. No TLS check was disabled and
+local database skips are not claimed as passes.
 Candidate validation remains pending until latest-head complete CI passes.
 The artifact contains baseline.json, manifest.json, archive and SHA-256;
 manifest fixes source Commit/Tree, Image ID, commands/user and migration hashes.
@@ -125,7 +134,7 @@ rollback; this no-email release does not authorize that removal.
 ```text
 P3D_EMAIL_OTP_PROTECTION_CANDIDATE_PASS=True
 P3D_TENANT_OAUTH_ISOLATION_CI_PASS=True
-P3D3_CONTROL_BASELINE_VERIFIED=False
+P3D3_CONTROL_BASELINE_VERIFIED=True
 P3D3_CONTROL_HOTFIX_CANDIDATE_PASS=False
 P3D_PRODUCTION_DEPLOYED=False
 P3D_REAL_EMAIL_ACCEPTANCE_PASS=False
