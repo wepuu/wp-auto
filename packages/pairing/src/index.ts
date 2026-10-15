@@ -30,21 +30,39 @@ export type PairingDiagnosticCode =
   | 'proof.key_invalid' | 'proof.signature_invalid' | 'proof.header_invalid' | 'proof.claims_invalid'
   | 'pairing.state_invalid' | 'pairing.tenant_access_denied' | 'pairing.persistence_failed' | 'unknown';
 
+const CLAIMS_DIAGNOSTIC_DETAILS = [
+  'claims.json_invalid', 'claims.schema_invalid', 'claims.time_expired', 'claims.time_future',
+  'claims.time_window_invalid', 'claims.issuer_mismatch', 'claims.tenant_mismatch',
+  'claims.resource_mismatch', 'claims.challenge_mismatch', 'claims.site_binding_mismatch',
+  'claims.platform_key_binding_mismatch', 'claims.other_binding_mismatch', 'unknown'
+] as const;
+export type PairingDiagnosticDetail = typeof CLAIMS_DIAGNOSTIC_DETAILS[number];
+
 export class PairingDiagnosticError extends Error {
   readonly stage: PairingDiagnosticStage;
   readonly code: PairingDiagnosticCode;
+  readonly detail?: PairingDiagnosticDetail;
 
-  constructor(stage: PairingDiagnosticStage, code: PairingDiagnosticCode, cause?: unknown) {
+  constructor(stage: PairingDiagnosticStage, code: PairingDiagnosticCode, cause?: unknown, detail?: PairingDiagnosticDetail) {
     super(code, cause === undefined ? undefined : { cause });
     this.name = 'PairingDiagnosticError';
     this.stage = stage;
     this.code = code;
+    if (stage === 'proof' && code === 'proof.claims_invalid' && detail !== undefined) {
+      this.detail = CLAIMS_DIAGNOSTIC_DETAILS.includes(detail) ? detail : 'unknown';
+    }
   }
 }
 
-export function pairingDiagnostic(error: unknown): Readonly<{ stage: PairingDiagnosticStage; code: PairingDiagnosticCode }> {
+export function pairingDiagnostic(error: unknown): Readonly<{
+  stage: PairingDiagnosticStage; code: PairingDiagnosticCode; detail?: PairingDiagnosticDetail
+}> {
   return error instanceof PairingDiagnosticError
-    ? { stage: error.stage, code: error.code }
+    ? {
+      stage: error.stage, code: error.code,
+      ...(error.stage === 'proof' && error.code === 'proof.claims_invalid' && error.detail !== undefined
+        ? { detail: CLAIMS_DIAGNOSTIC_DETAILS.includes(error.detail) ? error.detail : 'unknown' } : {})
+    }
     : { stage: 'unknown', code: 'unknown' };
 }
 
@@ -159,8 +177,12 @@ export function createPinnedAddressLookup(pinnedAddress: string): LookupFunction
   };
 }
 
-function exactClaim(actual: string | undefined, expected: string | undefined, name: string): void {
-  if (actual !== expected) throw new Error(`${name}_mismatch`);
+class ClaimsValidationError extends Error {
+  constructor(readonly detail: PairingDiagnosticDetail) { super(detail); }
+}
+
+function exactClaim(actual: string | undefined, expected: string | undefined, detail: PairingDiagnosticDetail): void {
+  if (actual !== expected) throw new ClaimsValidationError(detail);
 }
 
 export async function verifySiteProof(
@@ -194,31 +216,43 @@ export async function verifySiteProof(
     throw diagnostic('proof', 'proof.signature_invalid', error);
   }
   try {
-    const claims = SiteProofClaimsSchema.parse(JSON.parse(new TextDecoder().decode(verified.payload)) as unknown);
+    let decoded: unknown;
+    try { decoded = JSON.parse(new TextDecoder().decode(verified.payload)) as unknown; }
+    catch { throw new ClaimsValidationError('claims.json_invalid'); }
+    const parsed = SiteProofClaimsSchema.safeParse(decoded);
+    if (!parsed.success) throw new ClaimsValidationError('claims.schema_invalid');
+    const claims = parsed.data;
     const now = Math.floor((expected.now ?? new Date()).getTime() / 1_000);
-    if (claims.exp <= now || claims.iat > now + 5 || claims.exp - claims.iat > SITE_PROOF_TTL_SECONDS) throw new Error('invalid');
-    if (claims.kind !== expected.kind || claims.platform_issuer !== expected.platformIssuer
-      || claims.iss !== new URL(expected.resource).hostname || claims.tenant_id !== expected.tenantId
-      || claims.resource !== expected.resource || claims.challenge !== expected.challenge) throw new Error('invalid');
-    exactClaim(claims.pairing_attempt_id, expected.pairingAttemptId, 'pairing_attempt');
-    exactClaim(claims.site_id, expected.siteId, 'site');
-    exactClaim(claims.platform_signing_key_sha256, expected.platformSigningKeySha256, 'platform_signing_key');
-    exactClaim(claims.platform_signing_kid, expected.platformSigningKid, 'platform_signing_kid');
-    exactClaim(claims.grant_id, expected.grantId, 'grant');
-    exactClaim(claims.client_id, expected.clientId, 'client');
-    exactClaim(claims.subject_id, expected.subjectId, 'subject');
-    exactClaim(claims.aud, expected.kind === 'consent' ? expected.resource : undefined, 'audience');
-    exactClaim(claims.decision, expected.decision, 'decision');
+    if (claims.exp <= now) throw new ClaimsValidationError('claims.time_expired');
+    if (claims.iat > now + 5) throw new ClaimsValidationError('claims.time_future');
+    if (claims.exp - claims.iat > SITE_PROOF_TTL_SECONDS) throw new ClaimsValidationError('claims.time_window_invalid');
+    if (claims.kind !== expected.kind) throw new ClaimsValidationError('claims.other_binding_mismatch');
+    exactClaim(claims.platform_issuer, expected.platformIssuer, 'claims.issuer_mismatch');
+    exactClaim(claims.iss, new URL(expected.resource).hostname, 'claims.issuer_mismatch');
+    exactClaim(claims.tenant_id, expected.tenantId, 'claims.tenant_mismatch');
+    exactClaim(claims.resource, expected.resource, 'claims.resource_mismatch');
+    exactClaim(claims.challenge, expected.challenge, 'claims.challenge_mismatch');
+    exactClaim(claims.pairing_attempt_id, expected.pairingAttemptId, 'claims.site_binding_mismatch');
+    exactClaim(claims.site_id, expected.siteId, 'claims.site_binding_mismatch');
+    exactClaim(claims.platform_signing_key_sha256, expected.platformSigningKeySha256, 'claims.platform_key_binding_mismatch');
+    exactClaim(claims.platform_signing_kid, expected.platformSigningKid, 'claims.platform_key_binding_mismatch');
+    exactClaim(claims.grant_id, expected.grantId, 'claims.other_binding_mismatch');
+    exactClaim(claims.client_id, expected.clientId, 'claims.other_binding_mismatch');
+    exactClaim(claims.subject_id, expected.subjectId, 'claims.other_binding_mismatch');
+    exactClaim(claims.aud, expected.kind === 'consent' ? expected.resource : undefined, 'claims.other_binding_mismatch');
+    exactClaim(claims.decision, expected.decision, 'claims.other_binding_mismatch');
     if (expected.scopes !== undefined) {
       const actualScopes = [...(claims.scope ?? [])];
       const expectedScopes = [...expected.scopes];
       if (actualScopes.length !== expectedScopes.length || actualScopes.some((scope, index) => scope !== expectedScopes[index])) {
-        throw new Error('invalid');
+        throw new ClaimsValidationError('claims.other_binding_mismatch');
       }
     }
     return { claims, publicJwk, thumbprint: await calculateJwkThumbprint(publicJwk as JWK, 'sha256') };
   } catch (error) {
-    throw diagnostic('proof', 'proof.claims_invalid', error);
+    // Never attach schema issues, claims, or an arbitrary exception as a diagnostic cause.
+    throw new PairingDiagnosticError('proof', 'proof.claims_invalid', undefined,
+      error instanceof ClaimsValidationError ? error.detail : 'unknown');
   }
 }
 

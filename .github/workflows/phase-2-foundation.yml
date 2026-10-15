@@ -36,6 +36,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 26.7.0
@@ -58,6 +59,11 @@ jobs:
           config --quiet
       - name: Strict checks
         run: pnpm check
+      - name: Frozen Connector signer PHP 8.2.28 and PHP 8.1.34
+        run: |
+          python3 tests/fixtures/p3e1a/test_extract.py
+          node scripts/test-real-site-proof.mjs
+          node scripts/test-real-site-proof.mjs --legacy
       - name: PostgreSQL migration and isolation tests
         run: pnpm test:database
       - name: Rollback send guard on real isolated Nginx
@@ -67,16 +73,16 @@ jobs:
           GHCR_READ_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "$GHCR_READ_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
-          docker pull ghcr.io/wepuu/wp-auto-control@sha256:3a4eed82715339076947aaa9ada0a8a065b1784041bc2f4c353d79f8a3d6038f
-          node scripts/verify-control-hotfix-image.mjs --baseline
+          docker pull ghcr.io/wepuu/wp-auto-control@sha256:7c7308a6064740f9f732d2fb12a8f4c4c9dd3fd284edd26cea09df79b976c8fe
+          node scripts/verify-control-claims-hotfix-image.mjs --baseline
       - name: Build only Control candidate and reuse fixed Authorization
         run: |
-          docker build --file deploy/Control.Containerfile --tag wepuu-control:candidate --label org.opencontainers.image.revision=${GITHUB_SHA} --label org.wepuu.source-tree=$(git rev-parse HEAD^{tree}) .
+          docker build --file deploy/Control.Containerfile --tag wepuu-control:candidate --label org.opencontainers.image.revision=$(git rev-parse HEAD) --label org.wepuu.source-tree=$(git rev-parse HEAD^{tree}) .
           docker pull ghcr.io/wepuu/wp-auto-authorization@sha256:e4c3f43f57f62098c43aa56d65699bed4ae8ac6d1a9e4c147470f19dbfc49742
           docker tag ghcr.io/wepuu/wp-auto-authorization@sha256:e4c3f43f57f62098c43aa56d65699bed4ae8ac6d1a9e4c147470f19dbfc49742 wepuu-authorization:candidate
           test "$(docker image inspect wepuu-control:candidate --format '{{.Config.User}}')" = "node"
           test "$(docker image inspect wepuu-authorization:candidate --format '{{.Config.User}}')" = "node"
-          node scripts/verify-control-hotfix-image.mjs
+          node scripts/verify-control-claims-hotfix-image.mjs
       - name: Local signing production-mode OCI gate
         env:
           WEPUU_OCI_POSTGRES_ADMIN_URL: postgresql://postgres:conformance@127.0.0.1:5432/wepuu_test
@@ -108,20 +114,20 @@ jobs:
         run: npm run check && npm run check:evidence
       - name: Save unpublished Control candidate only
         run: |
-          docker save wepuu-control:candidate | gzip -n > .tmp/control-hotfix/image.tar.gz
-          node scripts/verify-control-hotfix-image.mjs --archive
+          docker save wepuu-control:candidate | gzip -n > .tmp/control-claims-hotfix/image.tar.gz
+          node scripts/verify-control-claims-hotfix-image.mjs --archive
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: control-hotfix-${{ github.sha }}
-          path: .tmp/control-hotfix/
-          retention-days: 7
+          name: control-claims-hotfix-${{ github.event.pull_request.head.sha || github.sha }}
+          path: .tmp/control-claims-hotfix/
+          retention-days: 14
           if-no-files-found: error
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: control-hotfix-manifest-${{ github.sha }}
+          name: control-claims-hotfix-manifest-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
-            .tmp/control-hotfix/manifest.json
-            .tmp/control-hotfix/baseline.json
-            .tmp/control-hotfix/image.tar.gz.sha256
-          retention-days: 7
+            .tmp/control-claims-hotfix/manifest.json
+            .tmp/control-claims-hotfix/baseline.json
+            .tmp/control-claims-hotfix/image.tar.gz.sha256
+          retention-days: 14
           if-no-files-found: error

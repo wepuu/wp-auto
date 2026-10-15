@@ -828,6 +828,40 @@ void test('pairing diagnostics remain internal, bounded and content-free', async
   await app.close();
 });
 
+void test('claims detail reaches only the internal diagnostic JSON, never HTTP or security audit', async () => {
+  for (const sinkFails of [false, true]) {
+    const audit = new MemoryAudit();
+    const lines: string[] = [];
+    const app = buildControlApi({
+      identityProvider: new StaticIdentity({ accountId: 'account_12345678', authenticationTime: 1, authenticationMethod: 'oidc' }),
+      store: new StaticStore(), workspace: new StaticWorkspace(), audit, publicOrigin: 'https://platform.example.test',
+      pairing: { async pair() {
+        throw new PairingDiagnosticError('proof', 'proof.claims_invalid', new Error('SECRET_CAUSE'), 'claims.site_binding_mismatch');
+      } },
+      pairingDiagnostics: { write(event) {
+        if (sinkFails) throw new Error('SECRET_SINK');
+        lines.push(JSON.stringify(event));
+      } }
+    });
+    try {
+      const response = await app.inject({
+        method: 'POST', url: `/v1/tenants/${tenantId}/pairing`, headers: { origin: 'https://platform.example.test' },
+        payload: { resource: 'https://site.example.test/wp-json/wp-auto/mcp', verifier: 'SECRET_VERIFIER'.padEnd(43, 'x') }
+      });
+      assert.equal(response.statusCode, 400);
+      assert.deepEqual(response.json(), { error: 'invalid_request' });
+      assert.equal(JSON.stringify(audit.events).includes('claims.'), false);
+      assert.equal(JSON.stringify([lines, audit.events, response.headers, response.body]).includes('SECRET_'), false);
+      if (!sinkFails) {
+        const event = JSON.parse(lines[0] ?? '{}') as Record<string, unknown>;
+        assert.deepEqual(Object.keys(event).sort(), ['code', 'correlationId', 'detail', 'occurredAt', 'stage']);
+        assert.equal(event['code'], 'proof.claims_invalid');
+        assert.equal(event['detail'], 'claims.site_binding_mismatch');
+      }
+    } finally { await app.close(); }
+  }
+});
+
 void test('pairing diagnostic sink failure preserves the generic fail-closed response', async () => {
   const app = buildControlApi({
     identityProvider: new StaticIdentity({ accountId: 'account_12345678', authenticationTime: 1, authenticationMethod: 'oidc' }),
