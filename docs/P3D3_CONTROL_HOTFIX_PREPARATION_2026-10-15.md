@@ -65,7 +65,25 @@ validation. Failure remains evidence, not a production outage or acceptance.
 Local typecheck/lint pass; full local check has the already reproduced Windows
 certificate-provider HTTPS fixture failure. No TLS check was disabled and
 local database skips are not claimed as passes.
-Candidate validation remains pending until latest-head complete CI passes.
+Full CI [38698932953](https://github.com/wepuu/wp-auto/actions/runs/38698932953)
+passed at branch Head 4d7d648df1d78a811f12a2db18561c7f5a54a185: strict 114
+passed/0 failed/1 skipped; PostgreSQL 22 passed/0 failed/0 skipped; real Nginx,
+baseline identity, image boundary, actual Control runtime, non-root HMAC,
+fixed Authorization signing/JWKS, backup/restore, dependency audit, SBOM and
+retained OAuth conformance all passed. Local totals are 92 passed, 1 known
+Windows certificate-provider failure, 18 environment skips.
+
+Recorded green precursor artifact (not a Registry Digest):
+
+- Image artifact 11954708880; manifest artifact 11954563991; retention 7 days.
+- CI synthetic merge/source commit ad59f626382cfcb8993e9265aad04d0d7984007c.
+- Source tree 106bc9db93ca109dea53d008eb3f58a17e91b5af.
+- Image ID sha256:780cf451e5ab7d1a930ee11c737db7290d7705e57a05b34803d5871828c43723.
+- Archive SHA-256 582c37207a78a6b61d2a3dc380ec37568db11ee7c23477f0f6113bd8edd4d64f.
+
+This documentation-only evidence update also reruns CI. The final delivery
+must use the final successful PR Head's original artifact and manifest recorded
+in the PR, not silently substitute the precursor or rebuild an expired artifact.
 The artifact contains baseline.json, manifest.json, archive and SHA-256;
 manifest fixes source Commit/Tree, Image ID, commands/user and migration hashes.
 CI may use a synthetic merge commit: record it and its exact source tree rather
@@ -135,7 +153,7 @@ rollback; this no-email release does not authorize that removal.
 P3D_EMAIL_OTP_PROTECTION_CANDIDATE_PASS=True
 P3D_TENANT_OAUTH_ISOLATION_CI_PASS=True
 P3D3_CONTROL_BASELINE_VERIFIED=True
-P3D3_CONTROL_HOTFIX_CANDIDATE_PASS=False
+P3D3_CONTROL_HOTFIX_CANDIDATE_PASS=True
 P3D_PRODUCTION_DEPLOYED=False
 P3D_REAL_EMAIL_ACCEPTANCE_PASS=False
 P3_FULL_ACCEPTANCE_PASS=False
@@ -143,7 +161,7 @@ READY_FOR_CONTROLLED_USE=False
 NOT_READY_FOR_PUBLIC_REGISTRATION=True
 ```
 
-Baseline/candidate flags await their actual CI gates; the earlier #69 results
-do not prove this distinct backport. Published final latest-head results and
+Baseline/candidate flags reflect the executed gates above; #69 alone does not
+prove this distinct backport. Published final latest-head results and
 artifact identity are recorded in the candidate PR conversation/body. Stop
 after preparation; no GHCR push, VPS connection or P3-D4 operation here.
