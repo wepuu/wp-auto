@@ -190,6 +190,7 @@ try {
   }
   if (!ready) throw new Error(`authorization container did not become ready: ${execute(['logs', containerName]).stdout}`);
   const controlEnvironment = { ...runtimeEnvironment,
+    WEPUU_GRANT_IDEMPOTENCY_HMAC_KEY: randomBytes(32).toString('base64url'),
     WEPUU_CONTROL_HOST: '0.0.0.0', WEPUU_CONTROL_PORT: '3000',
     WEPUU_EMAIL_DELIVERY: 'resend', WEPUU_RESEND_FROM: 'test@example.test',
     WEPUU_RESEND_API_KEY_FILE: '/run/secrets/resend-fake',
@@ -207,7 +208,15 @@ try {
     if (check.status === 0) { controlReady = true; break; }
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
-  if (!controlReady) throw new Error('control_runtime_not_ready');
+  if (!controlReady) {
+    const output = execute(['logs', controlName], { allowFailure: true });
+    const text = `${output.stdout}${output.stderr}`;
+    const known = ['WEPUU_GRANT_IDEMPOTENCY_HMAC_KEY', 'control_signing_key_not_active',
+      'otp_send_storage_unavailable', 'account_auth_secret_file_owner_invalid',
+      'account_auth_secret_file_permissions_invalid', 'production_email_delivery_required'];
+    console.error(`CONTROL_STARTUP_CLASS=${known.find((code) => text.includes(code)) ?? 'unknown'}`);
+    throw new Error('control_runtime_not_ready');
+  }
   execute(['rm', '-f', controlName]);
   const inspectAuth = `import {accountAuthFromEnvironment} from './packages/account-auth/dist/index.js';
     const auth=await accountAuthFromEnvironment(process.env,{applicationName:'p3d-oci',databaseRole:'wepuu_account_auth_writer'});
