@@ -87,7 +87,10 @@ test('P3-D PostgreSQL rolling reservations are atomic, durable, isolated from Be
     await pool.query('DROP TRIGGER p3d_commit_fail ON auth.otp_send_reservations; DROP FUNCTION auth.p3d_commit_fail()');
     assert.equal(await one.remaining(), 10, 'uncommitted_reservation_not_visible');
     await pool.query('REVOKE INSERT ON auth.otp_send_reservations FROM wepuu_account_auth_writer');
-    try { await assert.rejects(one.reserve('denied@example.test'), { message: 'otp_send_storage_unavailable' }); }
+    try {
+      await assert.rejects(one.reserve('denied@example.test'), { message: 'otp_send_storage_unavailable' });
+      await assert.rejects(one.remaining(), { message: 'otp_send_storage_unavailable' });
+    }
     finally { await pool.query('GRANT INSERT ON auth.otp_send_reservations TO wepuu_account_auth_writer'); }
     await assert.rejects(database.withAccountAuthReader((client) => client.query('SELECT * FROM auth.otp_send_reservations')),
       (error: unknown) => typeof error === 'object' && error !== null && 'code' in error && error.code === '42501');
@@ -173,6 +176,17 @@ test('P3-D real Better Auth handler preserves OTP on blocked resend, observes ou
   for (const secret of ['first@example.test', firstOtp, 'SECRET_', ...outcomes.rows.map(() => key.toString('base64url'))]) {
     assert.equal(report.body.includes(secret), false, 'metrics_are_content_free');
   }
+  const loginPage = await app.inject({ method: 'GET', url: '/v1/account/login' });
+  const csrf = /name="csrf" value="([A-Za-z0-9_-]{43})"/u.exec(loginPage.body)?.[1];
+  const transaction = /name="transaction" value="([A-Za-z0-9_-]{43})"/u.exec(loginPage.body)?.[1];
+  assert.ok(csrf && transaction);
+  const limitedPage = await app.inject({ method: 'POST', url: '/v1/account/email/resend',
+    headers: { origin: issuer, cookie: `__Host-wepuu_csrf=${csrf}`, 'content-type': 'application/x-www-form-urlencoded' },
+    payload: new URLSearchParams({ csrf, transaction, email: 'first@example.test' }).toString() });
+  assert.equal(limitedPage.statusCode, 429, 'control_translates_quota_limit');
+  assert.equal(Number(limitedPage.headers['retry-after']) > 0, true);
+  assert.equal(limitedPage.body.includes('/v1/account/email/verify'), true, 'verification_form_remains_available');
+  assert.equal(limitedPage.body.includes('recipient_hour'), false, 'internal_quota_reason_not_public');
   const unavailable = buildControlApi({ identityProvider: { async authenticate() { return undefined; } },
     store: new PostgresControlStore(database), audit: new PostgresSecurityAuditSink(database), accountAuth: broken,
     publicOrigin: issuer, operationsMetricsToken: 'p3d-test-only-metrics-token-00000000000' });
@@ -180,4 +194,15 @@ test('P3-D real Better Auth handler preserves OTP on blocked resend, observes ou
   const absent = await unavailable.inject({ method: 'GET', url: '/internal/metrics', headers: { authorization: 'Bearer p3d-test-only-metrics-token-00000000000' } });
   assert.equal(absent.statusCode, 503);
   assert.equal(absent.body.includes('wepuu_otp_budget_remaining'), false, 'no_fabricated_gauge');
+  const quota = new PostgresOtpSendQuota(pool, key, { recipientHourlyMax: 3, recipientDailyMax: 6, globalDailyMax: 10 });
+  let retainedSends = 0;
+  const retained = createAccountAuth({ databaseUrl, publicOrigin: issuer, applicationName: 'p3d-outcome-write-failed', secrets,
+    otpSendQuota: { reserve: (email) => quota.reserve(email), claim: (id) => quota.claim(id),
+      async finish() { throw new Error('SECRET_OUTCOME_SENTINEL'); }, remaining: () => quota.remaining() },
+    otpSendObserver() { throw new Error('SECRET_METRICS_SENTINEL'); },
+    emailSender: { async send() { retainedSends++; return 'accepted'; } } });
+  cleanup(() => retained.close());
+  assert.equal((await send('retained@example.test', '192.0.2.8', retained)).status, 200, 'known_accepted_not_rewritten_on_persistence_failure');
+  assert.equal(retainedSends, 1, 'no_retry_on_observer_or_outcome_failure');
+  assert.equal(await quota.remaining(), 6, 'unresolved_result_remains_charged');
 });

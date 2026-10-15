@@ -333,8 +333,9 @@ export function createAccountAuth(options: CreateAccountAuthOptions): AccountAut
         if (!reservation.allowed) {
           state.limited = true;
           observe({ kind: 'limited', dimension: reservation.dimension });
-          context.setHeader('retry-after', String(reservation.retryAfterSeconds));
-          throw new APIError('TOO_MANY_REQUESTS', { message: 'otp_send_limited' });
+          throw new APIError('TOO_MANY_REQUESTS', { message: 'otp_send_limited' }, {
+            'retry-after': String(reservation.retryAfterSeconds)
+          });
         }
         state.email = email;
         state.reservation = reservation.id;

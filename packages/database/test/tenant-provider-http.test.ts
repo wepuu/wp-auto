@@ -48,7 +48,8 @@ class Browser {
       method: form === undefined ? 'GET' : 'POST', redirect: 'manual',
       headers: { host: new URL(issuer).host, 'x-forwarded-host': new URL(issuer).host,
         'x-forwarded-proto': 'https', cookie,
-        ...(form === undefined ? {} : { origin: issuer, 'content-type': 'application/x-www-form-urlencoded' }) },
+        ...(form === undefined ? {} : { 'content-type': 'application/x-www-form-urlencoded',
+          ...(url.pathname.startsWith('/interaction/') ? { origin: issuer } : {}) }) },
       ...(form === undefined ? {} : { body: form }), signal: AbortSignal.timeout(10_000)
     });
     this.accept(response);
@@ -252,8 +253,10 @@ test('P3-D real Control/Authorization HTTP and Provider reject cross-account Ten
   };
   async function ownToken(i: number) {
     const response = await exchange(i, await code(i));
-    assert.equal(response.status, 200, 'own_code_exchange');
-    const body = await response.json() as { access_token: string; refresh_token?: string };
+    const body = await response.json() as { access_token: string; refresh_token?: string; error?: string };
+    const category = ['invalid_grant', 'invalid_request', 'invalid_target', 'invalid_scope', 'access_denied'].includes(body.error ?? '')
+      ? body.error : 'unknown';
+    assert.equal(response.status, 200, `own_code_exchange_${category}`);
     assert.equal(body.refresh_token, undefined);
     const verified = await jwtVerify(body.access_token, await importJWK(key.publicJwk, 'RS256'), { issuer, audience: resources[i], algorithms: ['RS256'] });
     const p = verified.payload;
