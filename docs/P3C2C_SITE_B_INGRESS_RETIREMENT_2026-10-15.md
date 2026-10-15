@@ -41,16 +41,20 @@ Before deletion:
 
 - The active vhost contained exactly two `server_name test2.wpauto.cc`
   blocks and was the only active Nginx reference to its dedicated certificate
-  path.
+  path. No `443 default_server` existed; removing the exact-host block could
+  send unknown TLS SNI to another loaded business vhost, so the exact-host
+  rejection block was retained instead.
 - The certificate subject and sole SAN were `test2.wpauto.cc`; validity was
   2026-10-13 through 2027-01-11. Certificate and private key were separate,
   regular root-owned mode-`0600` files and their public-key digests matched.
 - The certificate directory contained only Site B certificate artifacts
   (full chain, private key, PFX, CSRs, and a local note). No other vhost
   referenced these files.
-- A Baota `ssl_saved` directory contained a second full chain/private-key
-  copy and metadata whose only DNS name and subject were `test2.wpauto.cc`.
-  The directory was domain-specific and had no active configuration reference.
+- Baota saved-certificate directory
+  `/www/server/panel/vhost/ssl_saved/2983d7c40ae5cfe18611b4263daf0397`
+  contained a second full chain/private-key copy and metadata whose only DNS
+  name and subject were `test2.wpauto.cc`. The directory was domain-specific
+  and had no active configuration reference.
 - Searches found no Site B-specific cron, systemd timer, acme.sh or Certbot
   renewal entry. Shared ACME account/configuration and other domain
   certificates were not changed.
