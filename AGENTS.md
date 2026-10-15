@@ -90,14 +90,19 @@ preflight failures remain historical evidence. See
 `docs/P3B3_APPLICATION_PASSWORD_PRODUCTION_ACCEPTANCE_2026-10-14.md`.
 P3B2_SITE_ISOLATION_PASS and P3B3_APPLICATION_PASSWORD_PASS are True;
 P3_FULL_ACCEPTANCE_PASS and READY_FOR_CONTROLLED_USE remain False, and
-NOT_READY_FOR_PUBLIC_REGISTRATION remains True. A separately approved
-P3-C2B operation removed Site B's containers, volumes, network, and project
-files after a verified backup. Its DNS record, dedicated Nginx vhost, and
-certificate remain intentionally retained because exact Cloudflare DNS
-ownership was not established; the origin now fails closed rather than
-routing to a default site. No Grant history was deleted. Main deployment,
-migration 014, and P4-A remain unauthorized. See
-`docs/P3C2B_SITE_B_RESOURCE_CLEANUP_2026-10-15.md`.
+NOT_READY_FOR_PUBLIC_REGISTRATION remains True. P3-C2B/C2C Site B cleanup is
+complete: the Site B containers, volumes, network, and project files were
+removed; the user manually deleted its Cloudflare DNS record; its exclusive
+certificate material and saved certificate copy were removed after verified
+backup; and the exact-host Nginx entry was replaced with a minimal fail-closed
+HTTP/TLS reject block so unknown requests cannot fall through to another site.
+Site B platform, Grant, and delivered Outbox history remain. The current
+replacement Site A Codex Grant is active; the original earlier Grant remains
+revoked. The unrelated `app.wpauto.cc` endpoint returned 526 both before and
+after this operation; P4-A remains undeployed and was not changed. See
+`docs/P3C2B_SITE_B_RESOURCE_CLEANUP_2026-10-15.md` and
+`docs/P3C2C_SITE_B_INGRESS_RETIREMENT_2026-10-15.md`. Main deployment,
+migration 014, and P4-A remain unauthorized.
 The positive evidence and corrected lifecycle provisioning preflight are
 recorded in
 `docs/P3A_PRODUCTION_POSITIVE_ACCEPTANCE_2026-10-11.md` and
