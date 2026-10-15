@@ -13,7 +13,9 @@ const directory = '.tmp/control-claims-hotfix';
 const image = 'wepuu-control:candidate';
 const roots = ['package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', '.npmrc', 'tsconfig.json', 'tsconfig.base.json'];
 const sourceAllowed = new Set(['packages/pairing/src/index.ts', 'apps/control-api/src/server.ts', 'apps/control-api/src/server.test.ts']);
-const artifactAllowed = path => sourceAllowed.has(path) || /^(?:packages\/pairing\/dist\/index|apps\/control-api\/dist\/server)\.(?:js|js.map|d.ts|d.ts.map)$/.test(path);
+const artifactAllowed = path => sourceAllowed.has(path)
+  || /^(?:packages\/pairing\/dist\/index|apps\/control-api\/dist\/server)\.(?:js|js.map|d.ts|d.ts.map)$/.test(path)
+  || /^apps\/control-api\/dist\/server\.test\.js(?:\.map)?$/.test(path);
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 function command(binary, args) {
   return execFileSync(binary, args, { encoding: 'utf8', timeout: 120000, maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -99,7 +101,12 @@ try {
     assert.equal(inventory.fixturesPresent, false);
     assert.deepEqual(Object.keys(inventory.files).sort(), Object.keys(baseline.inventory.files).sort(), 'file_inventory');
     for (const [path, value] of Object.entries(inventory.files)) {
-      if (!artifactAllowed(path)) assert.equal(value, baseline.inventory.files[path], 'unchanged_runtime_file');
+      if (!artifactAllowed(path)) {
+        if (value !== baseline.inventory.files[path] && /^(?:apps|packages)\/[A-Za-z0-9_./-]+$/.test(path)) {
+          console.error(`E1B_UNAPPROVED_FILE_DIFFERENCE=${path}`);
+        }
+        assert.equal(value, baseline.inventory.files[path], 'unchanged_runtime_file');
+      }
     }
     for (const path of sourceAllowed) assert.equal(inventory.files[path], hash(gitBytes('HEAD', path)), 'backport_identity');
     assert.deepEqual(inventory.migrations, Object.keys(P3D_MIGRATIONS).sort());

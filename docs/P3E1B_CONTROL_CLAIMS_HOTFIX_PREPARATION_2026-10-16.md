@@ -69,6 +69,24 @@ Local PHP/Docker/database tests are NOT_RUN when their prerequisites are absent.
 The known Windows PowerShell Security/Cert-drive HTTPS fixture failure is not
 disabled, and local skip/failure is not represented as a pass.
 
+Actual local results: typecheck/lint PASS; diagnostic/baseline parity 36 PASS;
+source/OTP/migration boundary 3 PASS; extraction safety 3 PASS; targeted
+pairing/Control 34 PASS, 0 FAIL, 1 existing DB-dependent SKIP. Final full check:
+132 PASS, 1 existing Windows certificate-provider FAIL, 18 environment SKIP.
+An initial local boundary fixture named a nonexistent database quota path; it
+was corrected to the actual unchanged account-auth/otp-send-quota.ts and passed.
+
+First Hosted run [38817877666](https://github.com/wepuu/wp-auto/actions/runs/38817877666)
+at `94b328515db125502e34a8130d29f0b3b1dc4b74` passed strict checks, real signer,
+PostgreSQL, guard and production baseline registry/config/source identity.
+Candidate construction succeeded but the compiled-file boundary gate rejected
+the changed server.test.js/map: the inherited tsconfig compiles src/**/*.ts,
+including the approved HTTP regression. Local baseline/candidate inventory
+comparison identified exactly those two omitted test artifacts; only those
+explicit paths were added to the allowlist. No source, dependency, migration,
+runtime validation or whole-directory comparison was loosened. Remaining gates
+and artifact upload did NOT run on this failed attempt; its image is not approved.
+
 Hosted validation and artifact identity: PENDING until actual execution.
 Mandatory gates include OTP rolling quota/DB faults/Better Auth HTTP/provider
 mock tests, real signer, baseline identity, exact image boundary, actual Control
