@@ -9,6 +9,17 @@ const name = `p3d-ingress-${randomBytes(6).toString('hex')}`;
 const directory = await mkdtemp(join(tmpdir(), 'p3d-ingress-'));
 const run = (args) => execFileSync('docker', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 try {
+  const composeArgs = ['compose', '--env-file', 'deploy/wpauto-vps/runtime.env.example',
+    '--file', 'deploy/wpauto-vps/compose.yaml'];
+  const baseConfig = JSON.parse(run([...composeArgs, 'config', '--format', 'json']));
+  const mergedConfig = JSON.parse(run([...composeArgs, '--file', 'deploy/wpauto-vps/p3d-control.override.yaml', 'config', '--format', 'json']));
+  assert.deepEqual(mergedConfig.services.control.command, ['node', 'apps/control-api/dist/main.js']);
+  assert.equal(mergedConfig.services.control.environment.WEPUU_EMAIL_OTP_SEND_ENABLED, 'false');
+  assert.equal(mergedConfig.services.control.volumes.some((v) => v.target === '/run/secrets/email_otp_limit_hmac_key'
+    && v.read_only === true && v.bind.create_host_path === false), true);
+  for (const service of ['authorization', 'postgres']) {
+    assert.deepEqual(mergedConfig.services[service], baseConfig.services[service], 'only_control_changes');
+  }
   const guard = await readFile('deploy/wpauto-vps/p3d-otp-send-deny.conf', 'utf8');
   await writeFile(join(directory, 'nginx.conf'), `events {} http { server { listen 8080; server_name auth.example.test;
     ${guard}
