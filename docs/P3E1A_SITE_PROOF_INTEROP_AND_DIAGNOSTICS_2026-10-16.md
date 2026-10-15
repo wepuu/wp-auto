@@ -84,13 +84,37 @@ Local environment: Windows, Node 26.11.1. PHP and Docker not available locally.
 | Full pnpm check | FAIL: existing Windows HTTPS certificate fixture cannot load Microsoft.PowerShell.Security / Cert drive |
 | Real PHP signer locally | NOT_RUN: no PHP/Docker; not a production failure |
 | Local database and OCI gates | NOT_RUN: no isolated PostgreSQL/Docker |
-| Hosted full CI, real signer, database, OCI/audit | PENDING; must execute before candidate PASS |
+| Hosted full CI, real signer, database, OCI/audit | PASS; evidence below |
 
 No Windows TLS verification was disabled and no existing test was removed or
 made optional. Hosted Linux CI must run the HTTPS test, PostgreSQL tests, real
 signer gates, non-root OCI exclusion checks, dependency audit and retained
 conformance gates. The pinned pre-change verifier source is read from Git and
 compiled only in memory for a before/after acceptance comparison.
+
+### Executed Hosted evidence
+
+[Hosted run 38809330475](https://github.com/wepuu/wp-auto/actions/runs/38809330475)
+completed successfully against code commit
+`a83f74e75153b23109da289c33ba1a9c7cb88202`.
+
+- Strict checks: 256 PASS, 0 FAIL, 1 existing opt-in PHP test SKIP. The explicit
+  legacy PHP step ran separately and returned `PHP_SITE_PROOF_INTEROP=pass`.
+- PHP 8.2.28: 9 real-signer positive scenarios and 9 PEM byte-mismatch
+  rejections PASS. PHP 8.1.34: the same 18 assertions PASS.
+- ZIP security/extraction: 3 PASS. PostgreSQL migration/isolation: 28 PASS,
+  0 FAIL, 0 SKIP.
+- Non-root OCI build and fixture exclusion, production-mode local signing OCI,
+  isolated database backup/restore/tombstone replay: PASS.
+- Dependency audit, SBOM/license metadata and contract/evidence checks: PASS.
+- Retained OAuth conformance: 37 PASS, 0 FAIL, 1 existing SKIP; the skipped
+  historical coverage is not represented as a pass.
+
+The original ZIP signer/dependencies did not reproduce an incompatibility in
+these synthetic environments. This does not prove production dependency or
+FPM context equivalence, exclude historical clock skew, or reveal which
+historical claim failed. No runtime compatibility repair is justified by the
+results; this candidate adds diagnostics only.
 
 ## Diagnostic and data-flow review
 
@@ -114,11 +138,12 @@ backup/deploy/health/rollback. This PR neither builds release artifacts nor
 publishes/deploys them. Local-state recovery and any next pairing are separate
 authorizations. Never reissue the consumed proof or clear identity/options.
 
-## Candidate status (before Hosted CI)
+## Candidate status (after executed Hosted CI)
 
 ```text
 P3E1_PAIRING_PROOF_LOCAL_INTEROP_PASS=NOT_RUN
-P3E1_CLAIMS_DIAGNOSTICS_CANDIDATE_PASS=False
+P3E1_PAIRING_PROOF_HOSTED_INTEROP_PASS=True
+P3E1_CLAIMS_DIAGNOSTICS_CANDIDATE_PASS=True
 P3E1_HISTORICAL_PROOF_ROOT_CAUSE_CONFIRMED=False
 P3E1_NEW_SITE_PLATFORM_PAIRING_PASS=False
 P3D_REAL_EMAIL_ACCEPTANCE_PASS=True
@@ -128,6 +153,8 @@ READY_FOR_CONTROLLED_USE=False
 NOT_READY_FOR_PUBLIC_REGISTRATION=True
 ```
 
-Interoperability and candidate status will be updated only from actual Hosted
-execution. Historical root cause and production pairing remain unconfirmed/failed
-even if every synthetic test passes.
+`LOCAL` above means this Windows workstation (no PHP/Docker), not the Hosted
+synthetic environment. Hosted interop was actually executed and is separately
+reported. Historical root cause and production pairing remain unconfirmed/failed
+despite the passing synthetic tests. A documentation-only follow-up records
+these results; the PR's latest-head CI must also remain green before handoff.
