@@ -199,6 +199,7 @@ try {
     '--security-opt', 'no-new-privileges:true', '--add-host', 'host.docker.internal:host-gateway',
     '--mount', `type=volume,source=${volumeName},target=/run/secrets,readonly`];
   for (const name of Object.keys(controlEnvironment)) controlArgs.push('--env', name);
+  const ledgerBeforeControl = await queryCandidate('SELECT row_to_json(m)::text AS row FROM public.wepuu_schema_migrations m ORDER BY name');
   controlArgs.push(controlImage); // Actual default service command, never migrate.
   execute(controlArgs, { environment: controlEnvironment });
   let controlReady = false;
@@ -217,6 +218,11 @@ try {
     console.error(`CONTROL_STARTUP_CLASS=${known.find((code) => text.includes(code)) ?? 'unknown'}`);
     throw new Error('control_runtime_not_ready');
   }
+  const ledgerAfterControl = await queryCandidate('SELECT row_to_json(m)::text AS row FROM public.wepuu_schema_migrations m ORDER BY name');
+  if (JSON.stringify(ledgerBeforeControl.rows) !== JSON.stringify(ledgerAfterControl.rows)) throw new Error('control_startup_changed_migration_ledger');
+  execute(['exec', controlName, 'node', '-e',
+    "if(process.env.WEPUU_EMAIL_OTP_SEND_ENABLED!=='false')process.exit(1)"]);
+  process.stdout.write('CONTROL_STARTUP_LEDGER_UNCHANGED=True\nCONTROL_ACTUAL_SEND_PAUSED=True\n');
   execute(['rm', '-f', controlName]);
   const inspectAuth = `import {accountAuthFromEnvironment} from './packages/account-auth/dist/index.js';
     const auth=await accountAuthFromEnvironment(process.env,{applicationName:'p3d-oci',databaseRole:'wepuu_account_auth_writer'});
