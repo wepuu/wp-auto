@@ -155,7 +155,10 @@ test('P3-D real Better Auth handler preserves OTP on blocked resend, observes ou
   }));
   assert.equal(login.status, 200, 'previous_otp_still_verifies');
   assert.equal(login.headers.getSetCookie().some((cookie) => cookie.startsWith('__Host-wepuu_session=')), true);
-  assert.equal((await send('reject@example.test', '192.0.2.6')).status >= 400, true);
+  // The official internal handler can acknowledge a callback rejection; the
+  // public Control form uses the private outcome channel to return 503.
+  assert.equal((await send('reject@example.test', '192.0.2.6')).status, 200);
+  assert.equal(auth.takeDeliveryOutcome(`delivery_P3D_${String(requestId).padStart(12, '0')}`), 'rejected');
   assert.equal((await send('unknown@example.test', '192.0.2.7')).status, 200);
   assert.equal(sends, 3);
   const outcomes = await pool.query<{ outcome: string }>('SELECT outcome FROM auth.otp_send_reservations ORDER BY reserved_at');
@@ -205,4 +208,19 @@ test('P3-D real Better Auth handler preserves OTP on blocked resend, observes ou
   assert.equal((await send('retained@example.test', '192.0.2.8', retained)).status, 200, 'known_accepted_not_rewritten_on_persistence_failure');
   assert.equal(retainedSends, 1, 'no_retry_on_observer_or_outcome_failure');
   assert.equal(await quota.remaining(), 6, 'unresolved_result_remains_charged');
+  for (const [email, remoteAddress, expectedStatus] of [
+    ['rejectui@example.test', '192.0.2.100', 503], ['unknownui@example.test', '192.0.2.101', 202]
+  ] as const) {
+    const page = await app.inject({ method: 'GET', url: '/v1/account/login', remoteAddress });
+    const formCsrf = /name="csrf" value="([A-Za-z0-9_-]{43})"/u.exec(page.body)?.[1];
+    const formTransaction = /name="transaction" value="([A-Za-z0-9_-]{43})"/u.exec(page.body)?.[1];
+    assert.ok(formCsrf && formTransaction);
+    const result = await app.inject({ method: 'POST', url: '/v1/account/email/send', remoteAddress,
+      headers: { origin: issuer, cookie: `__Host-wepuu_csrf=${formCsrf}`, 'content-type': 'application/x-www-form-urlencoded' },
+      payload: new URLSearchParams({ csrf: formCsrf, transaction: formTransaction, email }).toString() });
+    assert.equal(result.statusCode, expectedStatus, 'public_delivery_status');
+    assert.equal(result.body.includes('SECRET_'), false);
+  }
+  assert.equal(sends, 5, 'public_forms_send_once_each');
+  assert.equal(await quota.remaining(), 4, 'public_unknown_and_rejection_charged');
 });
