@@ -1,13 +1,19 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { lstat, readFile } from 'node:fs/promises';
 import type { IncomingHttpHeaders } from 'node:http';
 import { resolve } from 'node:path';
 import { betterAuth } from 'better-auth';
+import { APIError, createAuthMiddleware } from 'better-auth/api';
 import { fromNodeHeaders } from 'better-auth/node';
 import { emailOTP } from 'better-auth/plugins';
 import { PostgresDialect } from 'kysely';
 import { Pool } from 'pg';
 import { Resend } from 'resend';
 import { z } from 'zod';
+import { DEFAULT_OTP_SEND_LIMITS, PostgresOtpSendQuota, validateOtpSendLimits,
+  type OtpDeliveryOutcome, type OtpSendEvent, type OtpSendLimits, type OtpSendQuota } from './otp-send-quota.js';
+export { DEFAULT_OTP_SEND_LIMITS, PostgresOtpSendQuota, validateOtpSendLimits } from './otp-send-quota.js';
+export type { OtpDeliveryOutcome, OtpSendEvent, OtpSendLimits, OtpSendQuota } from './otp-send-quota.js';
 
 export const ACCOUNT_AUTH_SESSION_COOKIE = '__Host-wepuu_session';
 export const ACCOUNT_AUTH_BASE_PATH = '/api/auth';
@@ -26,7 +32,6 @@ const DeliveryIdSchema = z.string().regex(/^[A-Za-z0-9_-]{16,128}$/u);
 const DeliveryModeSchema = z.enum(['mock', 'resend']);
 
 export type AccountAuthSecret = Readonly<{ version: number; value: string }>;
-export type OtpDeliveryOutcome = 'accepted' | 'rejected' | 'unknown';
 
 function validatedSender(input: string): string {
   if (input.length > 320 || /[\r\n]/u.test(input)) throw new Error('resend_sender_invalid');
@@ -36,7 +41,7 @@ function validatedSender(input: string): string {
 }
 
 export interface OtpEmailSender {
-  send(input: Readonly<{ email: string; otp: string }>): Promise<OtpDeliveryOutcome>;
+  send(input: Readonly<{ email: string; otp: string; idempotencyKey?: string }>): Promise<OtpDeliveryOutcome>;
 }
 
 export class MockOtpEmailSender implements OtpEmailSender {
@@ -64,7 +69,7 @@ export class ResendOtpEmailSender implements OtpEmailSender {
     this.#replyTo = options.replyTo === undefined ? undefined : EmailSchema.parse(options.replyTo);
   }
 
-  async send(input: Readonly<{ email: string; otp: string }>): Promise<OtpDeliveryOutcome> {
+  async send(input: Readonly<{ email: string; otp: string; idempotencyKey?: string }>): Promise<OtpDeliveryOutcome> {
     try {
       const result = await this.#resend.emails.send({
         from: this.#from,
@@ -73,9 +78,13 @@ export class ResendOtpEmailSender implements OtpEmailSender {
         text: `Your WePuu verification code is ${input.otp}. It expires in 5 minutes. If you did not request this code, you can ignore this email.`,
         html: `<div style="font-family:system-ui,sans-serif;color:#17242e"><h1>Verify your email</h1><p>Use this code to sign in to WePuu:</p><p style="font-size:32px;font-weight:700;letter-spacing:8px">${input.otp}</p><p>This code expires in 5 minutes. If you did not request it, you can ignore this email.</p></div>`,
         ...(this.#replyTo === undefined ? {} : { replyTo: this.#replyTo })
-      }, { signal: AbortSignal.timeout(5_000) });
-      if (result.error !== null) return 'rejected';
-      return result.data.id === '' ? 'unknown' : 'accepted';
+      }, { signal: AbortSignal.timeout(5_000),
+        ...(input.idempotencyKey === undefined ? {} : { idempotencyKey: input.idempotencyKey }) });
+      if (result.error !== null) {
+        const status = result.error.statusCode;
+        return typeof status === 'number' && status >= 400 && status < 500 ? 'rejected' : 'unknown';
+      }
+      return typeof result.data.id === 'string' && result.data.id.trim() !== '' ? 'accepted' : 'unknown';
     } catch {
       // A timeout or transport failure cannot establish whether Resend accepted the request.
       return 'unknown';
@@ -98,6 +107,9 @@ export interface CreateAccountAuthOptions {
   readonly emailSender: OtpEmailSender;
   readonly rateLimit?: AccountAuthRateLimitConfig;
   readonly databaseRole?: 'wepuu_account_auth_writer' | 'wepuu_account_auth_reader';
+  readonly otpSendProtection?: Readonly<{ key: Uint8Array; limits?: OtpSendLimits; enabled?: boolean }>;
+  readonly otpSendQuota?: OtpSendQuota;
+  readonly otpSendObserver?: (event: OtpSendEvent) => void;
 }
 
 export interface AccountAuthSession {
@@ -112,6 +124,7 @@ export interface AccountAuth {
   takeDeliveryOutcome(deliveryId: string): OtpDeliveryOutcome | undefined;
   signOut(headers: Headers): Promise<Response>;
   close(): Promise<void>;
+  otpBudgetRemaining?(): Promise<number>;
 }
 
 function protectedProviderAccount<T extends Record<string, unknown>>(account: T): T {
@@ -273,6 +286,16 @@ export function createAccountAuth(options: CreateAccountAuthOptions): AccountAut
   const secrets = validateSecrets(options.secrets);
   const limits = options.rateLimit ?? defaultRateLimit;
   const { pool, database } = databaseOptions(options);
+  const quota = options.otpSendQuota ?? (options.otpSendProtection === undefined ? undefined
+    : new PostgresOtpSendQuota(pool, options.otpSendProtection.key, options.otpSendProtection.limits));
+  if (options.emailSender instanceof ResendOtpEmailSender && quota === undefined) {
+    void pool.end();
+    throw new Error('otp_send_protection_required');
+  }
+  const requests = new AsyncLocalStorage<{ request: Request; reservation?: string; email?: string; limited?: boolean }>();
+  const observe = (event: OtpSendEvent): void => {
+    try { options.otpSendObserver?.(event); } catch { /* Metrics never change send semantics. */ }
+  };
   const deliveryOutcomes = new Map<string, { outcome: OtpDeliveryOutcome; expiresAt: number }>();
   const security = accountAuthSecurityOptions();
   const auth = betterAuth({
@@ -282,6 +305,42 @@ export function createAccountAuth(options: CreateAccountAuthOptions): AccountAut
     trustedOrigins: [publicOrigin],
     secrets,
     database,
+    logger: { disabled: true }, // Diagnostics use only the fixed observer events below.
+    hooks: {
+      before: createAuthMiddleware(async (context) => {
+        if (context.path !== '/email-otp/send-verification-otp') return;
+        if (options.databaseRole === 'wepuu_account_auth_reader' || options.otpSendProtection?.enabled === false) {
+          throw new APIError('SERVICE_UNAVAILABLE', { message: 'otp_send_unavailable' });
+        }
+        if (quota === undefined) return; // Explicit mock/schema callers; runtime writers always install quota.
+        const state = requests.getStore();
+        const deliveryId = state?.request.headers.get(ACCOUNT_AUTH_DELIVERY_ID_HEADER);
+        const body = z.object({ email: z.string(), type: z.literal('sign-in') }).strict().safeParse(context.body);
+        if (state === undefined || state.request.headers.get('origin') !== publicOrigin
+          || !DeliveryIdSchema.safeParse(deliveryId).success || !body.success) {
+          throw new APIError('BAD_REQUEST', { message: 'otp_send_invalid' });
+        }
+        let email: string;
+        try { email = normalizeAccountEmail(body.data.email); }
+        catch { throw new APIError('BAD_REQUEST', { message: 'otp_send_invalid' }); }
+        let reservation;
+        try { reservation = await quota.reserve(email); }
+        catch {
+          observe({ kind: 'storage_failed' });
+          throw new APIError('SERVICE_UNAVAILABLE', { message: 'otp_send_unavailable' });
+        }
+        if (!reservation.allowed) {
+          state.limited = true;
+          observe({ kind: 'limited', dimension: reservation.dimension });
+          throw new APIError('TOO_MANY_REQUESTS', { message: 'otp_send_limited' }, {
+            'retry-after': String(reservation.retryAfterSeconds)
+          });
+        }
+        state.email = email;
+        state.reservation = reservation.id;
+        return { context: { body: { email, type: 'sign-in' } } };
+      })
+    },
     ...security,
     advanced: {
       ...security.advanced,
@@ -309,7 +368,28 @@ export function createAccountAuth(options: CreateAccountAuthOptions): AccountAut
         if (deliveryId === null || deliveryId === undefined || !DeliveryIdSchema.safeParse(deliveryId).success) {
           throw new Error('otp_delivery_context_missing');
         }
-        const outcome = await options.emailSender.send({ email, otp });
+        const state = requests.getStore();
+        if (quota !== undefined) {
+          if (state?.reservation === undefined || state.email !== normalizeAccountEmail(email)) {
+            throw new Error('otp_send_reservation_missing');
+          }
+          try {
+            if (!await quota.claim(state.reservation)) throw new Error('otp_send_reservation_used');
+          } catch {
+            observe({ kind: 'storage_failed' });
+            throw new Error('otp_send_unavailable');
+          }
+        }
+        observe({ kind: 'attempt' });
+        let outcome: OtpDeliveryOutcome;
+        try {
+          outcome = await options.emailSender.send({ email, otp,
+            ...(state?.reservation === undefined ? {} : { idempotencyKey: state.reservation }) });
+        } catch { outcome = 'unknown'; }
+        observe({ kind: outcome });
+        if (quota !== undefined && state?.reservation !== undefined) {
+          await quota.finish(state.reservation, outcome).catch(() => { observe({ kind: 'storage_failed' }); });
+        }
         const now = Date.now();
         for (const [key, value] of deliveryOutcomes) {
           if (value.expiresAt <= now) deliveryOutcomes.delete(key);
@@ -322,7 +402,14 @@ export function createAccountAuth(options: CreateAccountAuthOptions): AccountAut
   });
 
   return {
-    handle: (request) => auth.handler(request),
+    handle: (request) => requests.run({ request }, async () => {
+      const response = await auth.handler(request);
+      if (response.status === 429 && requests.getStore()?.limited !== true
+        && new URL(request.url).pathname === `${ACCOUNT_AUTH_BASE_PATH}/email-otp/send-verification-otp`) {
+        observe({ kind: 'limited', dimension: 'ip' });
+      }
+      return response;
+    }),
     async getSession(headers) {
       const value = await auth.api.getSession({
         headers,
@@ -341,7 +428,8 @@ export function createAccountAuth(options: CreateAccountAuthOptions): AccountAut
       return value?.outcome;
     },
     signOut: (headers) => auth.api.signOut({ headers, asResponse: true }),
-    close: () => pool.end()
+    close: () => pool.end(),
+    ...(quota === undefined ? {} : { otpBudgetRemaining: () => quota.remaining() })
   };
 }
 
@@ -362,6 +450,7 @@ export async function accountAuthFromEnvironment(
   options: Readonly<{
     applicationName: string;
     databaseRole: 'wepuu_account_auth_writer' | 'wepuu_account_auth_reader';
+    otpSendObserver?: (event: OtpSendEvent) => void;
   }>
 ): Promise<AccountAuth> {
   const databaseUrl = environment['WEPUU_DATABASE_URL'];
@@ -394,13 +483,30 @@ export async function accountAuthFromEnvironment(
   } else {
     emailSender = new MockOtpEmailSender();
   }
-  return createAccountAuth({
+  let otpSendProtection: CreateAccountAuthOptions['otpSendProtection'];
+  if (options.databaseRole === 'wepuu_account_auth_writer') {
+    const keyFile = environment['WEPUU_EMAIL_OTP_LIMIT_HMAC_KEY_FILE'];
+    if (keyFile === undefined) throw new Error('otp_send_key_file_required');
+    const value = (await loadProtectedFile(keyFile, fileOptions)).trim();
+    const key = Buffer.from(value, 'base64url');
+    if (key.byteLength !== 32 || key.toString('base64url') !== value) throw new Error('otp_send_key_invalid');
+    const enabled = environment['WEPUU_EMAIL_OTP_SEND_ENABLED'] ?? 'true';
+    if (enabled !== 'true' && enabled !== 'false') throw new Error('otp_send_enabled_invalid');
+    otpSendProtection = { key, enabled: enabled === 'true', limits: validateOtpSendLimits({
+      recipientHourlyMax: boundedInteger(environment, 'WEPUU_EMAIL_OTP_RECIPIENT_HOURLY_MAX', DEFAULT_OTP_SEND_LIMITS.recipientHourlyMax, 1, 20),
+      recipientDailyMax: boundedInteger(environment, 'WEPUU_EMAIL_OTP_RECIPIENT_DAILY_MAX', DEFAULT_OTP_SEND_LIMITS.recipientDailyMax, 1, 100),
+      globalDailyMax: boundedInteger(environment, 'WEPUU_EMAIL_OTP_GLOBAL_DAILY_MAX', DEFAULT_OTP_SEND_LIMITS.globalDailyMax, 1, 10_000)
+    }) };
+  }
+  const result = createAccountAuth({
     databaseUrl,
     applicationName: options.applicationName,
     publicOrigin,
     secrets: await loadAccountAuthSecrets(secretFile, fileOptions),
     databaseRole: options.databaseRole,
     emailSender,
+    ...(otpSendProtection === undefined ? {} : { otpSendProtection }),
+    ...(options.otpSendObserver === undefined ? {} : { otpSendObserver: options.otpSendObserver }),
     rateLimit: {
       sendWindowSeconds: boundedInteger(environment, 'WEPUU_EMAIL_OTP_SEND_WINDOW_SECONDS', 60, 10, 3_600),
       sendMax: boundedInteger(environment, 'WEPUU_EMAIL_OTP_SEND_MAX', 1, 1, 10),
@@ -408,6 +514,13 @@ export async function accountAuthFromEnvironment(
       verifyMax: boundedInteger(environment, 'WEPUU_EMAIL_OTP_VERIFY_MAX', 5, 1, 20)
     }
   });
+  try {
+    await result.otpBudgetRemaining?.();
+    return result;
+  } catch {
+    await result.close();
+    throw new Error('otp_send_storage_unavailable');
+  }
 }
 
 // Exported only for the pinned CLI schema-generation entry point.

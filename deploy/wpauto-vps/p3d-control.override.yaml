@@ -1,0 +1,17 @@
+# P3-D4 only: explicitly include after the existing production compose file.
+services:
+  control:
+    command: ["node", "apps/control-api/dist/main.js"]
+    environment:
+      WEPUU_EMAIL_OTP_LIMIT_HMAC_KEY_FILE: /run/secrets/email_otp_limit_hmac_key
+      WEPUU_EMAIL_OTP_SEND_ENABLED: ${WEPUU_EMAIL_OTP_SEND_ENABLED:-false}
+      WEPUU_EMAIL_OTP_RECIPIENT_HOURLY_MAX: ${WEPUU_EMAIL_OTP_RECIPIENT_HOURLY_MAX:-3}
+      WEPUU_EMAIL_OTP_RECIPIENT_DAILY_MAX: ${WEPUU_EMAIL_OTP_RECIPIENT_DAILY_MAX:-6}
+      WEPUU_EMAIL_OTP_GLOBAL_DAILY_MAX: ${WEPUU_EMAIL_OTP_GLOBAL_DAILY_MAX:-100}
+    volumes:
+      - type: bind
+        source: ./secrets/email_otp_limit_hmac_key
+        target: /run/secrets/email_otp_limit_hmac_key
+        read_only: true
+        bind:
+          create_host_path: false
