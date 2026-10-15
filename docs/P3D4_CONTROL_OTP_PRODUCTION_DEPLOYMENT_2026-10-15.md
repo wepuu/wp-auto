@@ -65,7 +65,7 @@ ran. A same-command review request with the verified scope was also rejected:
 the reviewer did not consider current trusted authorization sufficient for this
 P3-D4 registry publication. No alternate API, host or indirect route was used.
 GitHub run inventory for this publication branch was empty after the first
-block. No publication command was executed by the agent.
+block. At that earlier stop no publication command had executed.
 
 The operator subsequently supplied explicit chat-body approval for the exact
 P3-D4 publication, backup, send guard, selective migration, Control-only deploy
@@ -162,6 +162,8 @@ Budget rows0. No generic/full migrate or manual migration-history edit.
 
 Actual /opt/wpauto/bin/deploy-service, matching reviewed b1e8fc2a... SHA,
 deployed only Control at the new immutable reference. Deployment exit0.
+New Control started at 2026-10-15 20:22:38.879 Asia/Shanghai
+(12:22:38.879 UTC).
 COMPOSE_FILE was explicit for the invocation and persisted for its Compose
 operations, including automatic rollback. Effective and actual container CMD:
 `node apps/control-api/dist/main.js`; no startup migrate.
@@ -177,6 +179,7 @@ only, then independently verify health rather than trusting script output.
 - Five scoped services healthy, OOM flags false, restart counts0. Only Control
   container ID changed; all four peer IDs, image refs and started times unchanged.
   Host oom_kill count remained174. No sustained severe pressure observed.
+  Postcheck MemAvailable was about1000 MiB; PSI full avg10=0.00, avg60=0.02.
 - Control live/ready and standard curl public health returned200.
   Authorization public Discovery/JWKS returned200, issuer correct, public-only
   keys. Site A WordPress login HEAD200; no WordPress content or MCP tool data read.
