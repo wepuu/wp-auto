@@ -305,18 +305,21 @@ remain in their original records. See
 `P3B3_APPLICATION_PASSWORD_ACCEPTANCE_2026-10-14.md`, and
 `P3B3_APPLICATION_PASSWORD_PRODUCTION_ACCEPTANCE_2026-10-14.md`.
 
-A separately authorized P3-C2B cleanup then removed the temporary Site B
-WordPress/MariaDB containers, project-only volumes and network, and project
-directory after a verified backup. Site B's platform records and delivered
-historical revocation events remain; no Site A data, OAuth Grant history,
-Outbox row, or database migration was deleted or rewritten. Because the
-Cloudflare-proxied DNS target could not be proven to be an exact Site B record,
-the DNS record, dedicated Nginx vhost, and certificate were deliberately
-retained. The retained vhost still targets the now-absent loopback service,
-so origin-direct HTTPS returns 502 and does not fall through to a default
-virtual host. Ingress retirement remains incomplete and requires exact DNS
-ownership confirmation and a separate safe removal step. See
-`P3C2B_SITE_B_RESOURCE_CLEANUP_2026-10-15.md`.
+A separately authorized P3-C2B cleanup removed the temporary Site B
+WordPress/MariaDB containers, project-only volumes/network, and project
+directory after verified backups. In P3-C2C, the operator confirmed deletion of
+the Cloudflare DNS record. The exclusive Let's Encrypt certificate, private
+key, PFX/CSR files, and the Baota saved certificate copy were backed up and
+removed after SAN, file ownership, and reference checks. The test2 vhost was
+replaced with an exact-host HTTP close and TLS handshake rejection, preventing
+unknown test2 traffic from falling through to another site; Nginx validation
+and reload passed. No platform Site/Grant/Outbox history or database migration
+was deleted or rewritten. Site A/auth endpoints remained healthy. The unrelated
+`app.wpauto.cc` endpoint returned 526 both before and after and was not
+changed; P4-A remains undeployed. Site B cleanup is complete while its
+historical platform records remain. See
+`P3C2B_SITE_B_RESOURCE_CLEANUP_2026-10-15.md` and
+`P3C2C_SITE_B_INGRESS_RETIREMENT_2026-10-15.md`.
 
 Aggregate readiness is not promoted by this code/evidence integration:
 `P3_FULL_ACCEPTANCE_PASS=False`, `READY_FOR_CONTROLLED_USE=False`, and
