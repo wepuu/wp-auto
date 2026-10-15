@@ -197,16 +197,16 @@ test('P3-D real Better Auth handler preserves OTP on blocked resend, observes ou
   const absent = await unavailable.inject({ method: 'GET', url: '/internal/metrics', headers: { authorization: 'Bearer p3d-test-only-metrics-token-00000000000' } });
   assert.equal(absent.statusCode, 503);
   assert.equal(absent.body.includes('wepuu_otp_budget_remaining'), false, 'no_fabricated_gauge');
-  for (const guardedAuth of [disabled, broken]) {
+  for (const [guardedAuth, remoteAddress] of [[disabled, '192.0.2.201'], [broken, '192.0.2.202']] as const) {
     const guarded = buildControlApi({ identityProvider: { async authenticate() { return undefined; } },
       store: new PostgresControlStore(database), audit: new PostgresSecurityAuditSink(database), accountAuth: guardedAuth,
       loginTransactions: new PostgresAccountLoginTransactionStore(database), publicOrigin: issuer });
     cleanup(() => guarded.close());
-    const page = await guarded.inject({ method: 'GET', url: '/v1/account/login' });
+    const page = await guarded.inject({ method: 'GET', url: '/v1/account/login', remoteAddress });
     const formCsrf = /name="csrf" value="([A-Za-z0-9_-]{43})"/u.exec(page.body)?.[1];
     const formTransaction = /name="transaction" value="([A-Za-z0-9_-]{43})"/u.exec(page.body)?.[1];
     assert.ok(formCsrf && formTransaction);
-    const denied = await guarded.inject({ method: 'POST', url: '/v1/account/email/send', remoteAddress: '192.0.2.201',
+    const denied = await guarded.inject({ method: 'POST', url: '/v1/account/email/send', remoteAddress,
       headers: { origin: issuer, cookie: `__Host-wepuu_csrf=${formCsrf}`, 'content-type': 'application/x-www-form-urlencoded' },
       payload: new URLSearchParams({ csrf: formCsrf, transaction: formTransaction, email: 'first@example.test' }).toString() });
     assert.equal(denied.statusCode, 503);
