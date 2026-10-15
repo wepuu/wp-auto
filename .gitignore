@@ -23,3 +23,4 @@ dist/
 spikes/oauth-conformance/.artifacts/
 spikes/oauth-conformance/.tmp/
 .DS_Store
+tests/fixtures/p3e1a/__pycache__/

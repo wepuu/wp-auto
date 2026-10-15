@@ -2,6 +2,7 @@
 .github
 .pnpm-store
 .tmp
+tests/fixtures/p3e1a/
 node_modules
 docs
 spikes
