@@ -16,6 +16,7 @@ const suffix = randomBytes(6).toString('hex');
 const databaseName = `wepuu_oci_${suffix}`;
 const volumeName = `wepuu-local-signing-${suffix}`;
 const containerName = `wepuu-authorization-${suffix}`;
+const controlName = `wepuu-control-${suffix}`;
 const slot = `candidate-${suffix}`;
 const privateKeyPath = '/run/secrets/private.pem';
 const passphrasePath = '/run/secrets/passphrase';
@@ -126,6 +127,15 @@ try {
   dockerRun(authorizationImage, ['packages/database/dist/cli.js', 'migrate'], {
     hostGateway: true, entrypoint: 'node', environment: databaseEnvironment
   });
+  dockerRun(controlImage, ['packages/database/dist/p3d-migration-cli.js', 'apply-p3d-015'], {
+    hostGateway: true, entrypoint: 'node', readOnly: true,
+    environment: { ...databaseEnvironment, WEPUU_P3D_MIGRATION_APPROVED: 'true' }
+  });
+  dockerRun(controlImage, ['-e', `const fs=require('node:fs'),c=require('node:crypto');
+    fs.writeFileSync('/run/secrets/otp-hmac',c.randomBytes(32).toString('base64url'),{mode:0o600});
+    fs.writeFileSync('/run/secrets/resend-fake','re_isolated_oci_never_send',{mode:0o600});`], {
+    volume: true, entrypoint: 'node'
+  });
   dockerRun(authorizationImage, ['packages/database/dist/signing-keys-cli.js', 'publish', '--slot', slot], {
     hostGateway: true, volume: true, entrypoint: 'node',
     environment: { ...databaseEnvironment, WEPUU_SIGNING_KEYRING_FILE: keyringPath }
@@ -179,6 +189,43 @@ try {
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
   if (!ready) throw new Error(`authorization container did not become ready: ${execute(['logs', containerName]).stdout}`);
+  const controlEnvironment = { ...runtimeEnvironment,
+    WEPUU_CONTROL_HOST: '0.0.0.0', WEPUU_CONTROL_PORT: '3000',
+    WEPUU_EMAIL_DELIVERY: 'resend', WEPUU_RESEND_FROM: 'test@example.test',
+    WEPUU_RESEND_API_KEY_FILE: '/run/secrets/resend-fake',
+    WEPUU_EMAIL_OTP_LIMIT_HMAC_KEY_FILE: '/run/secrets/otp-hmac', WEPUU_EMAIL_OTP_SEND_ENABLED: 'false' };
+  const controlArgs = ['run', '-d', '--name', controlName, '--read-only', '--cap-drop', 'ALL',
+    '--security-opt', 'no-new-privileges:true', '--add-host', 'host.docker.internal:host-gateway',
+    '--mount', `type=volume,source=${volumeName},target=/run/secrets,readonly`];
+  for (const name of Object.keys(controlEnvironment)) controlArgs.push('--env', name);
+  controlArgs.push(controlImage); // Actual default service command, never migrate.
+  execute(controlArgs, { environment: controlEnvironment });
+  let controlReady = false;
+  for (let i = 0; i < 40; i++) {
+    const check = execute(['exec', controlName, 'node', '-e',
+      "fetch('http://127.0.0.1:3000/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"], { allowFailure: true });
+    if (check.status === 0) { controlReady = true; break; }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  if (!controlReady) throw new Error('control_runtime_not_ready');
+  execute(['rm', '-f', controlName]);
+  const inspectAuth = `import {accountAuthFromEnvironment} from './packages/account-auth/dist/index.js';
+    const auth=await accountAuthFromEnvironment(process.env,{applicationName:'p3d-oci',databaseRole:'wepuu_account_auth_writer'});
+    try {if(await auth.otpBudgetRemaining()!==100) throw Error('budget');} finally {await auth.close();}`;
+  for (const mutation of ['chmod 0444', 'chown 0:0']) {
+    dockerRun(controlImage, ['-ec', `${mutation} /run/secrets/otp-hmac`], { user: '0:0', volume: true, entrypoint: 'sh' });
+    const denied = dockerRun(controlImage, ['--input-type=module', '-e', inspectAuth], {
+      readOnly: true, volume: true, hostGateway: true, entrypoint: 'node', allowFailure: true, environment: controlEnvironment
+    });
+    if (denied.status === 0 || !/account_auth_secret_file_(?:permissions|owner)_invalid/u.test(denied.stderr)) throw new Error('unsafe_hmac_not_rejected');
+    dockerRun(controlImage, ['-ec', 'chown 1000:1000 /run/secrets/otp-hmac && chmod 0600 /run/secrets/otp-hmac'], { user: '0:0', volume: true, entrypoint: 'sh' });
+  }
+  dockerRun(controlImage, ['--input-type=module', '-e', inspectAuth], {
+    readOnly: true, volume: true, hostGateway: true, entrypoint: 'node', environment: controlEnvironment
+  });
+  const ledger = await queryCandidate('SELECT name FROM public.wepuu_schema_migrations ORDER BY name');
+  if (ledger.rows.length !== 14 || ledger.rows.some((r) => r.name.startsWith('014_'))) throw new Error('migration_boundary');
+  process.stdout.write('CONTROL_RUNTIME_OCI_PASS=True\nHMAC_NON_ROOT_CUSTODY_PASS=True\n');
 
   const jwksResult = execute([
     'exec', containerName, 'node', '-e',
@@ -224,6 +271,7 @@ try {
 
   process.stdout.write(`LOCAL_SIGNING_OCI_PASS=True\nLOCAL_SIGNING_KID=${descriptor.kid}\nJWKS_PRIVATE_MEMBERS=0\nAWS_KMS_RUNTIME_DEPENDENCY=absent\n`);
 } finally {
+  execute(['rm', '-f', controlName], { allowFailure: true });
   execute(['rm', '-f', containerName], { allowFailure: true });
   execute(['volume', 'rm', '-f', volumeName], { allowFailure: true });
   if (databaseCreated) await dropDatabase().catch(() => undefined);

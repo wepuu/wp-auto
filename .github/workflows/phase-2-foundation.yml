@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  packages: read
 
 jobs:
   validate:
@@ -33,6 +34,8 @@ jobs:
       CONFORMANCE_DATABASE_URL: postgresql://postgres:conformance@127.0.0.1:5432/wepuu_test
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 26.7.0
@@ -50,12 +53,23 @@ jobs:
         run: pnpm check
       - name: PostgreSQL migration and isolation tests
         run: pnpm test:database
-      - name: Build portable non-root OCI images
+      - name: Rollback send guard on real isolated Nginx
+        run: node scripts/test-p3d-rollback-ingress.mjs
+      - name: Verify retained production Control source identity before building
+        env:
+          GHCR_READ_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          docker build --file deploy/Control.Containerfile --tag wepuu-control:candidate .
-          docker build --file deploy/Authorization.Containerfile --tag wepuu-authorization:candidate .
+          echo "$GHCR_READ_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          docker pull ghcr.io/wepuu/wp-auto-control@sha256:3a4eed82715339076947aaa9ada0a8a065b1784041bc2f4c353d79f8a3d6038f
+          node scripts/verify-control-hotfix-image.mjs --baseline
+      - name: Build only Control candidate and reuse fixed Authorization
+        run: |
+          docker build --file deploy/Control.Containerfile --tag wepuu-control:candidate --label org.opencontainers.image.revision=${GITHUB_SHA} --label org.wepuu.source-tree=$(git rev-parse HEAD^{tree}) .
+          docker pull ghcr.io/wepuu/wp-auto-authorization@sha256:e4c3f43f57f62098c43aa56d65699bed4ae8ac6d1a9e4c147470f19dbfc49742
+          docker tag ghcr.io/wepuu/wp-auto-authorization@sha256:e4c3f43f57f62098c43aa56d65699bed4ae8ac6d1a9e4c147470f19dbfc49742 wepuu-authorization:candidate
           test "$(docker image inspect wepuu-control:candidate --format '{{.Config.User}}')" = "node"
           test "$(docker image inspect wepuu-authorization:candidate --format '{{.Config.User}}')" = "node"
+          node scripts/verify-control-hotfix-image.mjs
       - name: Local signing production-mode OCI gate
         env:
           WEPUU_OCI_POSTGRES_ADMIN_URL: postgresql://postgres:conformance@127.0.0.1:5432/wepuu_test
@@ -85,3 +99,22 @@ jobs:
       - name: Contract and evidence checks
         working-directory: spikes/oauth-conformance
         run: npm run check && npm run check:evidence
+      - name: Save unpublished Control candidate only
+        run: |
+          docker save wepuu-control:candidate | gzip -n > .tmp/control-hotfix/image.tar.gz
+          node scripts/verify-control-hotfix-image.mjs --archive
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: control-hotfix-${{ github.sha }}
+          path: .tmp/control-hotfix/
+          retention-days: 7
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: control-hotfix-manifest-${{ github.sha }}
+          path: |
+            .tmp/control-hotfix/manifest.json
+            .tmp/control-hotfix/baseline.json
+            .tmp/control-hotfix/image.tar.gz.sha256
+          retention-days: 7
+          if-no-files-found: error

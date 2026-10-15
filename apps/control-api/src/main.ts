@@ -23,6 +23,7 @@ import {
   BetterAuthAccountIdentityProvider,
   PostgresControlStore
 } from './server.js';
+import { ContentFreeMetrics } from './operations.js';
 
 const databaseUrl = process.env['WEPUU_DATABASE_URL'];
 if (databaseUrl === undefined || databaseUrl.length === 0) throw new Error('WEPUU_DATABASE_URL is required');
@@ -31,9 +32,11 @@ const database = new Database({ connectionString: databaseUrl, applicationName: 
 const publicOrigin = process.env['WEPUU_CONTROL_PUBLIC_ORIGIN'];
 if (publicOrigin === undefined) throw new Error('WEPUU_CONTROL_PUBLIC_ORIGIN is required');
 const deployment = loadPublicDeploymentConfig(process.env, publicOrigin);
+const metrics = new ContentFreeMetrics();
 const accountAuth = await accountAuthFromEnvironment(process.env, {
   applicationName: 'wepuu-control-account-auth',
-  databaseRole: 'wepuu_account_auth_writer'
+  databaseRole: 'wepuu_account_auth_writer',
+  otpSendObserver: (event) => { metrics.recordOtp(event); }
 });
 const accountAuthLinks = new PostgresAccountAuthLinkStore(database);
 const loginTransactions = new PostgresAccountLoginTransactionStore(database);
@@ -150,6 +153,7 @@ const app = buildControlApi({
   },
   readiness: () => database.checkReady(),
   accountAuth,
+  metrics,
   loginTransactions,
   workspace: new PostgresAccountWorkspaceStore(database),
   deployment,
