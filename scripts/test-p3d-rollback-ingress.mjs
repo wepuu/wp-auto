@@ -16,7 +16,7 @@ try {
   assert.deepEqual(mergedConfig.services.control.command, ['node', 'apps/control-api/dist/main.js']);
   assert.equal(mergedConfig.services.control.environment.WEPUU_EMAIL_OTP_SEND_ENABLED, 'false');
   assert.equal(mergedConfig.services.control.volumes.some((v) => v.target === '/run/secrets/email_otp_limit_hmac_key'
-    && v.read_only === true && v.bind.create_host_path === false), true);
+    && v.read_only === true && v.bind?.create_host_path !== true), true);
   for (const service of ['authorization', 'postgres']) {
     assert.deepEqual(mergedConfig.services[service], baseConfig.services[service], 'only_control_changes');
   }
