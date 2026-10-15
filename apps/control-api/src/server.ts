@@ -976,9 +976,12 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
 
   app.get('/internal/metrics', async (request, reply) => {
     if (!hasOperationsAccess(request)) throw new PlatformError('not_found', 404);
+    let remaining: number | undefined;
+    try { remaining = await options.accountAuth?.otpBudgetRemaining?.(); }
+    catch { throw new PlatformError('temporarily_unavailable', 503); }
     return reply.header('cache-control', 'no-store')
       .type('text/plain; version=0.0.4; charset=utf-8')
-      .send(metrics.render());
+      .send(metrics.render(remaining));
   });
 
   app.get('/v1/pairing/start', async (_request, reply) => {
