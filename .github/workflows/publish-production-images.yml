@@ -1,37 +1,75 @@
-name: Publish production images
-
+name: Publish original verified P3-E1C Control archive only
 on:
   workflow_dispatch:
-
 permissions:
   contents: read
+  actions: read
   packages: write
-
 jobs:
   publish:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Authenticate to GHCR
-        shell: bash
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io --username "${{ github.actor }}" --password-stdin
-      - name: Build and publish immutable images
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: b1ebf130458a17d71527e365e617451ba8c6c484
+      - name: Verify original run, artifacts and archive without rebuilding
         shell: bash
         run: |
           set -euo pipefail
-          owner="${GITHUB_REPOSITORY_OWNER,,}"
-          tag="git-${GITHUB_SHA}"
-          control="ghcr.io/${owner}/wp-auto-control:${tag}"
-          authorization="ghcr.io/${owner}/wp-auto-authorization:${tag}"
-          docker build --file deploy/Control.Containerfile --tag "${control}" .
-          docker build --file deploy/Authorization.Containerfile --tag "${authorization}" .
-          test "$(docker image inspect "${control}" --format '{{.Config.User}}')" = "node"
-          test "$(docker image inspect "${authorization}" --format '{{.Config.User}}')" = "node"
-          docker push "${control}"
-          docker push "${authorization}"
-          {
-            echo "### Published immutable images"
-            echo "- \`${control}\`"
-            echo "- \`${authorization}\`"
-          } >> "${GITHUB_STEP_SUMMARY}"
+          test "$(git rev-parse 'HEAD^{tree}')" = ed593e352ddfc5eef8bceaef2d1964e5cc15655e
+          gh api repos/wepuu/wp-auto/pulls/75 > /tmp/pr.json
+          gh api repos/wepuu/wp-auto/actions/runs/38819055043 > /tmp/run.json
+          gh api repos/wepuu/wp-auto/actions/runs/38819055043/artifacts > /tmp/artifacts.json
+          node -e 'const f=require("fs"),a=require("assert/strict"),r=JSON.parse(f.readFileSync("/tmp/run.json")),p=JSON.parse(f.readFileSync("/tmp/pr.json"));a.equal(p.head.sha,"b1ebf130458a17d71527e365e617451ba8c6c484");a.equal(r.conclusion,"success");a.equal(r.head_sha,p.head.sha);const xs=JSON.parse(f.readFileSync("/tmp/artifacts.json")).artifacts;for(const id of [12011958339,12012292228]){const x=xs.find(x=>x.id===id);a.ok(x&&!x.expired&&Date.parse(x.expires_at)>Date.now());}'
+          gh run download 38819055043 --repo wepuu/wp-auto --name control-claims-hotfix-b1ebf130458a17d71527e365e617451ba8c6c484 --dir .tmp/original-image
+          gh run download 38819055043 --repo wepuu/wp-auto --name control-claims-hotfix-manifest-b1ebf130458a17d71527e365e617451ba8c6c484 --dir .tmp/original-manifest
+          echo '51db517fd3b2312102fb1e65a698438f4c02cd60a64360df2013af0d7d2c76e2  .tmp/original-image/image.tar.gz' | sha256sum --check
+          cmp .tmp/original-image/manifest.json .tmp/original-manifest/manifest.json
+          node -e 'const a=require("assert/strict"),m=require("./.tmp/original-image/manifest.json");a.equal(m.imageId,"sha256:97f7836d672de53202a8f4334a4a01f6d179c0716e6a95a215bba387d75f3329");a.equal(m.sourceTree,"ed593e352ddfc5eef8bceaef2d1964e5cc15655e");a.equal(m.sourceCommit,"b1ebf130458a17d71527e365e617451ba8c6c484");a.equal(m.registryDigest,null);'
+          docker load --input .tmp/original-image/image.tar.gz
+          node - <<'NODE'
+          const a=require('assert/strict'),cp=require('child_process'),m=require('./.tmp/original-image/manifest.json');
+          const x=JSON.parse(cp.execFileSync('docker',['inspect','wepuu-control:candidate']))[0];
+          a.equal(x.Id,m.imageId);a.equal(x.Config.User,'node');a.deepEqual(x.Config.Entrypoint,['docker-entrypoint.sh']);a.equal(x.Config.Labels['org.opencontainers.image.revision'],m.sourceCommit);a.deepEqual(x.Config.Cmd,['node','apps/control-api/dist/main.js']);a.equal(x.Config.Labels['org.wepuu.source-tree'],m.sourceTree);
+          const code="const f=require('fs'),c=require('crypto'),dir='packages/database/migrations';console.log(JSON.stringify(Object.fromEntries(f.readdirSync(dir).filter(n=>n.endsWith('.sql')).sort().map(n=>[n,c.createHash('sha256').update(f.readFileSync(dir+'/'+n)).digest('hex')]))));";
+          const hashes=JSON.parse(cp.execFileSync('docker',['run','--rm','--network','none','--read-only','--cap-drop','ALL','--security-opt','no-new-privileges:true','--entrypoint','node','wepuu-control:candidate','-e',code]));
+          a.deepEqual(hashes,m.migrationHashes);a.equal(Object.keys(hashes).length,14);a.equal(Object.keys(hashes).some(n=>n.startsWith('014_')),false);
+          const crypto=require('crypto'),fs=require('fs');a.equal(crypto.createHash('sha256').update(fs.readFileSync('.tmp/original-manifest/manifest.json')).digest('hex'),'a46c6e2e4e069546d9a46f21f4f343e89814e40e60b4aa9b7d108b665ce89972');
+          const inventoryCode="const f=require('fs'),c=require('crypto');const paths=JSON.parse(process.argv[1]);console.log(JSON.stringify(Object.fromEntries(paths.map(p=>[p,c.createHash('sha256').update(f.readFileSync(p)).digest('hex')]))));";
+          const files=JSON.parse(cp.execFileSync('docker',['run','--rm','--network','none','--read-only','--cap-drop','ALL','--security-opt','no-new-privileges:true','--entrypoint','node','wepuu-control:candidate','-e',inventoryCode,JSON.stringify(Object.keys(m.fileHashes))]));
+          a.deepEqual(files,m.fileHashes);a.equal(files['pnpm-lock.yaml'],m.lockfileSha256);
+          NODE
+      - name: Authenticate GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io --username "${{ github.actor }}" --password-stdin
+      - name: Push Control only and verify original config after pull
+        shell: bash
+        run: |
+          set -euo pipefail
+          ref=ghcr.io/wepuu/wp-auto-control:p3e1c-claims-b1ebf130-38819055043
+          TARGET_TAG="$ref" node - <<'NODE'
+          const cp=require('child_process'),a=require('assert/strict');let missing=false;
+          try{cp.execFileSync('docker',['manifest','inspect',process.env.TARGET_TAG],{stdio:'pipe'});}catch(e){missing=/manifest unknown|manifest_unknown|name unknown/i.test(String(e.stderr));}
+          a.equal(missing,true,'unique_tag_must_be_confirmed_missing');
+          NODE
+          docker tag wepuu-control:candidate "$ref"
+          docker push "$ref"
+          digest=$(docker image inspect "$ref" --format '{{index .RepoDigests 0}}')
+          [[ "$digest" =~ ^ghcr.io/wepuu/wp-auto-control@sha256:[a-f0-9]{64}$ ]]
+          docker pull "$digest"
+          test "$(docker image inspect "$digest" --format '{{.Id}}')" = sha256:97f7836d672de53202a8f4334a4a01f6d179c0716e6a95a215bba387d75f3329
+          REGISTRY_REFERENCE="$digest" node - <<'NODE'
+          const cp=require('child_process'),a=require('assert/strict'),m=require('./.tmp/original-manifest/manifest.json');
+          const manifest=JSON.parse(cp.execFileSync('docker',['manifest','inspect',process.env.REGISTRY_REFERENCE]));a.equal(manifest.config.digest,m.imageId);
+          const item=JSON.parse(cp.execFileSync('docker',['inspect',process.env.REGISTRY_REFERENCE]))[0];a.equal(item.Config.Labels['org.wepuu.source-tree'],m.sourceTree);a.deepEqual(item.Config.Cmd,m.command);a.deepEqual(item.Config.Entrypoint,m.entrypoint);a.equal(item.Config.User,m.user);
+          NODE
+          mkdir -p .tmp/publication
+          REGISTRY_REFERENCE="$digest" node -e 'require("fs").writeFileSync(".tmp/publication/publication.json",JSON.stringify({registryReference:process.env.REGISTRY_REFERENCE,sourceHead:"b1ebf130458a17d71527e365e617451ba8c6c484",sourceTree:"ed593e352ddfc5eef8bceaef2d1964e5cc15655e",imageId:"sha256:97f7836d672de53202a8f4334a4a01f6d179c0716e6a95a215bba387d75f3329",archiveSha256:"51db517fd3b2312102fb1e65a698438f4c02cd60a64360df2013af0d7d2c76e2",originalRun:38819055043,imageArtifact:12011958339,manifestArtifact:12012292228,publicationTag:"p3e1c-claims-b1ebf130-38819055043"},null,2));'
+          echo "CONTROL_REGISTRY_REFERENCE=$digest"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: p3e1c-control-only-publication
+          path: .tmp/publication/publication.json
+          retention-days: 14
