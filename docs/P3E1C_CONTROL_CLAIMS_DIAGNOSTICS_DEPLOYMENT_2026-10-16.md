@@ -1,4 +1,4 @@
-# P3-E1C Control Claims diagnostics: publication and deployment checkpoint
+# P3-E1C Control Claims diagnostics production deployment
 
 Date: 2026-10-16 (all execution times below are UTC).
 
@@ -6,14 +6,15 @@ Date: 2026-10-16 (all execution times below are UTC).
 
 The operator authorized original-artifact publication, fresh backup, and a
 Control-only deployment. Publication, independent VPS image verification, fresh
-production preflight, and isolated backup restoration passed. **Deployment has
-not yet been attempted.** It is held pending a fresh operator read-only
-confirmation that the separately hosted `www.wepuu.com` Connector is still active
-and its failed-pairing scene has not been changed. No pairing action is requested.
+production preflight, and isolated backup restoration passed. Deployment initially
+paused for the operator's read-only check of the separately hosted WordPress
+scene; that checkpoint is retained in commit `4506b6d`. The operator subsequently
+confirmed the Connector was still active. After a fresh zero-drift preflight,
+**Control-only deployment and the complete post-deployment checks passed**.
 
-This checkpoint must not be represented as production diagnostics deployment or
-as successful recovery of the failed pairing. No production Claims detail was
-generated or observed.
+The diagnostic code is deployed, but the failed pairing has not been recovered.
+No production Claims detail was generated or observed. No new Proof or pairing
+operation was used to validate this deployment.
 
 ## Approved artifact and publication
 
@@ -56,7 +57,7 @@ MemAvailable was 1,149,748 KiB, memory PSI full avg10 was 0, and short vmstat
 samples showed no sustained serious swapping. These are instantaneous evidence,
 not permission to reuse a stale resource sample for deployment.
 
-Current, unchanged production Control:
+Pre-deployment Control (now the verified rollback target):
 
 ```text
 ghcr.io/wepuu/wp-auto-control@sha256:7c7308a6064740f9f732d2fb12a8f4c4c9dd3fd284edd26cea09df79b976c8fe
@@ -91,9 +92,11 @@ Read-only checks confirmed:
 - Empty POST probes through origin and public ingress returned send=503,
   resend=503, raw Better Auth send endpoint=404; no email address was supplied.
 
-Fresh local Connector state on the separately hosted new WordPress site remains
-**AWAITING_OPERATOR_CONFIRMATION**. Earlier active/sequence-0 evidence is not
-silently promoted to a new direct observation.
+The operator's fresh read-only check confirmed the separately hosted new
+WordPress Connector still displayed active. This is operator-attested local
+state, not a new assistant-side inspection of WordPress Options or identity keys.
+The platform's failed attempt/no-Site/no-Grant state was independently checked
+before and after deployment; its full-row hashes did not change.
 
 ## Fresh backup and isolated restoration
 
@@ -124,26 +127,63 @@ readability, **not complete production role/ownership reconstruction**. The
 label-verified temporary restore container, volume, and synthetic password were
 cleaned; production PostgreSQL was never a restore target.
 
-## Deployment checkpoint and rollback safety
+## Deployment and rollback safety
 
 Actual script inspected: `/opt/wpauto/bin/deploy-service` (no `.sh` suffix).
 SHA-256: `b1e8fc2a93d2c107a6198df776c4a2b7f54e05f6b219373501597e2dc049bcdc`.
 
-The existing rollback file still references older `3a4eed...`; **it is not the
-authorized rollback target**. No rollback was executed or reference overwritten.
-The captured current `7c7308...` is the only priority rollback target for this
-operation. Before deployment, revalidate the baseline and operator confirmation.
-Use the existing direct-start override and explicit
-`COMPOSE_FILE=/opt/wpauto/compose.yaml:/opt/wpauto/config/p3d-control.override.yaml`.
-The reviewed deployment script writes the then-current reference as rollback
-before changing only the Control image variable and recreating Control with
-`--no-deps`. Verify the rollback reference equals captured `7c7308...` afterward.
+Before deployment, the rollback file referenced older `3a4eed...`; that reference
+was backed up and was **not used as a rollback target**. The captured running
+`7c7308...` is the authorized rollback target. At 03:01:21Z, a fresh preflight
+matched the protected baseline: all container identities, all protected database
+row hashes, Connector state, configuration hashes, HMAC metadata, rollback
+reference and historical OOM count were unchanged. MemAvailable was 1,094,408
+KiB and memory PSI full avg10 was 0.
 
-Deployment and post-deployment checks are currently **NOT_RUN**. No other service
-was recreated, no migration executed, and no Nginx or WordPress setting changed.
-The next execution must compare protected baseline hashes and the other four
-container identities/start times, verify paused email and healthy services,
-and use only the fixed published digest above. Fail closed on unexplained drift.
+The deployment used the existing direct-start override and explicit
+`COMPOSE_FILE=/opt/wpauto/compose.yaml:/opt/wpauto/config/p3d-control.override.yaml`.
+`deploy-service deploy control` used the new immutable `8fccf890...` reference,
+wrote the then-current `7c7308...` as rollback, changed only the Control image
+variable, and recreated Control with `--no-deps`. At 03:01:32Z it returned exit
+code 0. Its stdout/stderr remain in restricted backup files and were not dumped
+into this record. No automatic or manual rollback was needed.
+
+Actual new Control container ID:
+`0bf7724136435a66e24cdcd9a9ec96dbee15170a0f5da4996627db16fceafcc2`.
+Its start time is `2026-10-16T03:01:26.519027547Z`.
+
+## Post-deployment verification
+
+The complete read-only postcheck passed at 03:02:17Z:
+
+| Check | Result |
+| --- | --- |
+| Running Control reference, original config digest, source Head/Tree and direct command | PASS |
+| Rollback reference exactly equals captured `7c7308...` | PASS |
+| Five containers healthy, zero Docker restarts/OOMKilled | PASS |
+| Other four container IDs, images, start times and restart counts unchanged | PASS |
+| Local and public live/ready, existing `/app` login entry, Site A HTTPS | PASS |
+| OIDC and OAuth Discovery issuer, public RS256 JWKS with no private members | PASS |
+| Full Site/Grant/Outbox/pairing/reservation row hashes unchanged | PASS |
+| Current replacement Codex Grant and Site A Connector active/v2/sequence 0 unchanged | PASS |
+| Migration records/hashes unchanged: 001–013 plus 015, no 014 | PASS |
+| Actual and persisted send switch false, quotas and HMAC unchanged | PASS |
+| Origin/public send and resend 503, raw Better Auth send 404 | PASS |
+| Budget remains 99; reservation and all send/result counters unchanged | PASS |
+| Compose, override, guard, vhost and deploy-script hashes unchanged | PASS |
+| Runtime file byte comparison: only the Control image reference changed | PASS |
+| New WordPress failed pairing and absence of platform binding unchanged | PASS (platform); local active operator-attested |
+| Site B project containers, labelled volumes/networks and project directory absent; port 3201 free | PASS |
+| New production Claims detail | NOT_OBSERVED; deliberately not generated |
+
+Host OOM counter remained 174; MemAvailable was 1,070,916 KiB and memory PSI full
+avg10 was 0.08. No serious sustained swapping or unexpected restart was observed.
+All detailed sanitized comparison evidence is in restricted `postcheck.json` in
+the backup directory. The diagnostic sink's runtime availability is established
+by original-artifact identity and the already-executed isolated sink tests, not
+by injecting a production error. No Nginx reload, service other than Control
+recreate, database migration, Proof request, email, OAuth, or WordPress operation
+was performed.
 
 ## Boundaries and state
 
@@ -157,8 +197,8 @@ and is not a lossless diagnostic step. Do not reset the scene for this deploymen
 
 ```text
 P3E1C_ORIGINAL_CONTROL_ARTIFACT_PUBLISHED=True
-P3E1C_CONTROL_DIAGNOSTICS_DEPLOYED=False
-P3E1C_PRODUCTION_HEALTH_PASS=False
+P3E1C_CONTROL_DIAGNOSTICS_DEPLOYED=True
+P3E1C_PRODUCTION_HEALTH_PASS=True
 P3E1C_PRODUCTION_CLAIMS_DETAIL_OBSERVED=False
 P3E1_HISTORICAL_PROOF_ROOT_CAUSE_CONFIRMED=False
 P3E1_NEW_SITE_PLATFORM_PAIRING_PASS=False
@@ -169,5 +209,9 @@ READY_FOR_CONTROLLED_USE=False
 NOT_READY_FOR_PUBLIC_REGISTRATION=True
 ```
 
-`P3E1C_PRODUCTION_HEALTH_PASS=False` means the requested **post-deployment** gate
-has not run, not that the current production baseline is unhealthy.
+The production diagnostics deployment is complete. E1D still requires fresh
+read-only reconciliation that this resource has no platform Site/Grant and a
+separate explicit authorization for any WordPress local reset and one new pairing.
+Retain protected local backups and failed attempt history; do not use SQL/Options
+edits, copy Site Identity, or automatically retry Connect. Local Disconnect
+deletes identity, so the operator must approve that identity transition separately.
