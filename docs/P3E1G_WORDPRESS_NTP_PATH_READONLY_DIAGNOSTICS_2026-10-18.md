@@ -156,6 +156,74 @@ remain unstaged and untouched. Earlier failures in #77, #78 and #79 are retained
 
 ## Next minimal step and final status
 
+### Separately authorized IPv4 read-only follow-up
+
+After the initial E1G conclusion, the operator authorized the suggested IPv4
+path diagnosis. This did not authorize installation, active NTP probes, clock
+setting, a source change or a service restart. A subsequent operator-executed
+PuTTY collection at host-reported **2026-10-18T05:40:11.660396Z** returned:
+
+| Check | Result |
+| --- | --- |
+| Route to 91.189.91.157 | OK, eth0, source 148.135.106.145 |
+| Route to 185.125.190.56 | OK, eth0, source 148.135.106.145 |
+| Daemon source before/after collection | Unchanged: 2620:2d:4000:1::41, not IPv4 |
+| Daemon PID/start identity | Unchanged; same PID 1692724 |
+| Address-family list | AF_INET, AF_INET6, AF_UNIX; non-inverted list |
+| Configuration / E1F owned drop-in | Matches rollback / absent |
+| Synchronization / visible daemon socket | no / none in this snapshot |
+| Probe / capture / restart / configuration change | None |
+
+Both route lookups succeeded. The reported routeType=UNSPECIFIED means the JSON
+row omitted a recognized type field, not that the kernel route query failed.
+Route success does not test UDP delivery or return traffic. The address-family
+list does not indicate an explicit AF_INET exclusion in that returned setting;
+it is not proof that every sandbox/security path permits NTP.
+
+The compatibility-view follow-up traced reachable IPv4 INPUT/OUTPUT chain
+references and projected possible UDP rules. It showed an OUTPUT ACCEPT policy,
+an ACCEPT for UDP NEW in ufw-track-output, and ESTABLISHED/RELATED ACCEPT rules
+in ufw-before-input/output. These are useful observations, not a complete
+effective-rule decision for an actual NTP packet. Projection was truncated,
+match semantics were not fully evaluated, and native nft/tc/eBPF/cloud paths
+remain outside that projection. Broad INVALID drops and INPUT counters cannot
+be attributed to NTP; no NTP-specific drop was proven and local filtering was
+not completely excluded.
+
+The daemon remained on IPv6. No current IPv4 exchange was observed or forced,
+and a passive window was not used to manufacture a failed IPv4 test. IPv4
+follow-up conclusion: **INCONCLUSIVE**. This does not alter the earlier
+LOCAL_ROUTING_ISSUE finding for the selected IPv6 path.
+
+Protected follow-up evidence:
+
+```text
+/root/wepuu-e1g-ipv4-20261018T054011Z-00c666c2/readonly.json
+```
+
+The operator also confirmed ntpdig, ntpdate and sntp were **not installed**;
+tcpdump was installed. The inventory performed no probe or configuration change.
+No query client was installed or replaced, and no ad-hoc NTP request was
+constructed. Existing read-only authorization is exhausted without a definitive
+IPv4 failure cause. A later active diagnostic must explicitly authorize a
+reviewed query-only tool and a fixed target/bounded query, without automatic
+clock adjustment, daemon installation/start/stop or source/configuration change.
+Tool absence does not imply that a provider blocks UDP/123.
+
+The operator clarified that www.wepuu.com is behind Cloudflare's website proxy,
+while 148.135.106.145 is the origin host. This task inspected that origin, not
+the website's proxied DNS addresses. Ordinary website proxying is not a proxy
+for the host's outgoing NTP requests; no DNS/WAF/TLS setting was changed. See
+[Cloudflare's default HTTP/HTTPS proxy ports](https://developers.cloudflare.com/fundamentals/reference/network-ports/).
+Any separate host-level tunnel or egress product was not established here.
+
+The IPv4 helper added **12 passing local synthetic tests** for target-host
+guarding, read-only commands, source/PID drift, chain traversal, negated protocol
+matches, counter stability and secret redaction. Combined with the original
+32 collector tests, the local result is **44 PASS**. This is still not a real
+IPv4 NTP query, packet-capture test or clock-repair acceptance. The supplement
+is a new commit on the existing Draft PR; the initial evidence remains in history.
+
 No further production command is required to close E1G with the bounded finding.
 Stop without repairing routing, changing sources, retrying IPv4, installing a
 daemon, extending capture, adjusting Proof tolerance or reconnecting WordPress.
