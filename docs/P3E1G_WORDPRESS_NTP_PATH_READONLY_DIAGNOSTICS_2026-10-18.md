@@ -3,6 +3,8 @@
 Date: 2026-10-18, Asia/Shanghai. **Read-only diagnosis complete; no repair or
 pairing.** Main conclusion: **LOCAL_ROUTING_ISSUE**, limited to the currently
 selected IPv6 destination. The earlier IPv4 failure remains unexplained.
+The separately authorized active-query supplement below records one IPv4
+request without a validated response; it does not change that causal boundary.
 
 ## Evidence and conclusion boundary
 
@@ -241,6 +243,121 @@ explicit gating/availability explanation. blockingLayerIdentified is True
 mean the complete cross-family NTP outage has a single proven cause. Preserve
 the local-active/platform-unbound identity; pairing recovery needs separate
 authorization after any later clock repair and acceptance.
+
+## Separately authorized single IPv4 query and packet observation
+
+### Authority and preparation
+
+After the read-only stages above, the operator explicitly authorized preparation
+of a reviewed query-only client and one bounded query session to **91.189.91.157**,
+with one target-filtered passive observation. This is an active diagnostic
+supplement, not an action performed under the original read-only authority.
+No second target, automatic retry, time correction or daemon change was authorized.
+
+The operator-returned preparation preflight at host-reported
+2026-10-18T05:58:22.954736Z confirmed Ubuntu 22.04/jammy amd64, trusted Ubuntu
+APT metadata, existing runtime dependencies and an available unprivileged identity.
+The APT simulation would add only ntpdate; **no installation was performed**.
+The selected package was downloaded, verified and only its executable extracted
+to a fresh temporary directory. No maintainer script, DHCP hook or packaged
+configuration was installed or executed.
+
+| Identity | Verified value |
+| --- | --- |
+| Package | ntpdate, 1:4.2.8p15+dfsg-1ubuntu2, amd64 |
+| Package SHA-256 | b8efaabbbc9a5c4efe3cd8de5666b5691a5d782aca8f4bbb33c92b3002fca708 |
+| Extracted executable SHA-256 | 15ee8392ae97f1bd94979f4c0fe234d2b46003683dcda2e6b1877abfeede9fb4 |
+| Client identity | nobody, UID/GID 65534; no effective/permitted/ambient capabilities |
+| Query mode | -4 -q -u -p 1 -t 3, single numeric target |
+| Query / capture hard bounds | 15 seconds / 120 seconds, with server-side timeout watchdogs |
+| Capture scope | eth0, target IP and UDP/123 only; no promiscuous request or payload output/file |
+
+The official [Ubuntu ntpdate documentation](https://manpages.ubuntu.com/manpages/jammy/man8/ntpdate.8.html)
+defines -q as query-only and -u as an unprivileged local port. The child also
+required unprivileged IDs and zero capabilities before exec, with no-new-privileges
+and parent-death protection. One invocation may retransmit; the actual observed
+packet count below, not the sample argument alone, establishes the packet evidence.
+
+### Operator-returned production result
+
+Host-reported start: **2026-10-18T06:08:31.047137Z**, not an independently
+trusted UTC reference. The helper returned single_query_observation_complete;
+this means the diagnostic session completed, **not that the NTP query succeeded**.
+
+| Check | Returned result |
+| --- | --- |
+| Query launch / execution | One launch attempted, client executed; no retry |
+| Query exit / classification | 1 / NO_SUITABLE_SERVER; runner COMMAND_FAILED |
+| Valid client sample | False; samples empty |
+| Observation duration | 5.278 seconds |
+| Parsed outbound UDP packets | 1, local port 51406 to target port 123, length 48 |
+| Parsed candidate inbound / reversed tuple | 0 / False |
+| Capture statistics | 1 captured, 1 received by filter, 0 dropped by kernel |
+| Unparsed output lines / coverage limitation | 1 / True |
+| Capture exit / timeout | 0 / no timeout reported |
+| Daemon acceptance / synchronization | Not proven / NTPSynchronized=no |
+| Configuration, daemon identity and dpkg database | Unchanged in before/after snapshots |
+| Post-query route | Unchanged |
+| Install / configuration write / service restart / manual clock set | None |
+
+No packet payload or raw child output was saved or returned. The one unparsed
+line cannot now be classified from the retained aggregate. It must not be silently
+discarded, declared to be a blank line, or counted as another network packet.
+The captured-count statistic and parsed outbound count are consistent with one
+captured outgoing packet, but the collector explicitly marked coverage limited.
+No second capture or query was performed to remove this uncertainty.
+
+This is evidence that an outgoing request reached the host's eth0 capture point.
+No candidate response was recognized in that bounded observation, and the client
+did not validate an NTP sample. It is **not** proof that the request passed the
+cloud edge, that the server received it, or that CloudCone blocks UDP/123.
+Capture-buffer drops were zero; that statistic is not a firewall decision.
+The query ran as nobody, not timesyncd: UID/cgroup/service-specific filtering and
+all unreviewed local/cloud/upstream paths remain possible explanations.
+
+The active supplement's conservative result is **INCONCLUSIVE**. Outbound without
+an observed validated return supports a path hypothesis, not an identified
+blocking layer. The earlier selected-IPv6 LOCAL_ROUTING_ISSUE remains separately
+scoped and is neither erased nor used to explain this IPv4 request. No current
+clock offset, absolute clock fault or historical Proof timestamp is established.
+
+### Retained resources, tests and next step
+
+Protected receipt and downloaded package directory:
+
+```text
+/root/wepuu-e1g-active-query-91-20261018
+```
+
+Temporary root-owned public executable directory:
+
+```text
+/var/tmp/wepuu-e1g-query-dz1_j5q3
+```
+
+These newly prepared diagnostic resources remain present; they are not an
+installed service or scheduled task. No cleanup/deletion is represented as
+completed. The exclusive receipt prevents silently repeating this authorization.
+The package database was unchanged; existing time configuration and service
+identity also matched their before-query snapshots. No WordPress Options,
+platform database, Grant, Outbox, pairing, OAuth or email action was performed.
+Their historical status is retained, not newly verified by this network check.
+
+The preparation validator added 16 local synthetic tests. The execution helper
+and matching PuTTY wrapper added 27, covering package/ELF/archive safety,
+unprivileged fixed arguments, bounded capture/query, failed-start no-query,
+one-launch failure/timeout cleanup and redaction. Together with the earlier 44,
+the local helper result is **87 PASS**. A separately downloaded official package
+also matched the fixed package hash and passed actual archive-layout inspection;
+no local NTP probe was executed. Hosted CI remains document integration only.
+
+Stop here. The smallest next coordination step is to have the operator ask
+CloudCone for the current instance's UDP/123 egress/return policy and officially
+applicable time source, supplying only the target, host-reported time window and
+bounded packet counts. No support ticket is sent in this task. Full local rule
+path review remains another possible follow-up. Any additional target/query,
+source change, network repair, clock correction, cleanup or pairing requires
+separate scope. Do not repeat IPv4 pinning or widen Proof tolerance as a workaround.
 
 ```text
 P3E1G_NTP_PATH_DIAGNOSIS_COMPLETE=True
