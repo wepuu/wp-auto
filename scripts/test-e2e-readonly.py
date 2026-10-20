@@ -123,5 +123,18 @@ class Integration(unittest.TestCase):
     def test_arbitrary_gate_error_is_not_a_logging_bypass(self):
         out=core.safe_failure(core.GateError('SECRET_SENTINEL','SECRET_SENTINEL',{'raw':'SECRET_SENTINEL'}),'dispatch')
         self.assertNotIn('SECRET_SENTINEL',json.dumps(out));self.assertEqual(out['category'],'NOT_CONFIRMED')
+    def test_legacy_failure_keeps_original_metrics_without_resampling(self):
+        def fail():raise RuntimeError('RESOURCE_PRESSURE')
+        calls=[]
+        def diagnose(e):calls.append('diagnose');return {'metricsValid':True,'memAvailableKiB':500000,'memoryFullAvg10':2,'unknown':'SECRET_SENTINEL'}
+        with self.assertRaises(core.GateError) as cm:core.legacy_full_gate(fail,diagnose)
+        out=core.safe_failure(cm.exception,'complete_runtime');self.assertEqual(calls,['diagnose']);self.assertEqual(out['resourceAtGate']['memAvailableKiB'],500000)
+        self.assertNotIn('SECRET_SENTINEL',json.dumps(out))
+        with self.assertRaises(core.GateError) as cm:core.legacy_full_gate(fail)
+        self.assertEqual(core.safe_failure(cm.exception,'complete_runtime')['resourceDiagnosticStatus'],'RESOURCE_DIAGNOSTIC_NOT_AVAILABLE')
+    def test_legacy_unknown_failure_is_not_logged_or_treated_as_success(self):
+        def fail():raise RuntimeError('SECRET_SENTINEL')
+        with self.assertRaises(core.GateError) as cm:core.legacy_full_gate(fail)
+        self.assertNotIn('SECRET_SENTINEL',json.dumps(core.safe_failure(cm.exception,'complete_runtime')))
 
 if __name__=='__main__':unittest.main()

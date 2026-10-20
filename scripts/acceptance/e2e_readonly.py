@@ -40,6 +40,8 @@ def safe_failure(error, stage):
                       category=error.code if error.code in SAFE_CODES else 'NOT_CONFIRMED')
         if error.code == 'RESOURCE_PRESSURE' and isinstance(error.detail, dict):
             result['resourceAtGate'] = {k:error.detail[k] for k in ['memAvailableKiB','memoryFullAvg10','minimumMemoryKiB','exclusiveMaximumPsi']}
+        elif error.code == 'RESOURCE_PRESSURE':
+            result['resourceDiagnosticStatus'] = 'RESOURCE_DIAGNOSTIC_NOT_AVAILABLE'
     elif isinstance(error, PermissionError):
         result['category'] = 'ACCESS_DENIED'
     elif isinstance(error, TimeoutError):
@@ -121,9 +123,30 @@ def dependencies(namespace, initial, transition, guard):
         'containers': g['containers'], 'connector': g['connector'],
         'flags': lambda: (g['actual_flag'](), g['environment']()['WEPUU_EMAIL_OTP_SEND_ENABLED']),
         'guard': guard, 'closed_guards': reused['closed_probes'],
-        'full_gate': lambda: namespace['platform'](r, g, d),
+        'full_gate': lambda: legacy_full_gate(lambda: namespace['platform'](r, g, d), d.get('resource_failure_detail')),
         'initial': initial, 'transition': transition,
     }
+
+
+def legacy_full_gate(call, diagnose=None):
+    """Preserve fixed legacy codes; never substitute a later resource snapshot."""
+    try:
+        return call()
+    except RuntimeError as error:
+        code = str(error)
+        if code == 'RESOURCE_PRESSURE':
+            detail = None
+            if callable(diagnose):
+                try:
+                    observed = diagnose(error)
+                    mem, psi = observed.get('memAvailableKiB'), observed.get('memoryFullAvg10')
+                    if (observed.get('metricsValid') is True and type(mem) is int and mem >= 0
+                            and type(psi) in (int, float) and math.isfinite(psi) and psi >= 0):
+                        detail = {'memAvailableKiB':mem,'memoryFullAvg10':psi,'minimumMemoryKiB':524288,'exclusiveMaximumPsi':1}
+                except BaseException:
+                    pass
+            raise GateError('complete_runtime', code, detail) from None
+        raise GateError('complete_runtime', code if code in SAFE_CODES else 'NOT_CONFIRMED') from None
 
 
 def platform_check(io, action, binding, prior=None):
