@@ -85,3 +85,97 @@ NOT_READY_FOR_PUBLIC_REGISTRATION=True
 
 Even complete preflight success grants no authority for Desktop enable, a real
 OAuth flow or the later site-health call. All require fresh separate approval.
+
+## Final R2 preparation and single live result (append-only)
+
+The functional candidate was frozen at
+`0d846e22c41892aabc9e431f2ae30644c3439a68`, parent still the fixed #96 Head.
+Its helper CI **39426320184** and full Phase 2 Platform CI **39426320235**
+completed successfully. The latter executed strict checks, database/isolation,
+OCI, local signing, backup/restore, PHP interoperability, audit/SBOM and retained
+OAuth conformance gates. These are isolated candidate validations, not evidence
+that the current production preflight passed.
+
+All 11 prerequisites were completed and bound to expected source/environment
+and immutable receipt hashes before the real runner entered READY. Local
+results: dispatcher/transport 32 PASS; Python 14 methods; actual isolated SQL 24
+cases; pinned PHP 8.2.28 projection 15 cases; exact final generated PHP syntax
+PASS via read-only mount; isolated fixed-Desktop parameters 2 branches; private
+adapter 3 mocked tests; exact private factory 2 wiring tests (including every
+missing prerequisite); safe projection 2 tests. No live read was used to test
+the dispatcher. The local SQL wrapper initially failed to recognize its output
+framing; only its synthetic fixed-summary parser was corrected. Actual SQL then
+completed all 24 cases. Production strict-JSON transport was not relaxed. Owned
+local SQL containers were stopped; unrelated containers were not manipulated.
+
+Frozen identities (private bindings and actual config bytes remain local):
+
+- Run: `r2-80e7b587d04b4fa5`.
+- Identity manifest: `3791a905226122bafb778d8907b061a7184785650f1c6bad6507ea6fbe4a29de`.
+- Streamed read-only payload: `eccab13b606dff85b4c95c132c7fb25e23a5d22b2cadd2e6d1e7e2e39cbf37c3`.
+- Final generated PHP: `837f4c50169316669b748670b5eb114302c5d17c7e867bc40c092e974a310a6d`.
+- Project disabled config: `00610c38465e25c1b90adf21108581f95f78fe50174156eecea1e6cf231ed139`.
+
+After preparation/CI completed, the operator confirmed the original account and
+Home Tenant browser, WordPress login and PuTTY readiness. This is operator
+evidence, not a new database Session verification. The controller then prepared
+again from the frozen real completion receipts before the exclusive live claim.
+
+The single observation window opened at **2026-10-20T13:14:57.658Z**
+(21:14:57.658 Asia/Shanghai). The first resource gate failed closed:
+
+| Original gate metric | Observed | Required | Result |
+| --- | ---: | ---: | --- |
+| MemAvailable | 451,052 KiB | >= 524,288 KiB | FAIL |
+| memory full avg10 | 0.54 | < 1 | PASS |
+
+The correlated child exited **1**, stage `resource`, fixed code
+`RESOURCE_PRESSURE`. These values came from the failing gate itself, not a later
+resource resample. The controller entered terminal `STOPPED`, outer category
+`STAGE_NOT_CONFIRMED`, and the resource receipt preserved the original failure
+code and thresholds. Its local receipt write time is approximately
+2026-10-20T13:15:04Z; this is **not** an independently recorded exact remote
+sample time. No complete elapsed-monotonic duration is claimed for this failed
+run because the terminal receipt does not export it. The window has a genuine
+pre-recorded monotonic start; it was not reconstructed from chat timestamps.
+
+| Stage | Actual result |
+| --- | --- |
+| Completed-prerequisite dispatch barrier | PASS |
+| First production resource gate | FAIL: RESOURCE_PRESSURE |
+| Full platform, including runtime_protections | NOT_RUN |
+| Public/origin Metadata, Discovery and Client | NOT_RUN |
+| Disabled Desktop live inventory | NOT_RUN |
+| WordPress identity, backup, NTP and five clock samples | NOT_RUN |
+| Lightweight ending/whole-gate aggregation | NOT_RUN |
+
+There was **no automatic retry, later resource sampling, threshold change or
+resource tuning**. No OTP, Desktop enable, OAuth/Consent/token exchange, MCP,
+Proof, pairing, identity reset, configuration mutation, deployment, migration or
+service restart occurred. Current five-service health, Session/owner, target
+Grant count, Site A/Grant/Outbox, NTP and dual email guards were **not newly
+confirmed** by the skipped stages. Earlier accepted results remain historical;
+they are not substituted as fresh PASS evidence. The original dirty worktree,
+`design/` and actual Desktop configuration were preserved.
+
+```text
+P3E2E_R2_DISPATCH_BARRIER_PASS=True
+P3E2E_R2_COMPLETE_READONLY_GATE_PASS=False
+P3E2A_PREFLIGHT_PASS=False
+P3E2E_DESKTOP_ENABLE_PERFORMED=False
+P3E2E_OAUTH_ATTEMPT_PERFORMED=False
+P3E2E_MCP_TOOL_CALL_PERFORMED=False
+P3E2_NEW_ACCOUNT_CODEX_OAUTH_PASS=False
+P3E2_NEW_SITE_READONLY_MCP_PASS=False
+P3_FULL_ACCEPTANCE_PASS=False
+READY_FOR_CONTROLLED_USE=False
+NOT_READY_FOR_PUBLIC_REGISTRATION=True
+```
+
+The frozen run and its exclusive claim remain terminal; do not resume it. A
+separately approved bounded read-only resource investigation is a reasonable next
+step before proposing another fresh full preflight. This observation proves a
+threshold breach, not its root cause. It does not authorize killing processes,
+Swap changes, container restart, memory tuning or lowering the threshold. Keep
+Draft #97 and all historical PRs unmerged. Later evidence-only commits and their
+CI must be distinguished from the functional Head used for this stopped run.
