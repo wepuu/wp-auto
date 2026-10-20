@@ -1,17 +1,19 @@
-# P3-E2I: offline command-delivery validation
+# P3-E2I: offline delivery PASS; approved transfer stopped at SSH authentication
 
-Date: 2026-10-20, Asia/Shanghai. Scope completed: **stage A only**.
+Date: 2026-10-20, Asia/Shanghai. Stage A completed; stage B attempted and
+stopped. Server file integrity and business preflight remain **NOT_RUN**.
 
 ## Result and authorization boundary
 
-Local delivery validation passed. No connection to a production host, file
+Local delivery validation passed. During stage A, no connection to a production host, file
 transfer, server-side integrity check or production preflight was attempted.
 The real WordPress checker was not executed. No Desktop enable, OAuth,
 Consent, token exchange, MCP call, OTP, pairing, NTP change, service restart,
 deployment or migration occurred in this round.
 
-Stage B requires a separate explicit approval for transmitting the frozen
-files to the target host and checking their integrity only. Stage C business
+At the stage A handoff, stage B required separate explicit approval for transmitting the frozen
+files to the target host and checking their integrity only. That approval was
+subsequently received; its single failed attempt is recorded below. Stage C business
 checks are not implied by that transfer approval. Do not ask the operator to
 paste the old long Base64 command or bypass its failed integrity check.
 
@@ -72,7 +74,8 @@ but are **not the approved transfer candidate**.
 | `manifest.json` | 405 | `9d9a0b831573d9018b623557d155e643578077221fa7f4d0bd4ff3049b1e75f3` |
 
 Proposed host: `148.135.106.145`.
-Proposed destination, not yet created:
+Approved destination, not created during stage A; its remote creation is
+NOT_CONFIRMED after the stage B transport failure:
 
 ```text
 /root/wepuu-e2i-delivery-de920b0276c91044
@@ -115,7 +118,7 @@ The checker and production freshness/resource rules were not weakened.
 The final candidate additionally changed a per-nonce reservation into a
 whole-directory reservation before refreezing and rerunning its tests.
 
-## Available transport, not yet exercised
+## Stage A local transport inventory
 
 Local inventory confirmed existing PSCP/PSFTP and SFTP clients; no software
 was installed. Existing PSFTP reported release0.81. Only the saved PuTTY
@@ -136,9 +139,9 @@ External file SHA-256 checks must precede launcher execution. Only then may
 identity uncertainty stops stage B. Verification and any later `run` are
 separate actions, not an automatically chained command.
 
-## Stop and next gate
+## Stage A stop and subsequent gate
 
-Await explicit approval to transfer and verify only. Do not provide a command
+Stage A stopped for explicit approval to transfer and verify only. Do not provide a command
 that silently proceeds from verification into the WordPress checks.
 
 Once delivery is separately verified and stage C is approved, prepare the
@@ -149,11 +152,83 @@ lightweight ending gate. Any necessary failure/unknown/expiry stops without
 retry. No old samples fill a missing current stage.
 
 No production readiness, current Session, NTP, email pause, Grant or database
-state was revalidated during this offline stage. Earlier accepted product
+state was revalidated during the offline stage or failed transfer. Earlier accepted product
 states remain historical and are not newly asserted.
+
+## Stage B: approved transfer attempt, stopped before SFTP upload
+
+The operator explicitly approved transmitting the three frozen files and
+checking integrity, **without business checks**. The approval did not authorize
+OTP, account recovery, authentication-policy changes or installing software.
+
+Before connecting, exact local file sizes/hashes and saved-session target,
+SSH/port22 and existing cached-key-entry presence were rechecked. Twelve
+additional offline delivery-dispatch/filesystem tests passed: exclusive
+directory creation, exact three-file finalization, no overwrite of unknown
+files, corrupt/extra transfer blocking, fixed dispatch, host rejection,
+exception suppression and verified-launcher `--mode verify` only.
+These tests were mocked/local filesystem tests, not target-host execution.
+
+The prepared file-only flow would receive files in a newly owned private
+temporary subdirectory, validate them and commit without replacing existing
+final names. It would remove only the owned empty temporary directory and
+externally recheck all pinned bytes before invoking launcher verify. None
+of those upload/finalization/verification stages was reached.
+
+One PLINK batch connection was attempted using the existing PuTTY saved
+session, Pageant and cached host-key policy. No unknown key was accepted and
+no password/private key was requested or exported. The attempt returned:
+
+```json
+{
+  "action": "bootstrap",
+  "utc": "2026-10-20T07:09:34.196Z",
+  "passed": false,
+  "exitCode": 1,
+  "transportPass": false,
+  "category": "AUTHENTICATION_NOT_CONFIRMED",
+  "rawOutputSuppressed": true,
+  "businessChecksExecuted": false
+}
+```
+
+This is15:09:34.196 Asia/Shanghai and is a local capture time, not a remote
+host clock sample. The safe category comes from the bounded transport
+failure; no authenticated remote structured success was returned. It is
+not proof of a hash mismatch, NTP fault, missing SSH key, Pageant failure or
+a particular server-side authentication policy.
+
+| Stage | Actual result |
+| --- | --- |
+| Local integrity/session metadata | PASS |
+| One SSH bootstrap attempt | FAIL: authentication not confirmed |
+| Remote host gate/directory creation | NOT_CONFIRMED; no success receipt |
+| SFTP upload | NOT_RUN; zero upload invocations |
+| No-overwrite finalization | NOT_RUN |
+| External remote hashes/syntax/launcher verify | NOT_RUN |
+| WordPress business checker or fresh production preflight | NOT_RUN |
+
+No second SSH attempt, SFTP fallback, password prompt, installation, remote
+cleanup or authentication/configuration change followed. Local failure and
+once-started markers remain preserved. Directory existence is not guessed
+from an authentication error; any later approved retry must first account
+for that uncertainty and must not overwrite unknown files.
+
+Continue only after the operator restores/confirms the existing batch SSH
+authentication path and explicitly approves another bounded file-only
+attempt. An already-open interactive PuTTY window alone does not establish
+that a separate batch process can authenticate through Pageant. Do not ask
+the operator to send a password, private key or verification code.
+
+The initial stage A document Head
+`48cfa47eb839d339a2294f6a7a38fee8d6466f46` passed Hosted CI
+`39384001763`. This append receives its own commit/CI; the old success must
+not be presented as validation of the new Head or as production success.
 
 ```text
 P3E2I_DELIVERY_LOCAL_VALIDATION_PASS=True
+P3E2I_FILE_TRANSFER_ATTEMPT_PERFORMED=True
+P3E2I_FILE_TRANSFER_PASS=False
 P3E2I_SERVER_FILE_INTEGRITY_PASS=NOT_RUN
 P3E2I_COMPLETE_PREFLIGHT_PASS=NOT_RUN
 P3E2A_PREFLIGHT_PASS=False
