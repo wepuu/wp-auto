@@ -208,7 +208,7 @@ a particular server-side authentication policy.
 | External remote hashes/syntax/launcher verify | NOT_RUN |
 | WordPress business checker or fresh production preflight | NOT_RUN |
 
-No second SSH attempt, SFTP fallback, password prompt, installation, remote
+During that first approved attempt, no second SSH attempt, SFTP fallback, password prompt, installation, remote
 cleanup or authentication/configuration change followed. Local failure and
 once-started markers remain preserved. Directory existence is not guessed
 from an authentication error; any later approved retry must first account
@@ -225,9 +225,47 @@ The initial stage A document Head
 `39384001763`. This append receives its own commit/CI; the old success must
 not be presented as validation of the new Head or as production success.
 
+### Separately approved file-only retry: same authentication stop
+
+The operator subsequently reported Pageant ready and explicitly approved
+one more file-transfer/integrity-only attempt. A new evidence directory was
+created; the first attempt's stop/once-started markers were not deleted or
+reused. Only two local evidence/batch paths changed in the reviewed driver;
+the remote script, three pinned files, target and no-overwrite rules remained
+unchanged. The12 offline file-dispatch tests passed again, and the cloned
+driver passed syntax checking. These are reruns, not12 additional distinct
+test cases.
+
+The one approved retry returned `AUTHENTICATION_NOT_CONFIRMED`, exit1, at
+`2026-10-20T07:55:18.699Z` (15:55:18.699 Asia/Shanghai). No authenticated
+remote structured result was returned. SFTP upload, finalization and verify
+were NOT_RUN again; remote directory state remains NOT_CONFIRMED. No further
+connection or authentication-policy change followed this failure.
+
+A subsequent **local-only** observation at15:56:04.134 found one Pageant
+process, saved `TryAgent=1` and no configured private-key file in that saved
+session. The saved username did not match root, but the command explicitly
+used `-l root`, so that observation is not treated as the failure cause.
+Loaded agent-key count and server authentication decisions were not observed.
+No key file, key content, full session settings or credential was read/exported.
+
+Neither a running Pageant process nor an open PuTTY session proves a usable
+key for a new batch connection. The safe transport category cannot distinguish
+an unavailable/empty agent, rejected identity or interactive/password-only
+authentication. Do not continue blind retries or claim any one cause.
+The next clarification is the operator-visible Pageant key count and whether
+the existing PuTTY login used a password or an existing key, without sharing
+the password, key, fingerprint/comment or screenshot. No new connection is
+authorized by that clarification alone.
+
+The preceding authentication-stop Head
+`cc950bbf609c90bdc4c16f77c40a9d3f4611bf44` passed Hosted CI
+`39384909651`; CI of this new append is tracked separately.
+
 ```text
 P3E2I_DELIVERY_LOCAL_VALIDATION_PASS=True
 P3E2I_FILE_TRANSFER_ATTEMPT_PERFORMED=True
+P3E2I_AUTH_CONNECTION_ATTEMPTS=2
 P3E2I_FILE_TRANSFER_PASS=False
 P3E2I_SERVER_FILE_INTEGRITY_PASS=NOT_RUN
 P3E2I_COMPLETE_PREFLIGHT_PASS=NOT_RUN
