@@ -29,7 +29,7 @@ jobs:
       - name: Python orchestration and failure integration
         run: python3 scripts/test-e2e-readonly.py
       - name: Bounded transport and aggregation
-        run: node --test scripts/e2e-readonly-transport.test.mjs
+        run: node --test scripts/e2e-readonly-transport.test.mjs scripts/e2e-readonly-dispatch.test.mjs
       - name: Actual isolated SQL and locked Provider serialization
         env:
           WEPUU_E2E_R1_DATABASE_URL: postgresql://postgres:synthetic-only@127.0.0.1:5432/wepuu_e2e_r1
