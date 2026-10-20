@@ -1,0 +1,42 @@
+name: E2E read-only helper integration
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  isolated:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16.10-alpine
+        env:
+          POSTGRES_DB: wepuu_e2e_r1
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: synthetic-only
+        ports: [5432:5432]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d wepuu_e2e_r1"
+          --health-interval 2s --health-timeout 3s --health-retries 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 26.7.0
+      - run: npm install --global pnpm@11.19.0
+      - run: pnpm install --frozen-lockfile
+      - name: Python orchestration and failure integration
+        run: python3 scripts/test-e2e-readonly.py
+      - name: Bounded transport and aggregation
+        run: node --test scripts/e2e-readonly-transport.test.mjs
+      - name: Actual isolated SQL and locked Provider serialization
+        env:
+          WEPUU_E2E_R1_DATABASE_URL: postgresql://postgres:synthetic-only@127.0.0.1:5432/wepuu_e2e_r1
+        run: node scripts/test-e2e-readonly-sql.mjs
+      - name: Fixed PHP 8.2.28 projection integration
+        run: >-
+          docker run --rm --network none
+          --mount type=bind,source=${{ github.workspace }}/scripts/acceptance,target=/work,readonly
+          php@sha256:4bbc4316a5b4acd689fe791603d5340bed9184d6cb4303c070cf5630711e609a
+          sh -ec 'test "$(php -r "echo PHP_VERSION;")" = "8.2.28"; php /work/test-grant-projection.php'
