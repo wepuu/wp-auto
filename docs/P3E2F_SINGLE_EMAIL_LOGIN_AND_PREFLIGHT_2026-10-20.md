@@ -1,8 +1,9 @@
 # P3-E2F: original-account login recovery and single E2E preflight
 
 Date: 2026-10-20, Asia/Shanghai. **Single-email login recovery PASS;
-aggregate E2E preflight NOT PASSED: fresh WordPress evidence unavailable and
-the15-minute evidence window exceeded. Desktop enable/OAuth/MCP NOT_RUN.**
+aggregate E2E preflight NOT PASSED: WordPress evidence arrived after the stop,
+outside the15-minute window and after the ending check. Its individual checks
+PASS as late evidence only. Desktop enable/OAuth/MCP NOT_RUN.**
 This is an operations evidence document, not a production runtime patch.
 
 ## Authority and evidence boundaries
@@ -143,7 +144,7 @@ cannot be substituted.
 | Direct-origin Metadata/challenge | PASS at02:50:36Z |
 | Client/AS metadata and existing platform backup | PASS at02:50:45Z |
 | Actual backend/config/read and disabled definition | PASS at02:50:51Z |
-| Fresh operator WordPress/time/backup check | NOT_CONFIRMED; current JSON not received |
+| Fresh operator WordPress/time/backup check | NOT_CONFIRMED at stop; later individual PASS outside window |
 | Lightweight ending check | PASS at03:04:53.622096Z, outside aggregate evidence window |
 | Aggregate preflight | False; missing required evidence and window exceeded |
 
@@ -220,8 +221,8 @@ No current WordPress JSON or execution confirmation was received by the stop.
 Whether the operator executed it is NOT_CONFIRMED, not represented as a failed
 WordPress command or proof that nothing ran. Current WordPress identity,
 local zero-Grant mapping,789-file manifest, old-backup custody, NTP sample and
-five clock brackets are consequently NOT_CONFIRMED in this run. Prior results
-are historical only; no table of old clock samples is relabeled current.
+five clock brackets were consequently NOT_CONFIRMED at the stop. Prior results
+were not substituted; the late new evidence is separately appended below.
 
 The single lightweight safety ending check at03:04:53.622096Z was15 minutes
 17.279305 seconds after the full platform result, already beyond the default
@@ -237,6 +238,51 @@ digest and Site A Connector unchanged; target Grants0; actual/persisted flag
 false and guard probes passed; five healthy. Control matched the owned false
 transition and the other four containers matched the original baseline. These
 results do not fill the missing WordPress evidence or erase PR89's failure.
+
+### Late operator evidence: individual PASS, aggregate still False
+
+The operator subsequently supplied the command JSON, read at03:08:19Z.
+Attachment SHA-256:
+f25880ad6f4aa03280efb0515d43a4655fea5822ea0a7195485c485bab8c948a.
+Host-reported timestamp03:05:42.530488Z precedes its actual clock samples at
+03:05:44.743Z through03:05:49.394Z; it is not labeled command completion time.
+All these times are after the03:04:36 freshness boundary and after the ending
+check. Local safe-field validation passed all ten binding/state/manifest/time/
+backup groups. No production check was rerun on receipt of the attachment.
+
+The new operator result confirms the same E1K identity/key and exact platform
+binding, local active/no pending/no local Grant mapping, revocationv2/sequence0/
+deny_all=false/zero markers. All789 plugin files and the frozen ZIP manifest
+match. identityChanged=true is an inherited historical E1K field, not a reset
+in this run; explicit identityResetPerformed/pairingAttemptPerformed remain
+false and the observed identity digests match the pre-run values.
+
+timesyncd active/synchronized, selected64.69.34.90, latest stored sample74,
+Ignored=false, Leap normal, stratum3, Offset-0.031ms, Root distance53.176ms.
+This was not a newly requested NTP sample. Daemon identity unchanged; bounded
+journal returned zero entries, which does not establish absence of historical
+timeouts or clock changes. No daemon restart, probe or time adjustment occurred.
+
+| Sample | PHP minus Control-reference interval, seconds | Window, ms |
+| --- | --- | --- |
+| 1 | [-1.256268, 1.743732] | 1191.478 |
+| 2 | [-1.063042, 1.936958] | 1215.679 |
+| 3 | [-0.865842, 2.134158] | 1145.906 |
+| 4 | [-0.720150, 1.279850] | 1140.019 |
+| 5 | [-0.605537, 1.394463] | 1138.656 |
+
+Each contains0 and lies inside[-3,+3]. Reference is TLS-verified direct-origin
+HTTP Date with1000ms allowance per reading, not direct Control Node/FPM time.
+PHP CLI time is host-bracketed; wall-minus-monotonic change2-6 microseconds.
+No exact-zero skew, independent absolute UTC or historical failure-time claim.
+
+Existing WordPress backup custody and recorded hashes verified:
+/root/wepuu-e1k-backup-20261018T135222Z-a931ba4ba8a7. It predates the current
+identity, not a complete current recovery point. No new export, restore or
+disaster-recovery drill. Homepage/login HEAD200 and state unchanged during the
+command. These are operator-provided read-only results, not assistant host
+access. This late PASS resolves the individual evidence gap only; it does not
+restore the required aggregate timing/order or authorize OAuth.
 
 ## Scope, delivery and stop
 
@@ -259,7 +305,8 @@ P3E2F_EMAIL_SEND_PAUSED=True
 P3E2E_PREFLIGHT_RERUN_PASS=False
 P3E2A_PREFLIGHT_PASS=False
 P3E2F_PREFLIGHT_STOP_REASON=WORDPRESS_EVIDENCE_NOT_CONFIRMED_AND_WINDOW_EXCEEDED
-P3E2F_CURRENT_WORDPRESS_CHECK=NOT_CONFIRMED
+P3E2F_CURRENT_WORDPRESS_CHECK_AT_STOP=NOT_CONFIRMED
+P3E2F_LATE_WORDPRESS_CHECK=PASS_OUTSIDE_EVIDENCE_WINDOW
 P3E2F_COMPLETE_PLATFORM_PREFLIGHT=PASS
 P3E2F_ENDING_SAFETY_CHECK=PASS_OUTSIDE_EVIDENCE_WINDOW
 P3E2E_DESKTOP_ENABLE_PERFORMED=False
