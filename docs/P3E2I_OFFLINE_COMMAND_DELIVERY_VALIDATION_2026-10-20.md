@@ -1,7 +1,7 @@
-# P3-E2I: offline delivery PASS; approved transfer stopped at SSH authentication
+# P3-E2I: verified file delivery PASS after separately approved authentication retries
 
-Date: 2026-10-20, Asia/Shanghai. Stage A completed; stage B attempted and
-stopped. Server file integrity and business preflight remain **NOT_RUN**.
+Date: 2026-10-20, Asia/Shanghai. Stages A and B completed. File transfer and
+server file integrity **PASS**; business preflight remains **NOT_RUN**.
 
 ## Result and authorization boundary
 
@@ -16,6 +16,8 @@ files to the target host and checking their integrity only. That approval was
 subsequently received; its single failed attempt is recorded below. Stage C business
 checks are not implied by that transfer approval. Do not ask the operator to
 paste the old long Base64 command or bypass its failed integrity check.
+Two failed authentication attempts and the later separately approved success
+are retained below; the first failures are not rewritten as successful.
 
 PR #93 retains the E2H transport failure and overall NOT PASS. These local
 results do not identify where the previous chat/terminal bytes differed and
@@ -74,8 +76,9 @@ but are **not the approved transfer candidate**.
 | `manifest.json` | 405 | `9d9a0b831573d9018b623557d155e643578077221fa7f4d0bd4ff3049b1e75f3` |
 
 Proposed host: `148.135.106.145`.
-Approved destination, not created during stage A; its remote creation is
-NOT_CONFIRMED after the stage B transport failure:
+Approved destination, not created during stage A and initially NOT_CONFIRMED
+after authentication failures; creation and custody were verified during
+the separately approved successful attempt below:
 
 ```text
 /root/wepuu-e2i-delivery-de920b0276c91044
@@ -152,7 +155,7 @@ lightweight ending gate. Any necessary failure/unknown/expiry stops without
 retry. No old samples fill a missing current stage.
 
 No production readiness, current Session, NTP, email pause, Grant or database
-state was revalidated during the offline stage or failed transfer. Earlier accepted product
+state was revalidated during this file-only task. Earlier accepted product
 states remain historical and are not newly asserted.
 
 ## Stage B: approved transfer attempt, stopped before SFTP upload
@@ -268,12 +271,68 @@ not been diagnosed here, and it is not attributed to SSH authentication.
 No workflow was manually retried or application code changed. CI of the
 corrected append is tracked separately, never inherited from an older Head.
 
+### Second explicitly approved retry: three files transferred and verified
+
+The operator then reported adding a key to Pageant and explicitly requested
+another retry. A third isolated local attempt record was prepared, preserving
+both previous authentication failures. Its driver differed only in two
+local evidence/batch-file paths; pinned file bytes, remote file-only source,
+destination and all stop/no-overwrite conditions remained unchanged. Local
+driver syntax passed before the connection. No key content was inspected.
+
+This attempt authenticated successfully. The observations support successful
+authentication after the operator's reported key addition, not independent
+proof of exactly which mechanism caused either earlier failure.
+
+| File-only stage | Local captured UTC | Asia/Shanghai | Result |
+| --- | --- | --- | --- |
+| Host/root gate and exclusive receiver creation | 07:59:21.006 | 15:59:21.006 | PASS; target did not already exist; approved directory and private receiver created0700/root |
+| One SFTP batch upload | 07:59:41.515 | 15:59:41.515 | PASS; exactly the three approved files sent, set0600 |
+| Hash/custody checks and no-overwrite commit | 07:59:47.755 | 15:59:47.755 | PASS; same-directory exclusive link/owned-stage unlink, final ordinary single-link files; only owned empty temporary receiver removed |
+| External hash/syntax checks and launcher verify | 08:00:01.195 | 16:00:01.195 | PASS; pinned bytes/manifest, root0700/0600 custody, Python3.10.12 syntax and verified launcher's `verify` mode |
+
+The host reported its verification time as
+`2026-10-20T08:00:01.413475+00:00`. This is a host self-report, not independent
+UTC calibration or a fresh WordPress/Control clock comparison.
+
+Final files are exactly the three frozen names/sizes/hashes listed earlier,
+without unknown links or extra files. A before/after verification recheck
+confirmed custody and bytes. The real Ubuntu custody/syntax/launcher-verify
+branches were observed here; the business child/process-group execution
+branch was not exercised and is not represented as passed in production.
+
+External fixed SHA-256 and syntax checks preceded invocation of the actual
+verified launcher bytes. It was invoked only with `--mode verify`, never
+`run`; it returned `E2I_DELIVERY_VERIFIED`, `checksExecuted=false`. The outer
+file verifier returned `E2I_SERVER_FILE_INTEGRITY_PASS`,
+`businessChecksExecuted=false`, `productionPreflightStarted=false`, and
+confirmed that no run marker or pycache appeared. No PHP/WordPress bootstrap,
+database query, website/metadata HTTP probe, Proof or application entry point
+was run by this file-only verification.
+
+There were three bootstrap invocations across this history (two failed,
+one successful). The successful file-only workflow additionally used one
+SFTP upload connection and two SSH file-finalize/verify connections. These
+are normal stages of that one approved file-delivery workflow, not business
+checks or automatic reattempts of a failed stage. No subsequent SSH connection
+was made after verification succeeded.
+
+The files remain in the approved protected directory. No business-check
+reservation has been consumed. The current authorization explicitly excludes
+business checks, so execution stops here. A fresh stage C read-only preflight
+needs its own approval/readiness and new evidence window; Session, resource
+and identity facts cannot be filled from the E2H/E2G historical results.
+
+The CI correction Head `1508559564977f07a8dc93534c55525f80958f21`
+subsequently passed Hosted CI `39390044148`. That does not erase the earlier
+CI39384909651 failure, and it is not the CI result for this success append.
+
 ```text
 P3E2I_DELIVERY_LOCAL_VALIDATION_PASS=True
 P3E2I_FILE_TRANSFER_ATTEMPT_PERFORMED=True
-P3E2I_AUTH_CONNECTION_ATTEMPTS=2
-P3E2I_FILE_TRANSFER_PASS=False
-P3E2I_SERVER_FILE_INTEGRITY_PASS=NOT_RUN
+P3E2I_BOOTSTRAP_ATTEMPTS=3
+P3E2I_FILE_TRANSFER_PASS=True
+P3E2I_SERVER_FILE_INTEGRITY_PASS=True
 P3E2I_COMPLETE_PREFLIGHT_PASS=NOT_RUN
 P3E2A_PREFLIGHT_PASS=False
 
