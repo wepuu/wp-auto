@@ -99,6 +99,9 @@ class Integration(unittest.TestCase):
     def test_sql_input_and_credential_boundaries(self):
         sql=core.query(BINDING);self.assertNotIn('__RESOURCE__',sql)
         self.assertNotIn('secret_artifacts',sql);self.assertNotIn("'payload',p.payload",sql)
+        template=(Path(__file__).parent/'acceptance/e2e-grants.sql').read_text(encoding='utf8')
+        self.assertEqual(core.query(BINDING,template),sql)
+        with self.assertRaises(core.GateError):core.query(BINDING,'')
         for field,value in [('resource',"https://site.example.test/x'"),('resource','http://site.example.test/x'),('tenant','bad'),('accountSha256','bad')]:
             b={**BINDING,field:value}
             with self.assertRaises(core.GateError):core.query(b)

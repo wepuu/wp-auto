@@ -65,7 +65,7 @@ def resource_gate(value):
     return detail
 
 
-def query(binding):
+def query(binding, template=None):
     need(isinstance(binding, dict), 'binding', 'BINDING_INVALID')
     resource = binding.get('resource', '')
     parts = urlsplit(resource)
@@ -77,7 +77,8 @@ def query(binding):
         tenant = str(uuid.UUID(binding['tenant']))
     except (ValueError, KeyError, TypeError, AttributeError):
         raise GateError('binding', 'BINDING_INVALID') from None
-    sql = Path(__file__).with_name('e2e-grants.sql').read_text(encoding='utf8')
+    sql = Path(__file__).with_name('e2e-grants.sql').read_text(encoding='utf8') if template is None else template
+    need(isinstance(sql, str) and all('__'+k+'__' in sql for k in ['RESOURCE','TENANT','SITE','ACCOUNT']), 'binding', 'SQL_TEMPLATE_INVALID')
     for key, value in [('RESOURCE', resource), ('TENANT', tenant), ('SITE', binding['siteSha256']), ('ACCOUNT', binding['accountSha256'])]:
         sql = sql.replace('__' + key + '__', value)
     need('__RESOURCE__' not in sql, 'binding', 'SQL_TEMPLATE_INVALID')
@@ -151,7 +152,7 @@ def legacy_full_gate(call, diagnose=None):
 
 def platform_check(io, action, binding, prior=None):
     need(action in ['before', 'after'], 'dispatch', 'ACTION_INVALID')
-    sql = query(binding)  # Validate inputs before any remote read.
+    sql = query(binding, io.get('sql_template'))  # Validate inputs before any remote read.
     resource = resource_gate(io['resource']())
     state = io['state']()
     who = io['identity'](state)
