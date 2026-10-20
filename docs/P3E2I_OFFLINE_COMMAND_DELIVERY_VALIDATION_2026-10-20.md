@@ -1,5 +1,11 @@
 # P3-E2I: verified file delivery PASS after separately approved authentication retries
 
+This record preserves stages A/B at their original scope. The later separately
+approved stage C PASS is recorded in
+[the complete read-only preflight record](P3E2I_SINGLE_COMPLETE_READONLY_PREFLIGHT_2026-10-20.md);
+the NOT_RUN business-preflight state below describes the stage B stop, not
+the later separately authorized result.
+
 Date: 2026-10-20, Asia/Shanghai. Stages A and B completed. File transfer and
 server file integrity **PASS**; business preflight remains **NOT_RUN**.
 
