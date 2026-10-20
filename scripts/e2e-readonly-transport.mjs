@@ -38,3 +38,16 @@ export function aggregate(stages,{startedMs,endedMs,runId,manifestSha256}){
   return {passed:pass,stageResults:Object.fromEntries(names.map(n=>[n,stages[n]?.passed===true?'PASS':stages[n]?'FAIL':'NOT_RUN'])),withinWindow:valid,
     desktopEnablePerformed:false,oauthAttemptPerformed:false,mcpToolCallPerformed:false};
 }
+
+// Must be evaluated before opening a new observation window or making SSH reads.
+// This cannot retroactively validate a run started before a pending local check ended.
+export function readOnlyPrerequisites(evidence,{candidateHead,finalPhpSha256,startedAtMs}){
+  const required=['python','transport','sql','phpProjection','finalGeneratedPhpSyntax','desktopParameters','privateAdapter','projection','hostedHelperCi','hostedPlatformCi'];
+  if(!evidence||evidence.candidateHead!==candidateHead||!Number.isFinite(startedAtMs))return false;
+  if(!/^[a-f0-9]{40}$/.test(candidateHead)||!/^[a-f0-9]{64}$/.test(finalPhpSha256))return false;
+  if(evidence.checks?.finalGeneratedPhpSyntax?.sourceSha256!==finalPhpSha256)return false;
+  return required.every(key=>{
+    const x=evidence.checks?.[key],finished=Date.parse(x?.completedAtUtc);
+    return x?.passed===true&&Number.isFinite(finished)&&finished<=startedAtMs;
+  });
+}

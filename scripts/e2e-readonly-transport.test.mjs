@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {boundedJson,aggregate} from './e2e-readonly-transport.mjs';
+import {boundedJson,aggregate,readOnlyPrerequisites} from './e2e-readonly-transport.mjs';
 const options={expectedStatus:'SYNTHETIC_PASS',runId:'fixture'};
 test('bounded real local child, no SSH/network',async()=>{
   const r=await boundedJson(process.execPath,['-e','process.stdout.write(JSON.stringify({passed:true,status:"SYNTHETIC_PASS",runId:"fixture"}))'],options);assert.equal(r.passed,true);
@@ -36,4 +36,16 @@ test('all stages, same run/hash and bounded window required',()=>{
     const missing={...stages};delete missing[name];assert.equal(aggregate(missing,opts).passed,false);
   }
   assert.equal(aggregate(stages,{...opts,endedMs:900101}).passed,false);
+});
+test('pending, failed, stale-source or late offline checks prevent the first live read',()=>{
+  const context={candidateHead:'a'.repeat(40),finalPhpSha256:'b'.repeat(64),startedAtMs:10000};
+  const required=['python','transport','sql','phpProjection','finalGeneratedPhpSyntax','desktopParameters','privateAdapter','projection','hostedHelperCi','hostedPlatformCi'];
+  const evidence={candidateHead:context.candidateHead,checks:Object.fromEntries(required.map(k=>[k,{passed:true,completedAtUtc:new Date(9000).toISOString()}]))};
+  evidence.checks.finalGeneratedPhpSyntax.sourceSha256=context.finalPhpSha256;
+  assert.equal(readOnlyPrerequisites(evidence,context),true);
+  for(const key of required)for(const change of [{passed:false},{passed:undefined},{completedAtUtc:new Date(11000).toISOString()}]){
+    const changed=structuredClone(evidence);Object.assign(changed.checks[key],change);assert.equal(readOnlyPrerequisites(changed,context),false);
+  }
+  assert.equal(readOnlyPrerequisites({...evidence,candidateHead:'c'.repeat(40)},context),false);
+  const changed=structuredClone(evidence);changed.checks.finalGeneratedPhpSyntax.sourceSha256='c'.repeat(64);assert.equal(readOnlyPrerequisites(changed,context),false);
 });

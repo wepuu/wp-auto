@@ -121,3 +121,119 @@ drift, resource failure or any unconfirmed mandatory item stops this attempt.
 There is no automatic OTP recovery, threshold change or production rerun.
 Even a successful R1 gate must stop before enable and obtain fresh formal
 execution approval. `design/` and the original dirty worktree remain untouched.
+
+## Subsequent validation and stopped live attempt
+
+The shared implementation at `5640e2df6a28f2f84f59336636840b523e96ed5b`
+passed both Hosted workflows:
+
+- helper integration: **39420075796 Success**, with Python, actual PostgreSQL,
+  locked Provider serialization and fixed PHP 8.2.28 steps actually executed;
+- retained platform: **39420076061 Success**, including strict checks, database,
+  OCI, backup, audit, SBOM and retained OAuth conformance gates.
+
+The shared Python tests increased to 14 methods for original legacy resource
+failure projection and missing-diagnostic handling. Only reviewed `mem`/`psi`
+values from the original gate are used; no later snapshot fills that receipt.
+Private fixed-host glue passed 3 local mocked integration tests; its final
+allowlist projection passed 2 local tests. Neither accesses production.
+
+The operator confirmed both account contexts and PuTTY readiness. A new run
+`r1-daabf5e84bf4dea3` was frozen with identity-manifest SHA-256
+`7aab15b38a3d1b800d620fe99051c53a6e7d6975a48ddea8743032c553caa792` and
+streamed payload SHA-256
+`208eaaa9abb0a0cec0221c678ff731827e449ca65392c0e6572819451fed4dae`.
+No files were written on the production hosts by the adapter. It reused
+hash-verified read-only definitions in memory; it did not execute or reset the
+consumed historical launcher's once-only marker.
+
+Two read-only production stages executed:
+
+| Stage | Server receipt UTC | MemAvailable KiB | memory full avg10 | Result |
+| --- | --- | ---: | ---: | --- |
+| Initial resource/services | 2026-10-20T12:17:49.318213Z | 1055196 | 0 | PASS |
+| Single complete platform gate | 2026-10-20T12:18:22.117040Z | 1025564 | 0 | PASS |
+
+These correspond to 20:17:49 and 20:18:22 Asia/Shanghai. The latter finished
+37.850 seconds after the pre-recorded monotonic observation start. The
+complete platform invocation retained `runtime_protections`, confirmed the
+original account Session/owner, zero target Grants, healthy fixed containers,
+actual/persisted mail pause and ingress guards. Its protected business digest
+was `860633ccf1ad343f0cf189d02f4be32846890d6981696aa0d223d6f055f15b9a`.
+Its container hash uses compact sorted JSON and must not be compared directly
+with older receipts using different JSON whitespace conventions.
+
+Receipt hashes:
+
+- resource: `0a4f5b6a2ccbf60480d3762a0ff38b2e273633328ede08c8ffe1da5c6503283c`;
+- platform: `2cbaaaa2dbf98ab5d6723475098c7b3bacdf5f300cbd722e79da89bec1b742bb`.
+
+### Execution-order deviation and stop
+
+An additional syntax check of the **final generated full PHP adapter** was
+launched locally through Docker stdin. It had not completed when the two live
+read-only stages were started, and subsequently timed out at 30 seconds. This
+last prerequisite should have been completed before the first production
+read. Starting the two stages before awaiting and checking every local
+completion was an execution-orchestration mistake, not a production fault.
+
+The run was stopped before Metadata, Desktop recheck, WordPress and ending
+checks. They are **NOT_RUN**. The early platform PASS receipts do not make the
+complete immediate preflight pass. No automatic replay or continuation followed.
+The stop receipt SHA-256 is
+`c0a9642884b852f01612680f9a5541ff3263269ec6532cf5dfc565da702e1515`.
+
+After stopping, an offline-only check of the same generated PHP source via a
+read-only file mount passed `php -l` on the fixed PHP 8.2.28 image. Generated
+PHP SHA-256 was
+`837f4c50169316669b748670b5eb114302c5d17c7e867bc40c092e974a310a6d`.
+This distinguishes an unconfirmed stdin execution path from an actual PHP
+syntax rejection; it does not independently establish the underlying Docker
+timeout cause. It does not retroactively repair the observation order or
+authorize resuming the stopped run.
+
+A mandatory prerequisite validator and regression were then added locally:
+missing, failed, pending, late-completed or wrong-source checks must block the
+first live read. Candidate Head and final-PHP source identity must match. The
+Node suite is now **13 tests PASS**. This guard is a requirement for a later
+dispatcher, not a claim that the historical consumed dispatcher had it or that
+this run was resumed. No subsequent live connection was made.
+
+Final local configuration checks retained the original disabled project hash
+and user config hash
+`8e6aea6411c0e9a296b0f8dffe7ab8c0933db451ca759468d8da0f205b3651a0`.
+The two owned temporary SQL containers were stopped after their fixture runs;
+no final syntax-test container remained. No other local or production service
+was stopped or restarted by this operation.
+
+### Final bounded conclusion
+
+Shared/helper offline validation is complete, including the subsequent final
+generated PHP syntax check. The **complete immediate production gate is not**.
+WordPress's current NTP, clock comparison, identity, local mapping and backup
+were not newly observed in this run. The two platform observations are bounded
+to their times; they are not an enduring health guarantee or an OAuth request
+approval. No new current target Grant status is inferred beyond the observed
+zero count at the completed platform stage.
+
+```text
+P3E2E_HELPER_INTEGRATION_PASS=True
+P3E2E_IMMEDIATE_GATE_PASS=False
+P3E2A_PREFLIGHT_PASS=False
+P3E2E_DESKTOP_ENABLE_PERFORMED=False
+P3E2E_OAUTH_ATTEMPT_PERFORMED=False
+P3E2E_MCP_TOOL_CALL_PERFORMED=False
+P3E2_NEW_ACCOUNT_CODEX_OAUTH_PASS=False
+P3E2_NEW_SITE_READONLY_MCP_PASS=False
+P3E1_HISTORICAL_PROOF_ROOT_CAUSE_CONFIRMED=False
+P3_FULL_ACCEPTANCE_PASS=False
+READY_FOR_CONTROLLED_USE=False
+NOT_READY_FOR_PUBLIC_REGISTRATION=True
+```
+
+The earlier pending-stage block remains as an initial snapshot. This block
+records the actual final attempt without overwriting the original evidence.
+Final candidate CI is tracked independently after this ordinary append commit.
+Any later gate requires a new reviewed dispatcher/run, all offline completions
+before its start, and fresh account preparation. This run's stop and markers
+must not be cleared to obtain a retry. Formal OAuth remains separately gated.
