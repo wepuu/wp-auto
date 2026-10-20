@@ -259,8 +259,14 @@ the password, key, fingerprint/comment or screenshot. No new connection is
 authorized by that clarification alone.
 
 The preceding authentication-stop Head
-`cc950bbf609c90bdc4c16f77c40a9d3f4611bf44` passed Hosted CI
-`39384909651`; CI of this new append is tracked separately.
+`cc950bbf609c90bdc4c16f77c40a9d3f4611bf44` **failed** Hosted CI
+`39384909651` at `Strict checks`; later database/OCI/OAuth gates were skipped.
+The first retry-record append incorrectly labeled that run successful before
+its returned workflow result was reviewed; this follow-up corrects that
+statement without rewriting history. The specific strict-check failure has
+not been diagnosed here, and it is not attributed to SSH authentication.
+No workflow was manually retried or application code changed. CI of the
+corrected append is tracked separately, never inherited from an older Head.
 
 ```text
 P3E2I_DELIVERY_LOCAL_VALIDATION_PASS=True
