@@ -63,6 +63,32 @@ any corrected helper must retain contemporaneous metrics, use a defined fresh
 observation window, and reject new OOM events within that window. This record
 does not authorize that next attempt or any resource/service changes.
 
+## Authorized read-only continuation
+
+Following the operator's instruction to continue the bounded time check:
+
+- At `2026-10-21T04:48:52.316861+00:00`, the host cumulative OOM count was
+  175 before and after the check. The boot ID matched the preceding observation.
+  The current-boot journal search reached its 15-second subprocess timeout;
+  it did not confirm an event time. It was not left running or retried.
+- At `2026-10-21T04:49:37.304986+00:00`, a successful bounded, read-only
+  kernel-ring read found no matching OOM/allocation messages. The earliest
+  retained kernel timestamp was `16049010.211462` seconds and the observation
+  monotonic timestamp was `16058363.590039335` seconds: about 2 hours 36 minutes
+  of retained timestamp span, not proof of complete historical logging.
+- The host cumulative count remained 175, MemAvailable was 1147400 KiB and
+  memory full avg10 was 0.0. The count was unchanged across approximately
+  11 minutes of direct observations. No raw journal or kernel messages,
+  process details or credentials were exported.
+
+The extra historical OOM's exact time is still `NOT_CONFIRMED`. The old
+absolute-count assertion must not be mistaken for a current resource-threshold
+breach. A proposed next treatment is an explicitly accepted, boot-bound fresh
+deployment observation window with count 175, rejecting any increment or boot
+change while retaining the original memory/PSI limits. This is a proposal only:
+no baseline was changed, no preparation was rerun and no production write,
+image load, backup, recreate, reload or email occurred during this continuation.
+
 ```text
 OTP_EXISTING_ACCOUNT_CONTINUOUS_LOGIN_DEPLOYED=False
 OTP_EXISTING_ACCOUNT_DEPLOYMENT_GATE_PASS=False
