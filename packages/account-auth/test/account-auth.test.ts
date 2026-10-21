@@ -7,6 +7,7 @@ import { getCookies } from 'better-auth/cookies';
 import {
   ACCOUNT_AUTH_SESSION_COOKIE,
   ACCOUNT_AUTH_SESSION_TTL_SECONDS,
+  ACCOUNT_AUTH_REGISTRATION_ENABLED,
   accountAuthSecurityOptions,
   loadAccountAuthSecrets,
   normalizeAccountEmail,
@@ -29,6 +30,7 @@ test('security options produce one exact __Host session cookie with an absolute 
   assert.equal(options.account.encryptOAuthTokens, true);
   assert.equal(options.account.accountLinking.disableImplicitLinking, true);
   assert.equal(options.verification.storeIdentifier, 'hashed');
+  assert.equal(ACCOUNT_AUTH_REGISTRATION_ENABLED, false);
 });
 
 test('email normalization and Resend sender metadata reject ambiguous input', () => {

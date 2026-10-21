@@ -955,11 +955,14 @@ export function buildControlApi(options: ControlApiOptions): FastifyInstance {
       }));
     }
     if (!response.ok || outcome === undefined) throw new PlatformError('temporarily_unavailable', 503);
-    const delivery: OtpDeliveryOutcome = outcome;
+    const delivery: OtpDeliveryOutcome = outcome === 'suppressed' ? 'accepted' : outcome;
     return htmlHeaders(reply.status(delivery === 'unknown' ? 202 : 200)).type('text/html; charset=utf-8')
       .send(renderEmailVerification({
         csrfToken: form.csrf, transactionToken: form.transaction, email,
-        delivery: delivery === 'unknown' ? 'unknown' : 'accepted'
+        delivery: delivery === 'unknown' ? 'unknown' : 'accepted',
+        ...(delivery === 'accepted' ? {
+          message: 'If this email belongs to an existing account, check your inbox for a verification code.'
+        } : {})
       }));
   };
 

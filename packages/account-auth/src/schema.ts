@@ -1,7 +1,7 @@
 import { betterAuth } from 'better-auth';
 import { PostgresDialect } from 'kysely';
 import { Pool } from 'pg';
-import { ACCOUNT_AUTH_CLIENT_IP_HEADER, accountAuthSecurityOptions } from './index.js';
+import { ACCOUNT_AUTH_CLIENT_IP_HEADER, ACCOUNT_AUTH_REGISTRATION_ENABLED, accountAuthSecurityOptions } from './index.js';
 import { emailOTP } from 'better-auth/plugins';
 
 // Pinned Better Auth CLI input. Runtime migrations are deliberately disabled;
@@ -43,7 +43,7 @@ export const auth = betterAuth({
     allowedAttempts: 5,
     storeOTP: 'hashed',
     resendStrategy: 'rotate',
-    disableSignUp: false,
+    disableSignUp: !ACCOUNT_AUTH_REGISTRATION_ENABLED,
     rateLimit: { window: 300, max: 5 },
     sendVerificationOTP: () => Promise.resolve()
   })],

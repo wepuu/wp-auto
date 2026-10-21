@@ -18,6 +18,8 @@ export type { OtpDeliveryOutcome, OtpSendEvent, OtpSendLimits, OtpSendQuota } fr
 export const ACCOUNT_AUTH_SESSION_COOKIE = '__Host-wepuu_session';
 export const ACCOUNT_AUTH_BASE_PATH = '/api/auth';
 export const ACCOUNT_AUTH_SESSION_TTL_SECONDS = 43_200;
+// ADR-023: reopening registration requires a separately reviewed code change.
+export const ACCOUNT_AUTH_REGISTRATION_ENABLED = false;
 export const ACCOUNT_AUTH_CLIENT_IP_HEADER = 'x-wepuu-client-ip';
 export const ACCOUNT_AUTH_DELIVERY_ID_HEADER = 'x-wepuu-delivery-id';
 
@@ -121,7 +123,7 @@ export interface AccountAuthSession {
 export interface AccountAuth {
   handle(request: Request): Promise<Response>;
   getSession(headers: Headers): Promise<AccountAuthSession | undefined>;
-  takeDeliveryOutcome(deliveryId: string): OtpDeliveryOutcome | undefined;
+  takeDeliveryOutcome(deliveryId: string): OtpDeliveryOutcome | 'suppressed' | undefined;
   signOut(headers: Headers): Promise<Response>;
   close(): Promise<void>;
   otpBudgetRemaining?(): Promise<number>;
@@ -292,11 +294,11 @@ export function createAccountAuth(options: CreateAccountAuthOptions): AccountAut
     void pool.end();
     throw new Error('otp_send_protection_required');
   }
-  const requests = new AsyncLocalStorage<{ request: Request; reservation?: string; email?: string; limited?: boolean }>();
+  const requests = new AsyncLocalStorage<{ request: Request; reservation?: string; email?: string; limited?: boolean; suppressed?: boolean }>();
   const observe = (event: OtpSendEvent): void => {
     try { options.otpSendObserver?.(event); } catch { /* Metrics never change send semantics. */ }
   };
-  const deliveryOutcomes = new Map<string, { outcome: OtpDeliveryOutcome; expiresAt: number }>();
+  const deliveryOutcomes = new Map<string, { outcome: OtpDeliveryOutcome | 'suppressed'; expiresAt: number }>();
   const security = accountAuthSecurityOptions();
   const auth = betterAuth({
     appName: 'WePuu',
@@ -312,7 +314,6 @@ export function createAccountAuth(options: CreateAccountAuthOptions): AccountAut
         if (options.databaseRole === 'wepuu_account_auth_reader' || options.otpSendProtection?.enabled === false) {
           throw new APIError('SERVICE_UNAVAILABLE', { message: 'otp_send_unavailable' });
         }
-        if (quota === undefined) return; // Explicit mock/schema callers; runtime writers always install quota.
         const state = requests.getStore();
         const deliveryId = state?.request.headers.get(ACCOUNT_AUTH_DELIVERY_ID_HEADER);
         const body = z.object({ email: z.string(), type: z.literal('sign-in') }).strict().safeParse(context.body);
@@ -323,6 +324,16 @@ export function createAccountAuth(options: CreateAccountAuthOptions): AccountAut
         let email: string;
         try { email = normalizeAccountEmail(body.data.email); }
         catch { throw new APIError('BAD_REQUEST', { message: 'otp_send_invalid' }); }
+        let existing;
+        try { existing = await context.context.internalAdapter.findUserByEmail(email); }
+        catch { throw new APIError('SERVICE_UNAVAILABLE', { message: 'otp_send_unavailable' }); }
+        state.email = email;
+        // Unknown recipients cannot burn send budgets or leave reserved rows.
+        if (existing === null) {
+          state.suppressed = true;
+          return { context: { body: { email, type: 'sign-in' } } };
+        }
+        if (quota === undefined) return { context: { body: { email, type: 'sign-in' } } };
         let reservation;
         try { reservation = await quota.reserve(email); }
         catch {
@@ -360,7 +371,7 @@ export function createAccountAuth(options: CreateAccountAuthOptions): AccountAut
       allowedAttempts: 5,
       storeOTP: 'hashed',
       resendStrategy: 'rotate',
-      disableSignUp: false,
+      disableSignUp: !ACCOUNT_AUTH_REGISTRATION_ENABLED,
       rateLimit: { window: limits.verifyWindowSeconds, max: limits.verifyMax },
       async sendVerificationOTP({ email, otp, type }, context) {
         if (type !== 'sign-in') throw new Error('otp_delivery_type_invalid');
@@ -404,6 +415,17 @@ export function createAccountAuth(options: CreateAccountAuthOptions): AccountAut
   return {
     handle: (request) => requests.run({ request }, async () => {
       const response = await auth.handler(request);
+      const state = requests.getStore();
+      const deliveryId = request.headers.get(ACCOUNT_AUTH_DELIVERY_ID_HEADER);
+      if (response.ok && state?.suppressed === true && DeliveryIdSchema.safeParse(deliveryId).success
+        && new URL(request.url).pathname === `${ACCOUNT_AUTH_BASE_PATH}/email-otp/send-verification-otp`) {
+        const now = Date.now();
+        for (const [key, value] of deliveryOutcomes) {
+          if (value.expiresAt <= now) deliveryOutcomes.delete(key);
+        }
+        // Never count a neutral response as a Provider attempt/acceptance.
+        deliveryOutcomes.set(deliveryId as string, { outcome: 'suppressed', expiresAt: now + 60_000 });
+      }
       if (response.status === 429 && requests.getStore()?.limited !== true
         && new URL(request.url).pathname === `${ACCOUNT_AUTH_BASE_PATH}/email-otp/send-verification-otp`) {
         observe({ kind: 'limited', dimension: 'ip' });

@@ -155,6 +155,10 @@ void test('real Fastify HTTP ingress enforces Better Auth database limits and co
   await admin.query('TRUNCATE platform.accounts CASCADE');
   await admin.query('TRUNCATE auth."user" CASCADE');
   await admin.query('TRUNCATE auth."rateLimit"');
+  // ADR-023: the login fixture represents existing users, never registration.
+  await admin.query(`INSERT INTO auth."user" (id,name,email,"emailVerified") VALUES
+    ('otp_http_existing','Existing','http@test.example',true),
+    ('otp_attempt_existing','Existing','attempt-limit@example.test',true)`);
   let deliveredOtp: string | undefined;
   let deliveryCount = 0;
   const accountAuth = createAccountAuth({

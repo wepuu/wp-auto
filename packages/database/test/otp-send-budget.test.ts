@@ -106,6 +106,11 @@ test('P3-D real Better Auth handler preserves OTP on blocked resend, observes ou
   const key = randomBytes(32);
   const metrics = new ContentFreeMetrics();
   const events: OtpSendEvent[] = [];
+  for (const email of ['first@example.test', 'reject@example.test', 'unknown@example.test',
+    'retained@example.test', 'rejectui@example.test', 'unknownui@example.test']) {
+    await pool.query('INSERT INTO auth."user" (id,name,email,"emailVerified") VALUES ($1,$2,$3,true)',
+      [`seed-${email}`, 'Existing quota fixture', email]);
+  }
   let sends = 0;
   let otp = '';
   const auth = createAccountAuth({ databaseUrl, publicOrigin: issuer, applicationName: 'p3d-http', secrets,
