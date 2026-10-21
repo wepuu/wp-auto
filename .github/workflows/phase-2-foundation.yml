@@ -74,7 +74,7 @@ jobs:
         run: |
           echo "$GHCR_READ_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
           docker pull ghcr.io/wepuu/wp-auto-control@sha256:7c7308a6064740f9f732d2fb12a8f4c4c9dd3fd284edd26cea09df79b976c8fe
-          node scripts/verify-control-claims-hotfix-image.mjs --baseline
+          node scripts/verify-otp-existing-control-image.mjs --baseline
       - name: Build only Control candidate and reuse fixed Authorization
         run: |
           docker build --file deploy/Control.Containerfile --tag wepuu-control:candidate --label org.opencontainers.image.revision=$(git rev-parse HEAD) --label org.wepuu.source-tree=$(git rev-parse HEAD^{tree}) .
@@ -82,7 +82,7 @@ jobs:
           docker tag ghcr.io/wepuu/wp-auto-authorization@sha256:e4c3f43f57f62098c43aa56d65699bed4ae8ac6d1a9e4c147470f19dbfc49742 wepuu-authorization:candidate
           test "$(docker image inspect wepuu-control:candidate --format '{{.Config.User}}')" = "node"
           test "$(docker image inspect wepuu-authorization:candidate --format '{{.Config.User}}')" = "node"
-          node scripts/verify-control-claims-hotfix-image.mjs
+          node scripts/verify-otp-existing-control-image.mjs
       - name: Local signing production-mode OCI gate
         env:
           WEPUU_OCI_POSTGRES_ADMIN_URL: postgresql://postgres:conformance@127.0.0.1:5432/wepuu_test
@@ -114,20 +114,20 @@ jobs:
         run: npm run check && npm run check:evidence
       - name: Save unpublished Control candidate only
         run: |
-          docker save wepuu-control:candidate | gzip -n > .tmp/control-claims-hotfix/image.tar.gz
-          node scripts/verify-control-claims-hotfix-image.mjs --archive
+          docker save wepuu-control:candidate | gzip -n > .tmp/otp-existing-control/image.tar.gz
+          node scripts/verify-otp-existing-control-image.mjs --archive
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: control-claims-hotfix-${{ github.event.pull_request.head.sha || github.sha }}
-          path: .tmp/control-claims-hotfix/
+          name: otp-existing-control-${{ github.event.pull_request.head.sha || github.sha }}
+          path: .tmp/otp-existing-control/
           retention-days: 14
           if-no-files-found: error
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: control-claims-hotfix-manifest-${{ github.event.pull_request.head.sha || github.sha }}
+          name: otp-existing-control-manifest-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
-            .tmp/control-claims-hotfix/manifest.json
-            .tmp/control-claims-hotfix/baseline.json
-            .tmp/control-claims-hotfix/image.tar.gz.sha256
+            .tmp/otp-existing-control/manifest.json
+            .tmp/otp-existing-control/baseline.json
+            .tmp/otp-existing-control/image.tar.gz.sha256
           retention-days: 14
           if-no-files-found: error

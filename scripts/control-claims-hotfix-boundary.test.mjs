@@ -4,6 +4,8 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 const baseline = 'ecacb7999004a6e74ebb5163ff337de4a12b5508';
+// Retain the closed E1B evidence; ADR-023 now has a separate current boundary.
+const acceptedDiagnostics = 'b1ebf130458a17d71527e365e617451ba8c6c484';
 const files = [
   'packages/account-auth/src/index.ts', 'packages/account-auth/src/otp-send-quota.ts',
   'packages/database/src/p3d-migration.ts', 'packages/database/src/p3d-migration-cli.ts',
@@ -13,17 +15,38 @@ const files = [
 ];
 const git = args => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 
-test('runtime diff is restricted to proof diagnostics and its HTTP regression', () => {
-  const changed = git(['diff', '--name-only', baseline, '--', 'apps', 'packages',
+test('accepted E1B runtime diff remains restricted to proof diagnostics and its HTTP regression', () => {
+  const changed = git(['diff', '--name-only', baseline, acceptedDiagnostics, '--', 'apps', 'packages',
     'package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', '.npmrc',
     'tsconfig.json', 'tsconfig.base.json', 'deploy/Control.Containerfile']).split('\n').filter(Boolean).sort();
   assert.deepEqual(changed, ['apps/control-api/src/server.test.ts', 'apps/control-api/src/server.ts', 'packages/pairing/src/index.ts']);
 });
 
-test('OTP runtime, custody, guard, dependencies and direct startup retain baseline bytes', async () => {
+test('accepted E1B OTP runtime, custody, guard, dependencies and direct startup retained baseline bytes', () => {
   for (const path of files) {
     const original = execFileSync('git', ['show', `${baseline}:${path}`], { stdio: ['ignore', 'pipe', 'pipe'] });
-    assert.equal((await readFile(path)).equals(original), true, 'BASELINE_BYTES_UNCHANGED');
+    const accepted = execFileSync('git', ['show', `${acceptedDiagnostics}:${path}`], { stdio: ['ignore', 'pipe', 'pipe'] });
+    assert.equal(accepted.equals(original), true, 'HISTORICAL_BASELINE_BYTES_UNCHANGED');
+  }
+});
+
+test('ADR-023 changes only the exact existing-account OTP implementation and regression fixtures', () => {
+  const changed = git(['diff', '--name-only', acceptedDiagnostics, '--', 'apps', 'packages',
+    'package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', '.npmrc',
+    'tsconfig.json', 'tsconfig.base.json', 'deploy/Control.Containerfile']).split('\n').filter(Boolean).sort();
+  assert.deepEqual(changed, [
+    'apps/control-api/src/server.test.ts', 'apps/control-api/src/server.ts',
+    'packages/account-auth/src/index.ts', 'packages/account-auth/src/schema.ts',
+    'packages/account-auth/test/account-auth.test.ts', 'packages/account-auth/test/existing-account.test.ts',
+    'packages/database/test/otp-send-budget.test.ts'
+  ]);
+});
+
+test('ADR-023 preserves diagnostic verifier, quota algorithm, custody, guards, dependencies and startup bytes', async () => {
+  for (const path of [...files.filter(p => p !== 'packages/account-auth/src/index.ts'),
+    'packages/pairing/src/index.ts', 'packages/oauth-provider/src/index.ts', 'apps/authorization-service/src/server.ts']) {
+    const accepted = execFileSync('git', ['show', `${acceptedDiagnostics}:${path}`], { stdio: ['ignore', 'pipe', 'pipe'] });
+    assert.equal((await readFile(path)).equals(accepted), true, 'PROTECTED_PRODUCTION_BYTES_UNCHANGED');
   }
 });
 
