@@ -49,6 +49,13 @@ negative mock tests, backup and production health/protection baselines. Deploy
 only Control by digest using the existing direct command. Do not execute
 migrations or restart Authorization, databases or WordPress.
 
+The operator subsequently approved the verified CI archive delivery without
+registry publication or additional CI publishing rights. Preserve the archive
+hash and its OCI manifest-to-config hash binding. On the observed Docker 29
+containerd store, pin the loaded manifest ID, not the older store's config ID;
+verify both against the original archive, exact config/RootFS and full candidate
+file inventory. This does not authorize a mutable tag or a new build.
+
 Close send/resend and persist sending=false **before** rolling back to the old
 signup-enabled image. Restore only owned configuration after drift checks; do not
 restore the database or remove Sessions, audit or quota history. Never retain
