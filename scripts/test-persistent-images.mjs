@@ -1,19 +1,21 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { readFile, writeFile, mkdtemp, chmod, readdir, mkdir } from 'node:fs/promises';
+import { writeFile, mkdtemp, chmod, mkdir, statfs } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { collectScenarioResult } from './persistent-test-result.mjs';
+import { integrationOptions, verifyIntegrationContext, verifyIntegrationImage, verifyDiskBudget,
+  verifyCompiledIdentity, verifyOwnedStopped, integrationFailure, compiledIdentityCode } from './persistent-image-contract.mjs';
 
 const exec = promisify(execFile);
 const docker = process.env.DOCKER_BIN ?? 'docker';
 const context = process.env.WEPUU_TEST_DOCKER_CONTEXT;
 const prefix = context ? ['--context', context] : [];
-const authorizationImage = process.env.WEPUU_AUTHORIZATION_IMAGE ?? 'wepuu-authorization:candidate';
+const authorizationImage = process.env.WEPUU_AUTHORIZATION_IMAGE;
 const testImage = process.env.WEPUU_TEST_IMAGE;
-const controlImage = process.env.WEPUU_CONTROL_IMAGE ?? 'wepuu-control:candidate';
+const controlImage = process.env.WEPUU_CONTROL_IMAGE;
 const postgresImage = 'postgres@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea';
 const nonce = randomBytes(6).toString('hex');
 const names = { network: `wepuu-persistent-net-${nonce}`, postgres: `wepuu-persistent-pg-${nonce}`,
@@ -26,21 +28,46 @@ if (process.platform === 'win32') {
   await exec('icacls', [directory, '/inheritance:r', '/grant:r', `${user}:(OI)(CI)F`,
     '*S-1-5-18:(OI)(CI)F', '*S-1-5-32-544:(OI)(CI)F'], { windowsHide: true });
 }
+const childEnv = { ...process.env };
+for (const key of ['DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_TLS_VERIFY', 'BUILDX_BUILDER', 'BUILDKIT_HOST',
+  'GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE']) delete childEnv[key];
 const call = async (args, options = {}) => (await exec(docker, [...prefix, ...args], {
   timeout: options.timeout ?? 20000, windowsHide: true, maxBuffer: 1000000,
-  env: { ...process.env, ...(options.env ?? {}) }
+  env: { ...childEnv, ...(options.env ?? {}) }
 })).stdout;
 const labels = ['--label', 'wepuu.phase=persistent-image-test', '--label', `wepuu.run=${nonce}`];
 const mounted = ['--mount', `type=volume,source=${names.evidence},target=/evidence`, '--mount',
   `type=bind,source=${resolve('test/persistent-authorization')},target=/harness,readonly`];
-const hardening = ['--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
+const hardening = ['--read-only', '--no-healthcheck', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
   '--tmpfs', '/tmp:rw,noexec,nosuid,size=64m', '--tmpfs', '/private:rw,noexec,nosuid,size=64m,uid=1000,gid=1000,mode=0700'];
 const containers = [];
 const results = [];
 let networkCreated = false, postgresCreated = false, evidenceCreated = false;
 let result = { passed: false, productionAccessed: false, rawErrorSuppressed: true };
 const save = (name, value) => writeFile(join(directory, name), JSON.stringify(value, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
+const startedUtc = new Date().toISOString(), started = performance.now(), diskSamples = [], artifactResults = [];
+let stage = 'preflight', compiledIdentity, sourceRevision;
+const deny = code => { throw Object.assign(Error('integration_gate_denied'), { code }); };
+async function space(initial = false) {
+  const fs = await statfs(process.cwd()), bytes = fs.bavail * fs.bsize;
+  const observation = { stage, sampledUtc: new Date().toISOString(), freeBytes: bytes, minimumBytes: (initial ? 5 : 2) * 1024 ** 3 };
+  diskSamples.push(observation); verifyDiskBudget(bytes, initial);
+}
+async function source() {
+  const options = { cwd: process.cwd(), env: childEnv, windowsHide: true, timeout: 10000, maxBuffer: 100000 };
+  const git = async args => (await exec('git', args, options)).stdout.trim();
+  const head = await git(['rev-parse', 'HEAD']);
+  if (head !== process.env.WEPUU_TEST_SOURCE_REVISION) deny('SOURCE_REVISION_MISMATCH');
+  if (await git(['status', '--porcelain', '--untracked-files=normal'])) deny('SOURCE_NOT_CLEAN');
+  for (const revision of new Set(Object.values(integrationOptions(process.env).revisions))) {
+    if (await git(['diff', '--name-only', revision, head, '--', 'apps', 'packages', 'package.json', 'pnpm-lock.yaml',
+      'pnpm-workspace.yaml', '.npmrc', 'tsconfig.base.json', 'tsconfig.json', 'deploy/Authorization.Containerfile',
+      'deploy/Control.Containerfile', 'test/persistent-authorization'])) deny('SOURCE_INPUT_CHANGED');
+  }
+  return head;
+}
 async function scenario(step) {
+  stage = step; await space();
   const name = `wepuu-persistent-${step}-${nonce}`;
   containers.push(name);
   await save(step + '-attempt.json', { startedUtc: new Date().toISOString(), attempts: 1 });
@@ -62,23 +89,32 @@ async function scenario(step) {
   return item;
 }
 try {
-  const current = context ?? (await call(['context', 'show'])).trim();
-  const endpoint = JSON.parse(await call(['context', 'inspect', current]))[0].Endpoints.docker.Host;
-  assert(endpoint.startsWith('unix://') || endpoint.startsWith('npipe://'), 'LOCAL_DOCKER_ONLY');
-  const image = JSON.parse(await call(['image', 'inspect', authorizationImage]))[0];
-  assert.equal(image.Config.User, 'node');
-  assert.deepEqual(image.Config.Cmd, ['node', 'apps/authorization-service/dist/main.js']);
-  assert.equal(image.Architecture, 'amd64');
-  const control = JSON.parse(await call(['image', 'inspect', controlImage]))[0];
-  assert.equal(control.Config.User, 'node');
-  assert.deepEqual(control.Config.Cmd, ['node', 'apps/control-api/dist/main.js']);
+  const options = integrationOptions(process.env);
+  await space(true); sourceRevision = await source();
+  verifyIntegrationContext(JSON.parse(await call(['context', 'inspect', context])), context);
+  for (const role of ['authorization', 'control', 'test']) {
+    const id = options.images[role];
+    artifactResults.push(verifyIntegrationImage(JSON.parse(await call(['image', 'inspect', id])), id, role, options.revisions[role]));
+  }
   try { await call(['image', 'inspect', postgresImage]); }
-  catch { await call(['pull', '--platform', 'linux/amd64', postgresImage], { timeout: 120000 }); }
+  catch { deny('POSTGRES_IMAGE_MISSING'); }
+  stage = 'compiled_identity';
+  const probes = [];
+  for (const role of ['authorization', 'control', 'test']) {
+    const probeName = `wepuu-persistent-identity-${role}-${nonce}`; containers.push(probeName);
+    probes.push(JSON.parse(await call(['run', '--name', probeName, ...labels, '--pull=never', '--network', 'none', '--user', '1000:1000',
+      '--read-only', '--no-healthcheck', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
+      '--entrypoint', 'node', options.images[role], '-e', compiledIdentityCode])));
+  }
+  compiledIdentity = verifyCompiledIdentity(probes);
+  await save('preflight.json', { sourceRevision, artifacts: artifactResults, compiledIdentity, diskSamples });
+  stage = 'evidence_volume';
   await call(['volume', 'create', ...labels, names.evidence]); evidenceCreated = true;
   await call(['run', '--rm', '--pull=never', '--network', 'none', '--user', '0:0',
     '--mount', `type=volume,source=${names.evidence},target=/evidence`, '--entrypoint', 'sh', authorizationImage,
     '-ec', 'chown 1000:1000 /evidence && chmod 0700 /evidence']);
   await scenario('offline');
+  stage = 'database_setup'; await space();
   await call(['network', 'create', '--internal', ...labels, names.network]); networkCreated = true;
   await call(['volume', 'create', ...labels, names.data]);
   const password = randomBytes(32).toString('hex');
@@ -107,10 +143,14 @@ try {
   await scenario('control');
   await scenario('matrix');
   await scenario('transition');
-  result = { passed: true, imageId: image.Id, results, productionAccessed: false, realEmailSent: false,
+  stage = 'postflight'; await space(); await source();
+  verifyIntegrationContext(JSON.parse(await call(['context', 'inspect', context])), context);
+  for (const role of ['authorization', 'control', 'test'])
+    verifyIntegrationImage(JSON.parse(await call(['image', 'inspect', options.images[role]])), options.images[role], role, options.revisions[role]);
+  result = { passed: true, imageId: authorizationImage, results, productionAccessed: false, realEmailSent: false,
     mcpCalled: false, internalNetwork: true, hostPortsPublished: false };
 } catch (error) {
-  result = { passed: false, results, category: error.killed ? 'TIMEOUT' : 'IMAGE_TEST_STOPPED',
+  result = { passed: false, results, failedStage: stage, category: integrationFailure(error),
     rawErrorSuppressed: true, productionAccessed: false };
 } finally {
   const cleanup = [];
@@ -120,14 +160,14 @@ try {
       assert.equal(metadata.Config.Labels['wepuu.run'], nonce);
       if (metadata.State.Running) await call(['stop', '--time', '10', name]);
       const stopped = JSON.parse(await call(['inspect', name]))[0];
-      assert.equal(stopped.State.Running, false);
+      verifyOwnedStopped(stopped, nonce);
       cleanup.push({ name, stopped: true });
     } catch { cleanup.push({ name, stopped: false }); result.passed = false; }
   }
   result.cleanup = cleanup;
   if (evidenceCreated) {
     try {
-      const exported = await call(['run', '--rm', '--pull=never', '--network', 'none',
+      const exported = await call(['run', '--rm', '--pull=never', '--network', 'none', '--no-healthcheck',
         '--mount', `type=volume,source=${names.evidence},target=/evidence,readonly`, authorizationImage, 'node', '-e',
         "const fs=require('node:fs');const out={};function walk(p,r=''){for(const e of fs.readdirSync(p,{withFileTypes:true})){const n=r?`${r}/${e.name}`:e.name;if(e.name.includes('private'))continue;if(e.isDirectory())walk(p+'/'+e.name,n);else if(e.isFile()&&n.endsWith('.json'))out[n]=JSON.parse(fs.readFileSync(p+'/'+e.name,'utf8'));}}walk('/evidence');console.log(JSON.stringify(out));"]);
       const files = JSON.parse(exported);
@@ -141,6 +181,12 @@ try {
   }
   result.evidenceDirectory = directory;
   result.resourcesRetained = { ...names, networkCreated };
+  result.sourceRevision = sourceRevision;
+  result.artifacts = artifactResults;
+  result.compiledIdentity = compiledIdentity;
+  result.diskSamples = diskSamples;
+  result.startedUtc = startedUtc; result.finishedUtc = new Date().toISOString(); result.elapsedMs = Math.round(performance.now() - started);
+  result.automaticRetryPerformed = false; result.imageRebuilt = false; result.hostedCiTriggered = false;
   await save('result.json', result);
 }
 console.log(JSON.stringify(result));
