@@ -58,13 +58,35 @@ export function verifyAuthorizationArtifact({ exitCode, revision, tag, iid, meta
   requireGate(image.Config.Entrypoint == null || image.Config.Entrypoint.length === 0
     || JSON.stringify(image.Config.Entrypoint) === JSON.stringify(['docker-entrypoint.sh']), 'IMAGE_ENTRYPOINT_MISMATCH');
   requireGate(metadata !== null && typeof metadata === 'object' && !Array.isArray(metadata), 'BUILD_METADATA_INVALID');
-  const configDigest = metadata['containerimage.config.digest'], manifestDigest = metadata['containerimage.digest'];
-  requireGate(digest(configDigest) && digest(manifestDigest), 'BUILD_METADATA_DIGEST_MISSING');
-  requireGate(configDigest === image.Id, 'IMAGE_CONFIG_DIGEST_MISMATCH');
+  const configDigest = metadata['containerimage.config.digest'], exportedDigest = metadata['containerimage.digest'];
+  const hasConfig = Object.hasOwn(metadata, 'containerimage.config.digest');
+  requireGate(digest(exportedDigest) && (!hasConfig || digest(configDigest)), 'BUILD_METADATA_DIGEST_MISSING');
+  const kinds = {
+    'application/vnd.oci.image.index.v1+json': 'OCI_INDEX',
+    'application/vnd.oci.image.manifest.v1+json': 'OCI_MANIFEST',
+    'application/vnd.docker.distribution.manifest.list.v2+json': 'DOCKER_MANIFEST_LIST',
+    'application/vnd.docker.distribution.manifest.v2+json': 'DOCKER_MANIFEST'
+  };
+  const descriptor = metadata['containerimage.descriptor'];
+  let exportedDigestKind = 'EXPORT_DIGEST_UNTYPED';
+  if (descriptor !== undefined) {
+    requireGate(descriptor !== null && typeof descriptor === 'object' && Object.hasOwn(kinds, descriptor.mediaType)
+      && descriptor.digest === exportedDigest && Number.isSafeInteger(descriptor.size) && descriptor.size > 0, 'IMAGE_DESCRIPTOR_MISMATCH');
+    exportedDigestKind = kinds[descriptor.mediaType];
+  }
+  let imageIdKind;
+  if (hasConfig && configDigest === image.Id) imageIdKind = 'CONFIG_DIGEST';
+  else {
+    const loaded = image.Descriptor;
+    requireGate(descriptor !== undefined && loaded !== null && typeof loaded === 'object'
+      && descriptor.mediaType === loaded.mediaType && descriptor.digest === loaded.digest && descriptor.size === loaded.size
+      && image.Id === exportedDigest, hasConfig ? 'IMAGE_CONFIG_DIGEST_MISMATCH' : 'IMAGE_DESCRIPTOR_MISMATCH');
+    imageIdKind = exportedDigestKind;
+  }
   const iidDigest = typeof iid === 'string' ? iid.trim() : undefined;
-  requireGate(digest(iidDigest) && [configDigest, manifestDigest].includes(iidDigest), 'IMAGE_IID_UNRELATED');
-  return { imageId: image.Id, configDigest, manifestDigest, iidDigest,
-    iidKind: iidDigest === configDigest ? 'CONFIG_DIGEST' : 'MANIFEST_DIGEST', revision,
+  requireGate(digest(iidDigest) && [configDigest, exportedDigest].includes(iidDigest), 'IMAGE_IID_UNRELATED');
+  return { imageId: image.Id, imageIdKind, configDigest: hasConfig ? configDigest : 'NOT_PRESENT', exportedDigest,
+    exportedDigestKind, iidDigest, iidKind: hasConfig && iidDigest === configDigest ? 'CONFIG_DIGEST' : exportedDigestKind, revision,
     platform: 'linux/amd64', user: 'node', directMain: true, artifactLinked: true };
 }
 
@@ -79,7 +101,7 @@ export function publicBuildFailure(error) {
     'BUILDER_NODES_DENIED','BUILDER_ENDPOINT_MISMATCH','BUILDER_NOT_RUNNING','BUILDER_PLATFORM_MISSING','REVISION_INVALID',
     'BUILD_TAG_INVALID','BUILDER_NAME_INVALID','EVIDENCE_PATH_INVALID','BUILD_EXIT_FAILED','IMAGE_NOT_CONFIRMED','IMAGE_ID_INVALID',
     'IMAGE_TAG_MISMATCH','IMAGE_REVISION_MISMATCH','IMAGE_PLATFORM_MISMATCH','IMAGE_USER_MISMATCH','IMAGE_CMD_MISMATCH',
-    'IMAGE_ENTRYPOINT_MISMATCH','BUILD_METADATA_INVALID','BUILD_METADATA_DIGEST_MISSING','IMAGE_CONFIG_DIGEST_MISMATCH',
+    'IMAGE_ENTRYPOINT_MISMATCH','BUILD_METADATA_INVALID','BUILD_METADATA_DIGEST_MISSING','IMAGE_CONFIG_DIGEST_MISMATCH','IMAGE_DESCRIPTOR_MISMATCH',
     'IMAGE_IID_UNRELATED','RUNTIME_PROBE_MISMATCH','SOURCE_NOT_CLEAN','SOURCE_REVISION_MISMATCH','SOURCE_CHANGED',
     'BUILDER_CHANGED','IMAGE_TAG_ALREADY_EXISTS','BUILD_TIMEOUT','BUILD_SPAWN_FAILED','PROBE_CLEANUP_NOT_CONFIRMED']);
   return allowed.has(error?.code) ? error.code : error?.killed ? 'COMMAND_TIMEOUT'

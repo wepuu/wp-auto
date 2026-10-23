@@ -21,9 +21,9 @@ test('build explicitly loads one platform and writes independent evidence withou
 test('exit zero with absent artifact is a failure', () => {
   const f=fixture(); f.images=[]; assert.throws(()=>verifyAuthorizationArtifact(f),{code:'IMAGE_NOT_CONFIRMED'});
 });
-test('manifest IID is related to config ID without equating the two digest types', () => {
+test('exported IID is related to config ID without inventing its descriptor type', () => {
   const f=fixture(), result=verifyAuthorizationArtifact(f);
-  assert.equal(result.iidKind,'MANIFEST_DIGEST'); assert.notEqual(result.imageId,result.manifestDigest);
+  assert.equal(result.iidKind,'EXPORT_DIGEST_UNTYPED'); assert.notEqual(result.imageId,result.exportedDigest);
   f.iid=config; assert.equal(verifyAuthorizationArtifact(f).iidKind,'CONFIG_DIGEST');
 });
 test('missing or malformed metadata and unrelated IID cannot pass', () => {
@@ -73,4 +73,32 @@ test('timeout, spawn failure and nonzero exit cannot become successful builds', 
 test('preexisting tags are refused rather than overwritten or treated as new outputs', () => {
   verifyUnusedTag(''); verifyUnusedTag('\n');
   assert.throws(()=>verifyUnusedTag('abc123\n'),{code:'IMAGE_TAG_ALREADY_EXISTS'});
+});
+const indexFixture = () => {
+  const f=fixture(); delete f.metadata['containerimage.config.digest'];
+  const descriptor={mediaType:'application/vnd.oci.image.index.v1+json',digest:manifest,size:856};
+  f.metadata['containerimage.descriptor']={...descriptor};f.images[0].Descriptor={...descriptor};f.images[0].Id=manifest;
+  return f;
+};
+test('modern local OCI index identity is matched by typed metadata and loaded descriptor', () => {
+  const r=verifyAuthorizationArtifact(indexFixture());
+  assert.equal(r.imageIdKind,'OCI_INDEX');assert.equal(r.configDigest,'NOT_PRESENT');assert.equal(r.iidKind,'OCI_INDEX');
+});
+test('an omitted config digest does not permit untyped equality to pass', () => {
+  const f=indexFixture(); delete f.metadata['containerimage.descriptor'];
+  assert.throws(()=>verifyAuthorizationArtifact(f),{code:'IMAGE_DESCRIPTOR_MISMATCH'});
+});
+test('unknown or mismatched index descriptors and unrelated IIDs are rejected', () => {
+  for(const mutate of [f=>f.images[0].Descriptor.mediaType='application/unknown',f=>f.images[0].Descriptor.size++,
+    f=>f.images[0].Descriptor.digest=config,f=>delete f.images[0].Descriptor,
+    f=>f.metadata['containerimage.descriptor'].mediaType='application/unknown',
+    f=>f.metadata['containerimage.descriptor'].digest=config,f=>f.iid=config]) {
+    const f=indexFixture();mutate(f);assert.throws(()=>verifyAuthorizationArtifact(f));
+  }
+});
+test('explicit invalid config metadata is not treated as omission', () => {
+  for(const value of [null,'invalid',false]) {
+    const f=indexFixture(); f.metadata['containerimage.config.digest']=value;
+    assert.throws(()=>verifyAuthorizationArtifact(f),{code:'BUILD_METADATA_DIGEST_MISSING'});
+  }
 });
