@@ -73,7 +73,7 @@ async function freePort(): Promise<number> {
 test('P3-D real Control/Authorization HTTP and Provider reject cross-account Tenant Consent, Code and Session substitution', {
   skip: p3dDatabaseUrl === undefined, timeout: 120_000
 }, async (t) => {
-  const { database, databaseUrl, pool, directory, cleanup } = await p3dFixture(t);
+  const { database, databaseUrl, pool, directory, cleanup } = await p3dFixture(t, 'authorization');
   const rsa = generateKeyPairSync('rsa', { modulusLength: 3072 });
   const passphrase = randomBytes(32).toString('base64url');
   const privateKeyFile = join(directory, 'key.pem');
@@ -134,7 +134,8 @@ test('P3-D real Control/Authorization HTTP and Provider reject cross-account Ten
   }
   const port = await freePort();
   const running = await startAuthorizationService({ issuer, databaseUrl, host: '127.0.0.1', port,
-    cookieKeys: [randomBytes(32).toString('base64url'), randomBytes(32).toString('base64url')] }, environment);
+    cookieKeys: [randomBytes(32).toString('base64url'), randomBytes(32).toString('base64url')],
+    persistent: { mode: 'guard-only', clientId, resource: resources[0] ?? '' } }, environment);
   cleanup(() => running.close());
   const browsers = logins.map((login) => { const jar = new Browser(`http://127.0.0.1:${port}`); jar.accept(login); return jar; });
   const begun = new Map<string, { challenge: string }>();

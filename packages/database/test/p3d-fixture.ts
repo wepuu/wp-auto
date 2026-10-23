@@ -14,13 +14,14 @@ if (p3dDatabaseUrl !== undefined && !['127.0.0.1', 'localhost', '[::1]'].include
   throw new Error('p3d_isolated_database_must_be_loopback');
 }
 
-export async function p3dFixture(t: TestContext, full = false) {
+export async function p3dFixture(t: TestContext, full: boolean | 'authorization' = false) {
   assert.ok(p3dDatabaseUrl, 'isolated_database_required');
   const directory = await mkdtemp(join(tmpdir(), 'wepuu-p3d-'));
   const migrations = join(directory, 'migrations');
   const source = join(dirname(fileURLToPath(import.meta.url)), '..', 'migrations');
   await cp(source, migrations, { recursive: true, filter: (path) => path === source
-    || full || /^(?:00[1-9]|01[0-3]|015)_/u.test(basename(path)) });
+    || full === true || /^(?:00[1-9]|01[0-3]|015)_/u.test(basename(path))
+    || (full === 'authorization' && /^016_/u.test(basename(path))) });
   const admin = new Client({ connectionString: p3dDatabaseUrl });
   await admin.connect();
   const name = `wepuu_p3d_${randomBytes(7).toString('hex')}`;

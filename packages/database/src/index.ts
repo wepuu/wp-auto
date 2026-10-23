@@ -3,6 +3,7 @@ import { lstat, readdir, readFile } from 'node:fs/promises';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Pool, type PoolClient, type PoolConfig } from 'pg';
+export { PostgresPersistentReceiptStore } from './persistent-readonly.js';
 import {
   MCP_SCOPE_ORDER,
   McpScopeSetSchema,
@@ -33,11 +34,28 @@ export interface DatabaseOptions {
   readonly connectionString: string;
   readonly applicationName: string;
   readonly migrationsDirectory?: string;
+  readonly migrationProfile?: 'full' | 'authorization';
+}
+
+const authorizationMigrationNumbers = [...Array.from({ length: 13 }, (_, index) => String(index + 1).padStart(3, '0')), '015', '016'];
+
+/** Preserve retained Console sources while explicitly excluding 014 from this release profile. */
+export function authorizationMigrationNames(files: readonly string[]): readonly string[] {
+  const names = files.filter(name => /^\d+_[a-z0-9_]+\.sql$/u.test(name)).sort();
+  if (names.some(name => !authorizationMigrationNumbers.includes(name.slice(0, 3)) && name !== '014_console_auth_boundary.sql')) {
+    throw new Error('candidate_migration_set_mismatch');
+  }
+  const selected = names.filter(name => authorizationMigrationNumbers.includes(name.slice(0, 3)));
+  if (selected.map(name => name.slice(0, 3)).join(',') !== authorizationMigrationNumbers.join(',')) {
+    throw new Error('candidate_migration_set_mismatch');
+  }
+  return selected;
 }
 
 export class Database {
   readonly #pool: Pool;
   readonly #migrationsDirectory: string;
+  readonly #migrationProfile: 'full' | 'authorization';
 
   constructor(options: DatabaseOptions) {
     const poolOptions: PoolConfig = {
@@ -50,6 +68,18 @@ export class Database {
     };
     this.#pool = new Pool(poolOptions);
     this.#migrationsDirectory = options.migrationsDirectory ?? defaultMigrationsDirectory;
+    this.#migrationProfile = options.migrationProfile ?? 'full';
+  }
+
+  /** Read-only startup verification of the explicitly selected Authorization release profile. */
+  async assertCandidateMigrationIntegrity(): Promise<void> {
+    const names = authorizationMigrationNames(await readdir(this.#migrationsDirectory));
+    const records = await this.#pool.query<{ name: string; sha256: string }>('SELECT name,sha256 FROM public.wepuu_schema_migrations ORDER BY name');
+    if (records.rows.length !== names.length) throw new Error('candidate_migration_set_mismatch');
+    for (const [index, name] of names.entries()) {
+      const digest = createHash('sha256').update(await readFile(resolve(this.#migrationsDirectory, name))).digest('hex');
+      if (records.rows[index]?.name !== name || records.rows[index].sha256 !== digest) throw new Error('candidate_migration_hash_mismatch');
+    }
   }
 
   async migrate(): Promise<void> {
@@ -62,9 +92,10 @@ export class Database {
         sha256 text NOT NULL,
         applied_at timestamptz NOT NULL DEFAULT now()
       )`);
-      const names = (await readdir(this.#migrationsDirectory))
+      const available = (await readdir(this.#migrationsDirectory))
         .filter((name) => /^\d+_[a-z0-9_]+\.sql$/u.test(name))
         .sort();
+      const names = this.#migrationProfile === 'authorization' ? authorizationMigrationNames(available) : available;
       for (const name of names) {
         const sql = await readFile(resolve(this.#migrationsDirectory, name), 'utf8');
         const sha256 = createHash('sha256').update(sql).digest('hex');

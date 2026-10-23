@@ -14,6 +14,7 @@ import {
   PostgresRevocationOutbox,
   PostgresResourceRegistry,
   PostgresSigningKeyRepository,
+  PostgresPersistentReceiptStore,
   createOidcAdapterFactory,
   rateLimitSubjectCodecFromEnvironment,
   secretArtifactCodecFromEnvironment
@@ -25,7 +26,8 @@ import {
   type KeyCustody
 } from '@wepuu/key-custody';
 import { allowRegisteredNativeLoopbackPort, createAuthorizationProvider, GrantDiagnosticError,
-  grantFailureDiagnostic, type GrantDiagnosticStage } from '@wepuu/oauth-provider';
+  grantFailureDiagnostic, PersistentAuthorizationPolicy, PersistentReadOnlyRuntime, type GrantDiagnosticStage } from '@wepuu/oauth-provider';
+import { PersistentConsentController } from './persistent-consent.js';
 import { HttpsRevocationDelivery, RevocationWorker } from './revocation-worker.js';
 import {
   escapeHtml,
@@ -137,7 +139,16 @@ const ServiceConfigSchema = z.object({
   databaseUrl: z.string().min(1),
   host: z.string().min(1),
   port: z.number().int().min(1).max(65_535),
-  cookieKeys: z.array(z.string().min(32)).min(2)
+  cookieKeys: z.array(z.string().min(32)).min(2),
+  persistent: z.object({
+    mode: z.enum(['guard-only', 'explicit-consent']).default('guard-only'),
+    clientId: z.string().regex(/^[A-Za-z0-9_-]{8,256}$/u),
+    resource: z.url().refine(value => {
+      const url = new URL(value);
+      return url.protocol === 'https:' && url.href === value && url.username === '' && url.password === ''
+        && url.search === '' && url.hash === '' && url.pathname === '/wp-json/wp-auto/mcp';
+    })
+  }).strict()
 }).strict();
 
 export type AuthorizationServiceConfig = z.infer<typeof ServiceConfigSchema>;
@@ -148,7 +159,12 @@ export function authorizationServiceConfigFromEnvironment(environment: NodeJS.Pr
     databaseUrl: environment['WEPUU_DATABASE_URL'],
     host: environment['WEPUU_AUTH_HOST'] ?? '127.0.0.1',
     port: Number(environment['WEPUU_AUTH_PORT'] ?? '3001'),
-    cookieKeys: JSON.parse(environment['WEPUU_COOKIE_KEYS_JSON'] ?? '[]') as unknown
+    cookieKeys: JSON.parse(environment['WEPUU_COOKIE_KEYS_JSON'] ?? '[]') as unknown,
+    persistent: {
+      mode: environment['WEPUU_PERSISTENT_AUTHORIZATION_MODE'] ?? 'guard-only',
+      clientId: environment['WEPUU_PERSISTENT_CLIENT_ID'],
+      resource: environment['WEPUU_PERSISTENT_RESOURCE']
+    }
   });
 }
 
@@ -189,13 +205,13 @@ export function normalizeAuthorizationResources(authorizationUrl: URL): boolean 
   return true;
 }
 
-function signCsrf(payload: z.infer<typeof CsrfPayloadSchema>, key: string): string {
+export function signCsrf(payload: z.infer<typeof CsrfPayloadSchema>, key: string): string {
   const encoded = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
   const signature = createHmac('sha256', key).update(encoded, 'utf8').digest('base64url');
   return `${encoded}.${signature}`;
 }
 
-function verifyCsrf(value: string, key: string): z.infer<typeof CsrfPayloadSchema> | undefined {
+export function verifyCsrf(value: string, key: string): z.infer<typeof CsrfPayloadSchema> | undefined {
   const [encoded, signature, extra] = value.split('.');
   if (encoded === undefined || signature === undefined || extra !== undefined) return undefined;
   const expected = createHmac('sha256', key).update(encoded, 'utf8').digest();
@@ -447,6 +463,10 @@ export async function startAuthorizationService(
   const database = new Database({ connectionString: config.databaseUrl, applicationName: 'wepuu-authorization-service' });
   let accountAuth: Awaited<ReturnType<typeof accountAuthFromEnvironment>> | undefined;
   try {
+    await database.assertCandidateMigrationIntegrity();
+    const persistentStore = new PostgresPersistentReceiptStore(database, secretArtifactCodecFromEnvironment(environment));
+    await persistentStore.assertCompatible();
+    const persistentPolicy = new PersistentAuthorizationPolicy(config.persistent.mode);
     const configuredAccountAuth = await accountAuthFromEnvironment(environment, {
       applicationName: 'wepuu-authorization-account-auth',
       databaseRole: 'wepuu_account_auth_reader'
@@ -481,9 +501,23 @@ export async function startAuthorizationService(
       || activeDescriptor.publicJwk.e !== lifecycle.active.publicJwk['e']) throw new Error('local_public_key_metadata_mismatch');
     const rateLimitCodec = rateLimitSubjectCodecFromEnvironment(environment);
     const clients = await new PostgresOAuthClientRepository(database).loadActivePublicClients();
+    if (clients.filter(client => client.clientId === config.persistent.clientId).length !== 1
+      || !(await new PostgresResourceRegistry(database).resolve(config.persistent.resource))?.scopes.includes('mcp:read')) {
+      throw new Error('persistent_target_not_registered');
+    }
     const providerRequestContext = createGrantRevocationContext();
     const authorizationGrants = new PostgresAuthorizationGrantRepository(database);
+    const persistentRuntime = new PersistentReadOnlyRuntime({
+      policy: persistentPolicy, clientId: config.persistent.clientId, resource: config.persistent.resource,
+      store: persistentStore, lookups: persistentStore.lookups(),
+      async resolveBinding(subjectId, grantId) {
+        const binding = await persistentStore.resolveApprovedBinding({ subjectId,
+          clientId: config.persistent.clientId, resource: config.persistent.resource });
+        return binding?.grantId === grantId ? binding : undefined;
+      }
+    });
     const provider = await createAuthorizationProvider({
+      persistentReadOnly: persistentRuntime,
       issuer: config.issuer,
       cookieKeys: config.cookieKeys,
       keyCustody: custody,
@@ -549,6 +583,7 @@ export async function startAuthorizationService(
     provider.proxy = true;
     const callback = provider.callback();
     const server = createServer((request, response) => {
+      persistentRuntime.runRequest(response, () => {
       let diagnosticStage: GrantDiagnosticStage = 'interaction';
       void (async () => {
       const path = new URL(request.url ?? '/', config.issuer).pathname;
@@ -691,7 +726,14 @@ export async function startAuthorizationService(
           }
         }
         diagnosticStage = 'binding';
-        const binding = await authorizationGrants.resolveExact({
+        const persistentEligible = clientId === config.persistent.clientId && resource === config.persistent.resource
+          && params['scope'] === 'mcp:read' && scopes.length === 1 && scopes[0] === 'mcp:read';
+        if (submittedForm?.has('persistent') === true && !persistentEligible) {
+          writeInteractionError(response); return;
+        }
+        const binding = persistentEligible ? await persistentStore.resolveApprovedBinding({
+          subjectId: session.accountId, clientId, resource
+        }) : await authorizationGrants.resolveExact({
           subjectId: session.accountId, clientId, resource, scopes
         });
         if (binding === undefined) {
@@ -711,6 +753,15 @@ export async function startAuthorizationService(
           response.end();
           return;
         }
+        const persistentConsent = persistentEligible ? new PersistentConsentController({
+          origin: new URL(config.issuer).origin, csrfKey: config.cookieKeys[0] ?? '', policy: persistentPolicy,
+          async resolve(uid, accountId) {
+            if (uid !== details.uid || accountId !== session.accountId) return undefined;
+            const current = await persistentStore.resolveApprovedBinding({ subjectId: accountId, clientId, resource });
+            return current?.grantId === binding.grantId ? current : undefined;
+          },
+          approve: input => persistentStore.createConsent(input)
+        }) : undefined;
         if (request.method === 'GET') {
           const csrf = signCsrf({
             uid: details.uid,
@@ -721,6 +772,9 @@ export async function startAuthorizationService(
           }, config.cookieKeys[0] ?? '');
           const displayResource = escapeHtml(new URL(resource).hostname);
           const scopeItems = scopes.map((scope) => `<li>${escapeHtml(scope)}</li>`).join('');
+          const consentFields = persistentConsent === undefined
+            ? `<input type="hidden" name="csrf" value="${escapeHtml(csrf)}">`
+            : await persistentConsent.fields(details.uid, session.accountId);
           response.writeHead(200, {
             'content-type': 'text/html; charset=utf-8',
             'cache-control': 'no-store',
@@ -735,7 +789,7 @@ export async function startAuthorizationService(
             title: `${deployment.productName} authorization`,
             heading: 'Authorize direct MCP access.',
             message: `The client will connect directly to ${displayResource}. WePuu will not receive its tool inputs or results.`,
-            content: `<h2>Approved ceiling</h2><ul class="scope-list">${scopeItems}</ul><form method="post" data-wepuu-consent><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><div class="actions"><button name="decision" value="approve" type="submit">Approve access</button><button class="danger" name="decision" value="deny" type="submit">Deny</button></div><p data-wepuu-submit-status role="status" hidden>Authorizing…</p></form><script>${CONSENT_SUBMISSION_SCRIPT}</script>`
+            content: `<h2>Approved ceiling</h2><ul class="scope-list">${scopeItems}</ul><form method="post" data-wepuu-consent>${consentFields}<div class="actions"><button name="decision" value="approve" type="submit">Approve access</button><button class="danger" name="decision" value="deny" type="submit">Deny</button></div><p data-wepuu-submit-status role="status" hidden>Authorizing…</p></form><script>${CONSENT_SUBMISSION_SCRIPT}</script>`
           }));
           return;
         }
@@ -749,6 +803,12 @@ export async function startAuthorizationService(
           || csrf.grantId !== binding.grantId) {
           writeInteractionError(response, 400, 'csrf_binding_mismatch');
           return;
+        }
+        if (persistentConsent !== undefined) {
+          try {
+            await persistentConsent.submit(details.uid, session.accountId, { method: request.method,
+              contentType: request.headers['content-type'], origin: request.headers.origin }, form);
+          } catch { writeInteractionError(response); return; }
         }
         if (form.get('decision') !== 'approve') {
           diagnosticStage = 'interaction_finish';
@@ -810,6 +870,7 @@ export async function startAuthorizationService(
           response.writeHead(503, { 'content-type': 'application/json', 'cache-control': 'no-store' });
         }
         if (!response.writableEnded) response.end('{"error":"temporarily_unavailable"}');
+      });
       });
     });
     await new Promise<void>((resolve, reject) => {
