@@ -15,3 +15,38 @@ Node 24.22.1 LTS and pnpm 11.19.0 are fixed across candidate build/CI. Both serv
 Consumed links and replay tombstones are retained for the existing family/receipt enforcement period. This candidate adds no automatic purge, does not delete live descendants, and does not certify a production retention scheduler. Expired records are denied regardless of their continued storage. Synthetic boundary, transaction, timeout, tenant, replay, image and startup tests must pass before a local-candidate verdict. Production migration backup/recovery, exact release transitions and real Desktop tests remain distinct gates.
 
 No WordPress tool input/output, content, passwords or Application Passwords enter the platform. Test secrets stay in private local files/tmpfs and are excluded from artifacts. Failures preserve safe diagnostics; production rollback never restores consumed protocol state or disables security checks.
+
+## R8 compatibility clarification and classification gate (2026-10-23)
+
+The intended compatibility contract distinguishes ordinary authorization without
+`offline_access`, the previously accepted native `offline_access`/Refresh flow,
+and the new explicit persistent read-only receipt flow. The earlier statement
+that ordinary authorization remains session-bound refers to the first category;
+it does not authorize removing the accepted native Refresh lifecycle tests.
+Guard-only closes new custom persistent issuance, not native issuance already
+allowed by the reviewed Provider contract. This is an intended candidate
+contract, not a claim that the current implementation meets it: R7 still fails
+on the first native offline authorization.
+
+Native offline authorization must not create a custom receipt. Custom artifacts
+must not downgrade to native behavior because a link is absent, a scope changes,
+or an `expiresWithSession` field is absent. Classification must remain consistent
+through save, load, verification, consumption and Refresh rotation. Storage
+errors, unknown versions and inconsistent classification fail closed.
+
+R8 preparation found no dedicated protected authorization-mode discriminator in
+the existing store contract. `partition_kind` expresses tenant placement, not
+authorization mode; the generic base adapter can produce either placement.
+`SecretArtifactCodec` authenticates the opaque-token lookup, not the payload.
+An application-written JSON marker alone is not an integrity-protected or
+immutable classification. The current runtime role also has general writes to
+secret artifacts. A link-only read cannot distinguish native absence from a
+missing custom link.
+
+Accordingly no scope-only, partition-only or unchecked-marker bypass is
+accepted. R8 stops before application changes, image build or database replay.
+A follow-up design must specify versioned, authoritative classification,
+write/transition restrictions, atomic link association, legacy/unknown behavior,
+rotation inheritance and rollback compatibility. If that needs schema or role
+changes, those require a separately approved candidate migration/permission
+design; this ADR does not authorize migration017 or production execution.
