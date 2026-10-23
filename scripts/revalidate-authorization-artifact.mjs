@@ -5,6 +5,7 @@ import { createHash,randomBytes } from 'node:crypto';
 import { dirname,resolve,join,isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { localDockerEndpoint,verifyAuthorizationArtifact } from './authorization-build-contract.mjs';
+import { checkWindowsEvidenceAcl } from './local-evidence-acl.mjs';
 import { R2_ARTIFACT,AUTHORIZATION_BUILD_INPUTS,revalidationDockerArgs,revalidateExistingAuthorization,
   revalidationFailure } from './authorization-revalidation.mjs';
 
@@ -41,8 +42,7 @@ async function inputPermissions(){
   for(const name of inputNames){const st=await lstat(join(inputRoot,name));
     if(!st.isFile()||st.isSymbolicLink()||st.size<1||st.size>1048576)deny('R3_INPUT_NOT_REGULAR');}
   if(process.platform==='win32'){
-    const code=`$ErrorActionPreference='Stop'; $taskDir=$env:WEPUU_R3_ACL_PATH; $taskSid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value; $taskAllowed=@($taskSid,'S-1-5-18','S-1-5-32-544'); $taskPaths=@($taskDir); foreach($taskName in @('attempt.json','build-process.json','image.iid','build.metadata.private.json')){$taskPaths+=Join-Path $taskDir $taskName}; $taskOk=(Get-Acl -LiteralPath $taskDir).AreAccessRulesProtected; foreach($taskPath in $taskPaths){$taskAcl=Get-Acl -LiteralPath $taskPath; if($taskAcl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -notin $taskAllowed){$taskOk=$false}; foreach($taskRule in $taskAcl.Access){if($taskRule.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value -notin $taskAllowed){$taskOk=$false}}}; @{verified=[bool]$taskOk}|ConvertTo-Json -Compress`;
-    const check=JSON.parse(await command('powershell.exe',['-NoProfile','-NonInteractive','-Command',code],15000,{WEPUU_R3_ACL_PATH:inputRoot}));
+    const check=await checkWindowsEvidenceAcl(inputRoot,inputNames,env);
     if(check.verified!==true)deny('R3_INPUT_PERMISSION_DENIED');
   }else{
     for(const path of [inputRoot,...inputNames.map(n=>join(inputRoot,n))]){
