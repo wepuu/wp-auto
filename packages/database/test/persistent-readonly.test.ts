@@ -49,7 +49,7 @@ async function fixture(t: TestContext) {
 test('persistent storage applies the explicit profile and enforces tenant isolation and exact approval', { skip: !target }, async t => {
   const f = await fixture(t), r = await f.receipt();
   const ledger = await f.admin.query<{ name: string }>('SELECT name FROM public.wepuu_schema_migrations ORDER BY name');
-  assert.equal(ledger.rowCount, 15); assert(!ledger.rows.some(row => row.name.startsWith('014')));
+  assert.equal(ledger.rowCount, 16); assert(!ledger.rows.some(row => row.name.startsWith('014')));
   const own = await f.database.withTenant({ tenantId: f.binding.tenantId, accountId: f.binding.subjectId, correlationId: id('correlation') }, client => client.query('SELECT id FROM oauth.persistent_consents WHERE id=$1', [r.id]));
   assert.equal(own.rowCount, 1);
   const other = await f.database.withTenant({ tenantId: '22222222-2222-4222-8222-222222222222', accountId: f.binding.subjectId, correlationId: id('correlation') }, client => client.query('SELECT id FROM oauth.persistent_consents'));
@@ -92,4 +92,45 @@ test('storage permission failure and lock timeout deny without consuming the Cod
   const lookup = f.codec.current(c.raw);
   const state = await f.admin.query<{ consumed: boolean }>("SELECT consumed_at IS NOT NULL AS consumed FROM oauth.secret_artifacts WHERE model='AuthorizationCode' AND lookup_version=$1 AND artifact_hash=$2", [lookup.version, Buffer.from(lookup.digest)]);
   assert.equal(state.rows[0]?.consumed, false);
+});
+
+test('017 custom classification cannot downgrade after link loss or secret payload alteration', { skip: !target }, async t => {
+  const f = await fixture(t), c = await f.code();
+  assert.deepEqual(await f.store.classification('AuthorizationCode', c.keys), { version: 1, mode: 'PERSISTENT_READONLY' });
+  const lookup = f.store.lookups().current(c.raw);
+  const original = (await f.admin.query<{ payload: Record<string, unknown> }>("SELECT payload FROM oauth.secret_artifacts WHERE model='AuthorizationCode' AND lookup_version=$1 AND artifact_hash=$2",
+    [f.codec.current(c.raw).version, Buffer.from(f.codec.current(c.raw).digest)])).rows[0]?.payload;
+  assert(original);
+  await assert.rejects(() => f.admin.query("UPDATE oauth.artifact_classifications SET mode='NATIVE_OFFLINE' WHERE artifact_lookup=$1", [lookup]));
+  await f.admin.query("UPDATE oauth.secret_artifacts SET payload=jsonb_set(payload,'{scope}','\"mcp:read offline_access\"'::jsonb) WHERE model='AuthorizationCode' AND lookup_version=$1 AND artifact_hash=$2",
+    [f.codec.current(c.raw).version, Buffer.from(f.codec.current(c.raw).digest)]);
+  await assert.rejects(() => f.store.classification('AuthorizationCode', c.keys), /persistent_storage_denied/u);
+  await f.admin.query("UPDATE oauth.secret_artifacts SET payload=$1::jsonb WHERE model='AuthorizationCode' AND lookup_version=$2 AND artifact_hash=$3",
+    [JSON.stringify(original), f.codec.current(c.raw).version, Buffer.from(f.codec.current(c.raw).digest)]);
+  assert.equal((await f.store.classification('AuthorizationCode', c.keys)).mode, 'PERSISTENT_READONLY');
+  await f.admin.query("DELETE FROM oauth.persistent_links WHERE model='AuthorizationCode' AND artifact_lookup=$1", [lookup]);
+  await assert.rejects(() => f.store.classification('AuthorizationCode', c.keys), /persistent_storage_denied/u);
+  await assert.rejects(() => f.store.consumeCode(c.raw, c.keys), /persistent_storage_denied/u);
+});
+
+test('017 custom Code consumption fails closed for inactive binding authorities and expired receipt', { skip: !target }, async t => {
+  const f = await fixture(t);
+  const variants = [
+    ["UPDATE platform.accounts SET status='suspended' WHERE id=$1", "UPDATE platform.accounts SET status='active' WHERE id=$1", f.binding.subjectId],
+    ["UPDATE platform.tenants SET status='suspended' WHERE id=$1", "UPDATE platform.tenants SET status='active' WHERE id=$1", f.binding.tenantId],
+    ["UPDATE platform.tenant_memberships SET status='revoked' WHERE account_id=$1", "UPDATE platform.tenant_memberships SET status='active' WHERE account_id=$1", f.binding.subjectId],
+    ["UPDATE platform.sites SET status='suspended' WHERE id=$1", "UPDATE platform.sites SET status='active' WHERE id=$1", f.binding.siteId],
+    ["UPDATE platform.grants SET status='revoked' WHERE id=$1", "UPDATE platform.grants SET status='active' WHERE id=$1", f.binding.grantId],
+    ["UPDATE oauth.clients SET status='revoked' WHERE client_id=$1", "UPDATE oauth.clients SET status='active' WHERE client_id=$1", f.binding.clientId]
+  ] as const;
+  for (const [invalidate, restore, key] of variants) {
+    const c = await f.code(); await f.admin.query(invalidate, [key]);
+    try { await assert.rejects(() => f.store.consumeCode(c.raw, c.keys), /persistent_storage_denied/u); }
+    finally { await f.admin.query(restore, [key]); }
+    const k = f.codec.current(c.raw);
+    assert.equal((await f.admin.query<{ consumed: boolean }>("SELECT consumed_at IS NOT NULL AS consumed FROM oauth.secret_artifacts WHERE model='AuthorizationCode' AND lookup_version=$1 AND artifact_hash=$2", [k.version, Buffer.from(k.digest)])).rows[0]?.consumed, false);
+  }
+  const c = await f.code();
+  await f.admin.query("UPDATE oauth.persistent_consents SET authorization_expires_at=clock_timestamp() WHERE id=$1", [c.r.id]);
+  await assert.rejects(() => f.store.consumeCode(c.raw, c.keys), /persistent_storage_denied/u);
 });

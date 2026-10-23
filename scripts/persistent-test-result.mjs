@@ -1,6 +1,6 @@
-const steps = new Set(['offline', 'database', 'startup', 'control', 'matrix', 'transition']);
+const steps = new Set(['offline', 'unit', 'database', 'legacy', 'startup', 'control', 'matrix', 'transition']);
 const categories = new Set(['TIMEOUT', 'ASSERTION_FAILED', 'LOCAL_FAILURE', 'SQL_FAILURE',
-  'DATABASE_REGRESSION_FAILED', 'OFFLINE_CHECK_FAILED']);
+  'DATABASE_REGRESSION_FAILED', 'UNIT_FAILED', 'OFFLINE_CHECK_FAILED']);
 const stages = new Set(['setup', 'identity', 'syntax', 'wiring-tests.mjs', 'fixture-tests.mjs',
   'offline-tests.mjs', 'transition_order', 'missing_schema_default_main', 'explicit_migration',
   'runtime_privileges', 'missing_ledger_permission', 'compiled_service_matrix']);

@@ -62,7 +62,7 @@ test('P3-B1 callback registration is atomic, idempotent and leaves the existing 
   skip: connectionString === undefined
 }, async (t) => {
   assert.ok(connectionString);
-  const database = new Database({ connectionString, applicationName: 'wepuu-p3b1-callback-test' });
+  const database = new Database({ connectionString, applicationName: 'wepuu-p3b1-callback-test', migrationProfile: 'authorization' });
   t.after(() => database.close());
   await database.migrate();
   const admin = database.poolForMigrationsAndTests;

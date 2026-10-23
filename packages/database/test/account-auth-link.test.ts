@@ -6,7 +6,7 @@ const connectionString = process.env['WEPUU_TEST_DATABASE_URL'];
 
 test('Better Auth user projection is atomic, concurrent and fail-closed', { skip: connectionString === undefined }, async (t) => {
   assert.ok(connectionString);
-  const database = new Database({ connectionString, applicationName: 'wepuu-account-auth-link-test' });
+  const database = new Database({ connectionString, applicationName: 'wepuu-account-auth-link-test', migrationProfile: 'authorization' });
   t.after(() => database.close());
   await database.migrate();
   await database.migrate();

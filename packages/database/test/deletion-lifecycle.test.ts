@@ -18,7 +18,7 @@ test('deletion lifecycle revokes immediately and purges after the safety window'
   skip: connectionString === undefined
 }, async (t) => {
   assert.ok(connectionString);
-  const database = new Database({ connectionString, applicationName: 'wepuu-deletion-test' });
+  const database = new Database({ connectionString, applicationName: 'wepuu-deletion-test', migrationProfile: 'authorization' });
   const admin = database.poolForMigrationsAndTests;
   t.after(async () => {
     await admin.query('DELETE FROM platform.deletion_tombstones WHERE job_id IN (SELECT id FROM platform.deletion_jobs WHERE scope_id IN ($1, $2))', [memberId, tenantId]);
@@ -126,7 +126,7 @@ test('deletion lifecycle revokes immediately and purges after the safety window'
 
 test('deletion refuses a sole active owner and accepts an account with a replacement owner', { skip: connectionString === undefined }, async (t) => {
   assert.ok(connectionString);
-  const database = new Database({ connectionString, applicationName: 'wepuu-deletion-owner-test' });
+  const database = new Database({ connectionString, applicationName: 'wepuu-deletion-owner-test', migrationProfile: 'authorization' });
   const admin = database.poolForMigrationsAndTests;
   t.after(async () => {
     await admin.query('DELETE FROM platform.deletion_tombstones WHERE job_id IN (SELECT id FROM platform.deletion_jobs WHERE scope_id = $1)', [ownerOnlyId]);
@@ -178,7 +178,7 @@ test('tenant deletion purges all tenant artifacts after the safety window', {
   const account = 'account_DELETE02';
   const site = 'site_DELETE02';
   const grant = 'grant_DELETE02';
-  const database = new Database({ connectionString, applicationName: 'wepuu-deletion-tenant-test' });
+  const database = new Database({ connectionString, applicationName: 'wepuu-deletion-tenant-test', migrationProfile: 'authorization' });
   const admin = database.poolForMigrationsAndTests;
   t.after(async () => {
     await admin.query('DELETE FROM platform.deletion_tombstones WHERE job_id IN (SELECT id FROM platform.deletion_jobs WHERE scope_id = $1)', [tenant]);
@@ -239,7 +239,7 @@ test('site deletion preserves the tenant and unrelated site', {
   const retainedSite = 'site_KEEP03';
   const deletedGrant = 'grant_DELETE03';
   const retainedGrant = 'grant_KEEP03';
-  const database = new Database({ connectionString, applicationName: 'wepuu-deletion-site-test' });
+  const database = new Database({ connectionString, applicationName: 'wepuu-deletion-site-test', migrationProfile: 'authorization' });
   const admin = database.poolForMigrationsAndTests;
   t.after(async () => {
     await admin.query('DELETE FROM platform.deletion_tombstones WHERE job_id IN (SELECT id FROM platform.deletion_jobs WHERE tenant_id = $1)', [tenant]);

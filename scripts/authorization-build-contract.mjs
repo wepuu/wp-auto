@@ -46,7 +46,7 @@ export function verifyUnusedTag(output) {
 }
 
 export function verifyAuthorizationArtifact({ exitCode, revision, tag, iid, metadata, images, artifactRole = 'authorization' }) {
-  requireGate(['authorization','test'].includes(artifactRole), 'IMAGE_CMD_MISMATCH');
+  requireGate(['authorization','control','test'].includes(artifactRole), 'IMAGE_CMD_MISMATCH');
   requireGate(exitCode === 0, 'BUILD_EXIT_FAILED');
   requireGate(Array.isArray(images) && images.length === 1, 'IMAGE_NOT_CONFIRMED');
   const image = images[0];
@@ -55,7 +55,7 @@ export function verifyAuthorizationArtifact({ exitCode, revision, tag, iid, meta
   requireGate(image.Config?.Labels?.['org.opencontainers.image.revision'] === revision, 'IMAGE_REVISION_MISMATCH');
   requireGate(image.Os === 'linux' && image.Architecture === 'amd64', 'IMAGE_PLATFORM_MISMATCH');
   requireGate(artifactRole === 'test' ? ['', 'root', '0'].includes(image.Config?.User ?? '') : image.Config?.User === 'node', 'IMAGE_USER_MISMATCH');
-  requireGate(JSON.stringify(image.Config.Cmd) === JSON.stringify(artifactRole === 'test' ? ['pnpm','check'] : ['node', 'apps/authorization-service/dist/main.js']), 'IMAGE_CMD_MISMATCH');
+  requireGate(JSON.stringify(image.Config.Cmd) === JSON.stringify(artifactRole === 'test' ? ['pnpm','check'] : ['node', `apps/${artifactRole === 'control' ? 'control-api' : 'authorization-service'}/dist/main.js`]), 'IMAGE_CMD_MISMATCH');
   requireGate(image.Config.Entrypoint == null || image.Config.Entrypoint.length === 0
     || JSON.stringify(image.Config.Entrypoint) === JSON.stringify(['docker-entrypoint.sh']), 'IMAGE_ENTRYPOINT_MISMATCH');
   requireGate(metadata !== null && typeof metadata === 'object' && !Array.isArray(metadata), 'BUILD_METADATA_INVALID');

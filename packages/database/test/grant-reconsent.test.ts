@@ -21,7 +21,7 @@ const resource = 'https://reconsent.example.test/wp-json/wp-auto/v1/mcp';
 
 test('revoked Grant permits same-tuple re-consent without reviving old tokens', { skip: connectionString === undefined }, async (t) => {
   assert.ok(connectionString);
-  const database = new Database({ connectionString, applicationName: 'wepuu-grant-reconsent-test' });
+  const database = new Database({ connectionString, applicationName: 'wepuu-grant-reconsent-test', migrationProfile: 'authorization' });
   t.after(() => database.close());
   await database.migrate();
   const admin = database.poolForMigrationsAndTests;

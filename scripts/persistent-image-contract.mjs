@@ -2,7 +2,7 @@ import { localDockerEndpoint } from './authorization-build-contract.mjs';
 
 const deny = code => { throw Object.assign(Error('persistent_image_gate_denied'), { code }); };
 const digest = value => typeof value === 'string' && /^sha256:[a-f0-9]{64}$/u.test(value);
-export const integrationSteps = Object.freeze(['offline', 'database', 'startup', 'control', 'matrix', 'transition']);
+export const integrationSteps = Object.freeze(['offline', 'unit', 'database', 'legacy', 'startup', 'control', 'matrix', 'transition']);
 export function integrationOptions(env) {
   const context = env.WEPUU_TEST_DOCKER_CONTEXT;
   if (typeof context !== 'string' || !/^[A-Za-z0-9_.-]+$/u.test(context)) deny('LOCAL_CONTEXT_REQUIRED');

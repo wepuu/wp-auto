@@ -1,30 +1,53 @@
 import assert from 'node:assert/strict';
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, writeFile, readdir } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { createRequire } from 'node:module';
+import { randomBytes } from 'node:crypto';
+import { candidateDatabase, retainedDatabase, legacyDatabase, verifyDatabaseManifest } from './r10/profiles.mjs';
 
 const cfg = JSON.parse(await readFile('/evidence/postgres.private.json', 'utf8'));
 assert.equal(cfg.host, '127.0.0.1');
-const url = new URL('postgresql://127.0.0.1:5432/postgres');
-url.username = cfg.user; url.password = cfg.password;
-const legacy = process.env.WEPUU_TEST_LEGACY_CONSOLE === 'allow-isolated';
-const args = legacy ? ['exec', 'tsx', '--test', '--test-reporter=tap', '--test-concurrency=1', 'packages/database/test/*.test.ts'] : ['exec', 'tsx', '--test', '--test-reporter=tap', '--test-concurrency=1',
-  'packages/database/test/persistent-readonly.test.ts', 'packages/database/test/migration-profile.test.ts'];
-let result;
+const legacy = process.argv[2] === 'legacy';
+if (legacy) assert.equal(process.env.WEPUU_TEST_LEGACY_CONSOLE, 'allow-isolated');
+verifyDatabaseManifest((await readdir('/workspace/packages/database/test')).filter(f => f.endsWith('.test.ts')));
+const require = createRequire('/workspace/packages/database/dist/index.js'), { Client } = require('pg');
+const cluster = new Client(cfg); await cluster.connect();
+const profiles = legacy ? [legacyDatabase] : [candidateDatabase, retainedDatabase], reports = [];
+let result, current;
 try {
-  const r = await promisify(execFile)('pnpm', args, { cwd: '/workspace', timeout: 240000,
-    env: { PATH: process.env.PATH, TMPDIR: '/tmp', CI: 'true', WEPUU_TEST_DATABASE_URL: url.href }, maxBuffer: 2000000 });
-  const output = r.stdout + '\n' + r.stderr;
-  const pass = Number(output.match(/# pass (\d+)/u)?.[1]), fail = Number(output.match(/# fail (\d+)/u)?.[1]);
-  assert(Number.isSafeInteger(pass) && pass > 0 && fail === 0);
-  result = { passed: true, pass, fail, legacyConsoleRegression: legacy ? 'PASS' : 'NOT_RUN',
-    migration014Scope: legacy ? 'ISOLATED_LEGACY_REGRESSION_ONLY' : 'NOT_EXECUTED', productionAccessed: false };
+  for (const profile of profiles) for (const [file, count] of Object.entries(profile)) {
+    current = file;
+    const name = 'wepuu_r10_' + (legacy ? 'legacy_' : 'candidate_') + randomBytes(6).toString('hex');
+    await cluster.query(`CREATE DATABASE ${name}`);
+    const url = new URL('postgresql://127.0.0.1:5432/' + name); url.username = cfg.user; url.password = cfg.password;
+    const path = 'packages/database/test/' + file;
+    const output = await promisify(execFile)('pnpm', ['exec', 'tsx', '--test', '--test-concurrency=1',
+      '--test-reporter=/harness/r10/reporter.mjs', path], { cwd: '/workspace', timeout: 150000, maxBuffer: 1000000,
+      env: { PATH: process.env.PATH, TMPDIR: '/tmp', CI: 'true', WEPUU_TEST_DATABASE_URL: url.href,
+        WEPUU_R10_REPORT_CONFIG: JSON.stringify({ files: [path], phase: legacy ? 'legacy' : 'database',
+          expectedTopLevel: { [file]: count } }) } });
+    const report = JSON.parse(output.stdout.trim()); assert.equal(report.passed, true);
+    const inspect = new Client({ ...cfg, database: name }); await inspect.connect();
+    try {
+      const exists = (await inspect.query("SELECT to_regclass('public.wepuu_schema_migrations') AS v")).rows[0].v;
+      if (exists) {
+        const names = (await inspect.query('SELECT name FROM public.wepuu_schema_migrations ORDER BY name')).rows.map(r => r.name);
+        if (!legacy) assert(!names.some(n => n.startsWith('014_')), 'CANDIDATE_014_FORBIDDEN');
+        if (legacy) assert(names.some(n => n.startsWith('014_')), 'LEGACY_014_REQUIRED');
+        report.baseDatabaseMigrationCount = names.length;
+      }
+    } finally { await inspect.end(); }
+    reports.push({ file, database: name, passed: true, report });
+  }
+  result = { passed: true, reports, legacyConsoleRegression: legacy ? 'PASS' : 'NOT_RUN',
+    migration014Scope: legacy ? 'ISOLATED_LEGACY_CONSOLE_ONLY' : 'FORBIDDEN', productionAccessed: false };
 } catch (error) {
-  const output = String(error.stdout ?? '') + '\n' + String(error.stderr ?? '');
+  let report; try { report = JSON.parse(error.stdout.trim()); } catch { /* output is private */ }
   result = { passed: false, category: error.killed ? 'TIMEOUT' : 'DATABASE_REGRESSION_FAILED',
-    failedTests: output.split(/\r?\n/u).filter(line => /^not ok /u.test(line)).map(line => line.slice(0, 180)),
-    rawOutputSuppressed: true, productionAccessed: false };
-}
-await writeFile('/evidence/database-tests.json', JSON.stringify(result, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
+    file: current, reports, ...(report?.rawOutputSuppressed === true ? { report } : {}),
+    legacyConsoleRegression: 'NOT_CONFIRMED', rawOutputSuppressed: true, productionAccessed: false };
+} finally { await cluster.end(); }
+await writeFile('/evidence/' + (legacy ? 'legacy' : 'database') + '-tests.json', JSON.stringify(result, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
 console.log(JSON.stringify(result));
 if (!result.passed) process.exitCode = 1;

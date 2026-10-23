@@ -29,7 +29,7 @@ test('local signing lifecycle activates, overlaps and retires real RSA keys with
 }, async () => {
   assert.ok(databaseUrl);
   const directory = await mkdtemp(join(tmpdir(), 'wepuu-signing-lifecycle-'));
-  const database = new Database({ connectionString: databaseUrl, applicationName: 'wepuu-local-signing-lifecycle-test' });
+  const database = new Database({ connectionString: databaseUrl, applicationName: 'wepuu-local-signing-lifecycle-test', migrationProfile: 'authorization' });
   try {
     await database.migrate();
     const [firstFiles, secondFiles] = await Promise.all([

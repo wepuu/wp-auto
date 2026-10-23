@@ -3,7 +3,8 @@ import test from 'node:test';
 import {readFile} from 'node:fs/promises';
 import {PostgresOidcAdapter,SecretArtifactCodec,PostgresPersistentReceiptStore} from '../packages/database/src/index.ts';
 
-// Contract characterization only: no database connection or application fix.
+// Historical pre-017 characterization, pinned by R10's test manifest.
+// Reproduce against 546dc51447ff99c9b592f286c6888be0913e1683, not current adapters.
 const keys=()=>new SecretArtifactCodec([Buffer.alloc(32,7)]);
 const native={kind:'AuthorizationCode',accountId:'account_SYNTHETIC',clientId:'client_SYNTHETIC',
   grantId:'grant_SYNTHETIC',resource:'https://a.example.test/mcp',scope:'mcp:read offline_access'};

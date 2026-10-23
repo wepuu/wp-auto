@@ -6,7 +6,7 @@ const connectionString = process.env['WEPUU_TEST_DATABASE_URL'];
 
 test('personal workspace bootstrap is concurrent, idempotent and account scoped', { skip: connectionString === undefined }, async (t) => {
   assert.ok(connectionString);
-  const database = new Database({ connectionString, applicationName: 'wepuu-account-workspace-test' });
+  const database = new Database({ connectionString, applicationName: 'wepuu-account-workspace-test', migrationProfile: 'authorization' });
   t.after(() => database.close());
   await database.migrate();
   const admin = database.poolForMigrationsAndTests;

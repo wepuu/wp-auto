@@ -21,7 +21,7 @@ export async function p3dFixture(t: TestContext, full: boolean | 'authorization'
   const source = join(dirname(fileURLToPath(import.meta.url)), '..', 'migrations');
   await cp(source, migrations, { recursive: true, filter: (path) => path === source
     || full === true || /^(?:00[1-9]|01[0-3]|015)_/u.test(basename(path))
-    || (full === 'authorization' && /^016_/u.test(basename(path))) });
+    || (full === 'authorization' && /^01[67]_/u.test(basename(path))) });
   const admin = new Client({ connectionString: p3dDatabaseUrl });
   await admin.connect();
   const name = `wepuu_p3d_${randomBytes(7).toString('hex')}`;

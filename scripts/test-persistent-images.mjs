@@ -73,12 +73,13 @@ async function scenario(step) {
   await save(step + '-attempt.json', { startedUtc: new Date().toISOString(), attempts: 1 });
   if (step === 'database') assert(testImage, 'TEST_IMAGE_REQUIRED');
   const item = await collectScenarioResult(step, () => call(['run', '--pull=never', '--name', name, ...labels,
-    '--network', step === 'offline' ? 'none' : `container:${names.postgres}`,
+    '--network', ['offline', 'unit'].includes(step) ? 'none' : `container:${names.postgres}`,
     '--log-driver', 'none', ...hardening, ...mounted,
-    ...(step === 'database' ? ['--user', '1000:1000', '--env', 'WEPUU_TEST_LEGACY_CONSOLE'] : []),
-    step === 'database' ? testImage : step === 'control' ? controlImage : authorizationImage,
-    'node', step === 'offline' ? '/harness/offline.mjs' : step === 'database' ? '/harness/database-tests.mjs' : '/harness/driver.mjs',
-    ...(step === 'offline' || step === 'database' ? [] : [step])],
+    ...(['database', 'legacy', 'unit'].includes(step) ? ['--user', '1000:1000', '--env', 'WEPUU_TEST_LEGACY_CONSOLE'] : []),
+    ['database', 'legacy', 'unit'].includes(step) ? testImage : step === 'control' ? controlImage : authorizationImage,
+    'node', step === 'offline' ? '/harness/offline.mjs' : step === 'unit' ? '/harness/r10/unit.mjs'
+      : ['database', 'legacy'].includes(step) ? '/harness/database-tests.mjs' : '/harness/driver.mjs',
+    ...(['offline', 'database', 'unit'].includes(step) ? [] : [step])],
   { timeout: step === 'offline' ? 60000 : step === 'startup' ? 120000 : 300000 }));
   results.push(item);
   await save(step + '-result.json', item);
@@ -114,6 +115,7 @@ try {
     '--mount', `type=volume,source=${names.evidence},target=/evidence`, '--entrypoint', 'sh', authorizationImage,
     '-ec', 'chown 1000:1000 /evidence && chmod 0700 /evidence']);
   await scenario('offline');
+  await scenario('unit');
   stage = 'database_setup'; await space();
   await call(['network', 'create', '--internal', ...labels, names.network]); networkCreated = true;
   await call(['volume', 'create', ...labels, names.data]);
@@ -139,6 +141,7 @@ try {
   assert(network.Internal);
   assert.equal(Object.keys(pg.HostConfig.PortBindings ?? {}).length, 0);
   await scenario('database');
+  if (process.env.WEPUU_TEST_LEGACY_CONSOLE === 'allow-isolated') await scenario('legacy');
   await scenario('startup');
   await scenario('control');
   await scenario('matrix');
@@ -168,8 +171,11 @@ try {
   if (evidenceCreated) {
     try {
       const exported = await call(['run', '--rm', '--pull=never', '--network', 'none', '--no-healthcheck',
-        '--mount', `type=volume,source=${names.evidence},target=/evidence,readonly`, authorizationImage, 'node', '-e',
-        "const fs=require('node:fs');const out={};function walk(p,r=''){for(const e of fs.readdirSync(p,{withFileTypes:true})){const n=r?`${r}/${e.name}`:e.name;if(e.name.includes('private'))continue;if(e.isDirectory())walk(p+'/'+e.name,n);else if(e.isFile()&&n.endsWith('.json'))out[n]=JSON.parse(fs.readFileSync(p+'/'+e.name,'utf8'));}}walk('/evidence');console.log(JSON.stringify(out));"]);
+        '--mount', `type=volume,source=${names.evidence},target=/evidence,readonly`,
+        '--mount', `type=bind,source=${resolve('test/persistent-authorization')},target=/harness,readonly`, authorizationImage, 'node', '-e',
+        "import('/harness/r10/export-evidence.mjs').catch(()=>{console.log('{}');process.exitCode=1})",
+        // export helper is available through the same reviewed read-only mount
+        ]);
       const files = JSON.parse(exported);
       for (const [path, value] of Object.entries(files)) {
         assert(/^[A-Za-z0-9_./-]+$/u.test(path) && !path.includes('..') && !path.includes('private'));
