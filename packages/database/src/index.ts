@@ -37,7 +37,7 @@ export interface DatabaseOptions {
   readonly migrationProfile?: 'full' | 'authorization';
 }
 
-const authorizationMigrationNumbers = [...Array.from({ length: 13 }, (_, index) => String(index + 1).padStart(3, '0')), '015', '016'];
+const authorizationMigrationNumbers = [...Array.from({ length: 13 }, (_, index) => String(index + 1).padStart(3, '0')), '015', '016', '017'];
 
 /** Preserve retained Console sources while explicitly excluding 014 from this release profile. */
 export function authorizationMigrationNames(files: readonly string[]): readonly string[] {
@@ -1328,21 +1328,30 @@ export class PostgresOidcAdapter {
     const lookup = this.#codec.current(id);
     const storedPayload = { ...payload };
     delete storedPayload['jti'];
+    if (this.#model === 'RefreshToken') throw new OAuthInvalidGrantError();
     await this.#database.withAuthorizationService(async (client) => {
-      await client.query(
-        `INSERT INTO oauth.secret_artifacts
-          (model, lookup_version, artifact_hash, tenant_id, partition_kind, payload, expires_at)
-         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
-         ON CONFLICT (model, lookup_version, artifact_hash)
-         DO UPDATE SET tenant_id = EXCLUDED.tenant_id,
-                       partition_kind = EXCLUDED.partition_kind,
-                       payload = EXCLUDED.payload,
-                       expires_at = EXCLUDED.expires_at,
-                       consumed_at = NULL,
-                       updated_at = now()`,
-        [this.#model, lookup.version, Buffer.from(lookup.digest), tenantId ?? null,
-          tenantId === undefined ? 'global' : 'tenant', JSON.stringify(storedPayload), expiresAt]
-      );
+      if (this.#model === 'AuthorizationCode') {
+        await client.query('SELECT oauth.issue_native_code($1::smallint,$2,$3::text[],$4::jsonb,$5)',
+          [lookup.version, Buffer.from(lookup.digest), this.#lookupKeys(id), JSON.stringify(storedPayload), expiresAt]);
+      } else {
+        await client.query('SELECT oauth.save_other_artifact($1,$2::smallint,$3,$4::jsonb,$5)',
+          [this.#model, lookup.version, Buffer.from(lookup.digest), JSON.stringify(storedPayload), expiresAt]);
+      }
+    });
+  }
+
+  #lookupKeys(id: string): readonly string[] {
+    return this.#codec.candidates(id).map(item => `${String(item.version)}:${Buffer.from(item.digest).toString('hex')}`);
+  }
+
+  async upsertNativeRefresh(id: string, payload: ProviderPayload, expiresIn: number | undefined,
+    parent: Readonly<{ model: 'AuthorizationCode' | 'RefreshToken'; keys: readonly string[] }>): Promise<void> {
+    if (this.#model !== 'RefreshToken' || expiresIn === undefined) throw new OAuthInvalidGrantError();
+    const lookup = this.#codec.current(id), stored = { ...payload }; delete stored['jti'];
+    await this.#database.withAuthorizationService(async client => {
+      await client.query('SELECT oauth.issue_native_refresh($1::smallint,$2,$3::text[],$4::jsonb,$5,$6,$7::text[])',
+        [lookup.version, Buffer.from(lookup.digest), this.#lookupKeys(id), JSON.stringify(stored),
+          new Date(Date.now() + expiresIn * 1000), parent.model, parent.keys]);
     });
   }
 
@@ -1367,11 +1376,13 @@ export class PostgresOidcAdapter {
           [this.#model, lookup.version, Buffer.from(lookup.digest)]
         );
         const row = result.rows[0];
-        if (row !== undefined) return {
-          ...row.payload,
-          jti: id,
-          ...(row.consumed_at === null ? {} : { consumed: Math.floor(row.consumed_at.getTime() / 1_000) })
-        };
+        if (row !== undefined) {
+          if (this.#model === 'AuthorizationCode' || this.#model === 'RefreshToken') {
+            await client.query('SELECT oauth.artifact_classify($1,$2::text[])', [this.#model, this.#lookupKeys(id)]);
+          }
+          return { ...row.payload, jti: id,
+            ...(row.consumed_at === null ? {} : { consumed: Math.floor(row.consumed_at.getTime() / 1_000) }) };
+        }
       }
       return undefined;
     });
@@ -1386,12 +1397,7 @@ export class PostgresOidcAdapter {
       return;
     }
     await this.#database.withAuthorizationService(async (client) => {
-      for (const lookup of this.#codec.candidates(id)) {
-        await client.query(
-          'DELETE FROM oauth.secret_artifacts WHERE model = $1 AND lookup_version = $2 AND artifact_hash = $3',
-          [this.#model, lookup.version, Buffer.from(lookup.digest)]
-        );
-      }
+      await client.query('SELECT oauth.destroy_classified_artifact($1,$2::text[])', [this.#model, this.#lookupKeys(id)]);
     });
   }
 
@@ -1407,53 +1413,24 @@ export class PostgresOidcAdapter {
       if (!updated) throw new Error('oauth_artifact_already_consumed');
       return;
     }
-    const candidates = this.#codec.candidates(id);
-    const consumed = await this.#database.withAuthorizationService(async (client): Promise<'consumed' | 'missing' | 'rate_limited' | 'replay'> => {
-      for (const lookup of candidates) {
-        if (this.#model === 'RefreshToken') {
-          const stored = await client.query<{ payload: ProviderPayload }>(
-            `SELECT payload FROM oauth.secret_artifacts
-             WHERE model = $1 AND lookup_version = $2 AND artifact_hash = $3
-               AND consumed_at IS NULL AND (expires_at IS NULL OR expires_at > now())
-             FOR UPDATE`,
-            [this.#model, lookup.version, Buffer.from(lookup.digest)]
-          );
-          const grantId = stored.rows[0]?.payload['grantId'];
-          if (stored.rowCount !== 1) continue;
-          if (typeof grantId !== 'string' || this.#rateLimitCodec === undefined) {
-            return 'rate_limited';
-          }
-          const allowed = await client.query<{ allowed: boolean }>(
-            'SELECT oauth.consume_rate_limit($1, $2, $3, $4, now()) AS allowed',
-            ['oauth.refresh_family', Buffer.from(this.#rateLimitCodec.digest('oauth.refresh_family', grantId)), 10, 60]
-          );
-          if (allowed.rows[0]?.allowed !== true) return 'rate_limited';
-        }
-        const result = await client.query(
-          `UPDATE oauth.secret_artifacts
-           SET consumed_at = now(), updated_at = now()
-           WHERE model = $1 AND lookup_version = $2 AND artifact_hash = $3
-             AND consumed_at IS NULL AND (expires_at IS NULL OR expires_at > now())`,
-          [this.#model, lookup.version, Buffer.from(lookup.digest)]
-        );
-        if (result.rowCount === 1) return 'consumed';
+    const consumed = await this.#database.withAuthorizationService(async (client: PoolClient) => {
+      const keys = this.#lookupKeys(id);
+      if (this.#model !== 'AuthorizationCode' && this.#model !== 'RefreshToken') {
+        const value = await client.query<{ value: boolean }>('SELECT oauth.consume_other_artifact($1,$2::text[]) AS value', [this.#model, keys]);
+        return value.rows[0]?.value === true ? 'consumed' : 'missing';
       }
+      let rateSubject: Buffer | null = null;
       if (this.#model === 'RefreshToken') {
-        for (const lookup of candidates) {
-          const replay = await client.query<{ grant_id: string | null }>(
-            `SELECT payload->>'grantId' AS grant_id FROM oauth.secret_artifacts
-             WHERE model = $1 AND lookup_version = $2 AND artifact_hash = $3
-               AND consumed_at IS NOT NULL LIMIT 1`,
-            [this.#model, lookup.version, Buffer.from(lookup.digest)]
-          );
-          const grantId = replay.rows[0]?.grant_id;
-          if (typeof grantId === 'string') {
-            await client.query("SELECT oauth.revoke_refresh_grant($1, now(), 'refresh_replay')", [grantId]);
-            return 'replay';
-          }
-        }
+        const payload = await client.query<{ payload: ProviderPayload }>(
+          'SELECT payload FROM oauth.secret_artifacts WHERE model=$1 AND lookup_version::text||\':\'||encode(artifact_hash,\'hex\')=ANY($2::text[])',
+          [this.#model, keys]);
+        const grant = payload.rows[0]?.payload['grantId'];
+        if (typeof grant !== 'string' || this.#rateLimitCodec === undefined) return 'rate_limited';
+        rateSubject = Buffer.from(this.#rateLimitCodec.digest('oauth.refresh_family', grant));
       }
-      return 'missing';
+      const value = await client.query<{ value: string }>('SELECT oauth.consume_classified_artifact($1,$2::text[],$3) AS value',
+        [this.#model, keys, rateSubject]);
+      return value.rows[0]?.value ?? 'missing';
     });
     if (consumed === 'rate_limited') throw new Error('refresh_family_rate_limited');
     if (consumed === 'replay') throw new OAuthInvalidGrantError();
@@ -1490,7 +1467,7 @@ export class PostgresOidcAdapter {
           [grantId, this.#grantRevocationReason()]
         );
       }
-      await client.query("DELETE FROM oauth.secret_artifacts WHERE payload->>'grantId' = $1", [grantId]);
+      await client.query('SELECT oauth.destroy_grant_artifacts($1)', [grantId]);
       await client.query("DELETE FROM oauth.provider_artifacts WHERE payload->>'grantId' = $1", [grantId]);
     });
   }

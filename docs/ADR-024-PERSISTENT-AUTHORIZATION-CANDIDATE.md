@@ -50,3 +50,40 @@ write/transition restrictions, atomic link association, legacy/unknown behavior,
 rotation inheritance and rollback compatibility. If that needs schema or role
 changes, those require a separately approved candidate migration/permission
 design; this ADR does not authorize migration017 or production execution.
+
+## R9 isolated classification candidate (2026-10-23)
+
+The operator approved local implementation of a dedicated classification ledger
+and constrained writes in candidate017. This supersedes the R8 implementation
+stop only for local source and isolated tests; it does not authorize production
+migration, deployment, existing-Grant conversion or user OAuth.
+
+The new authorization profile is 001–013 +015 +016 +017 (16 files, no014).
+Original migration bytes remain unchanged. Startup verifies hashes and never
+migrates. SESSION_BOUND, NATIVE_OFFLINE and PERSISTENT_READONLY are authoritative
+ledger modes for Code/Refresh; scope, partition placement and missing links are
+not mode authorities. Mode and binding are immutable. Delete retains a mode
+tombstone and cannot permit re-registration. New custom artifacts register with
+their links atomically; native Refresh requires a consumed, same-binding native
+parent. Existing ambiguous/unclassified artifacts are denied, not backfilled.
+
+wepuu_auth loses direct secret-artifact DML and old unclassified custom-save/code-
+consume entrypoints. Fixed-purpose functions owned by a non-login, non-inheritable
+role mediate writes. The owner cannot be assumed by runtime. Its Grant ID-column
+UPDATE privilege is only for row locking; actual updates are denied by RLS WITH
+CHECK. The ledger uses FORCE RLS and exposes only classification projections to
+runtime. Definer functions pin a safe search_path, qualify relations and revoke
+PUBLIC execution. Other secret models cannot use their writer to insert Code or
+Refresh. Existing Provider and SQL replay/revocation orchestration remains in use.
+
+Runtime and migration-owner compromise are different boundaries: database
+superusers/DDL owners remain trusted and can remove these controls. This is not
+cryptographic payload authentication. No new cryptographic/OAuth primitive is
+introduced. No automatic tombstone purge or production retention acceptance is
+claimed; no new cascading FK blocks existing deletion, but complete existing
+deletion/retention compatibility still requires its own regression evidence.
+
+Downgrade to a pre017 binary is not a supported safety rollback. A rollback floor
+must retain017 readers/writers and guard-only custom issuance. No consumed state
+is restored. Local compilation/tests and one bounded multi-Site run must establish
+actual results; source implementation alone is not acceptance.

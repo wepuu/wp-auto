@@ -42,6 +42,9 @@ export interface ArtifactLookups {
  * New links contain only HMAC references/control metadata, never raw artifacts.
  */
 export interface PersistentReceiptStore {
+  classification(model: Model, keys: readonly string[]): Promise<Readonly<{
+    version: 1; mode: 'SESSION_BOUND' | 'NATIVE_OFFLINE' | 'PERSISTENT_READONLY';
+  }>>;
   assertCompatible(): Promise<void>;
   consent(interactionUid: string): Promise<PersistentReceipt | undefined>;
   receipt(id: string): Promise<PersistentReceipt | undefined>;
@@ -63,6 +66,7 @@ interface Frame {
   active: boolean;
   code?: PersistentLink;
   source?: { readonly model: Model; readonly keys: readonly string[]; readonly link: PersistentLink };
+  nativeSource?: { readonly model: Model; readonly keys: readonly string[] };
 }
 const denied = (): never => { throw new errors.InvalidGrant(); };
 const idOk = (value: unknown): value is string => typeof value === 'string' && /^[A-Za-z0-9_-]{8,256}$/u.test(value);
@@ -97,6 +101,7 @@ export class PersistentReadOnlyRuntime {
       frame.active = false;
       delete frame.code;
       delete frame.source;
+      delete frame.nativeSource;
       response.removeListener('finish', clear);
       response.removeListener('close', clear);
     };
@@ -113,9 +118,6 @@ export class PersistentReadOnlyRuntime {
   #eligible(source: Payload): boolean {
     return source['clientId'] === this.#options.clientId && source['resource'] === this.#options.resource
       && source['scope'] === 'mcp:read' && source['rar'] === undefined;
-  }
-  #requiresLink(source: Payload): boolean {
-    return source['clientId'] === this.#options.clientId && source['expiresWithSession'] !== true;
   }
   #matches(receipt: PersistentReceipt, binding: PersistentBinding, issuing: boolean): boolean {
     const now = this.#now();
@@ -183,8 +185,14 @@ export class PersistentReadOnlyRuntime {
       if (model !== 'AuthorizationCode' && model !== 'RefreshToken') return;
       if (!idOk(source['jti'])) return denied();
       const keys = this.#options.lookups.candidates(source['jti']);
+      const classification = await this.#options.store.classification(model, keys);
       const link = await this.#options.store.link(model, keys);
-      if (link === undefined && !this.#requiresLink(source)) return;
+      if ((classification as { readonly version: unknown }).version !== 1) return denied();
+      if (classification.mode !== 'PERSISTENT_READONLY') {
+        if (link !== undefined || !['SESSION_BOUND', 'NATIVE_OFFLINE'].includes(classification.mode)) return denied();
+        if (classification.mode === 'NATIVE_OFFLINE') this.#frame().nativeSource = { model, keys: Object.freeze([...keys]) };
+        return;
+      }
       if (!this.#eligible(source) || source['expiresWithSession'] === true) return denied();
       const binding = await this.#binding(context, source);
       if (link === undefined || accountId !== binding.subjectId) return denied();
@@ -217,10 +225,10 @@ export class PersistentReadOnlyRuntime {
       readonly #base: InstanceType<OidcAdapterConstructor>;
       constructor(model: string) { this.#model = model; this.#base = new Base(model); }
       async upsert(id: string, payload: Payload, ttl?: number): Promise<void> {
-        if (this.#model === 'RefreshToken' && runtime.#frames.getStore()?.source !== undefined
-          && !runtime.#eligible(payload)) return denied();
+        const frame = runtime.#frames.getStore();
         if ((this.#model === 'AuthorizationCode' || this.#model === 'RefreshToken')
-          && runtime.#requiresLink(payload)) {
+          && (frame?.code !== undefined && this.#model === 'AuthorizationCode'
+            || frame?.source !== undefined && this.#model === 'RefreshToken')) {
           try {
             if (!runtime.#eligible(payload)) return denied();
             const frame = runtime.#frame();
@@ -238,6 +246,11 @@ export class PersistentReadOnlyRuntime {
             return;
           } catch { return denied(); }
         }
+        if (this.#model === 'RefreshToken') {
+          const parent = runtime.#frame().nativeSource;
+          if (parent === undefined || this.#base.upsertNativeRefresh === undefined) return denied();
+          return this.#base.upsertNativeRefresh(id, payload, ttl, parent);
+        }
         await this.#base.upsert(id, payload, ttl);
       }
       find(id: string): Promise<Payload | undefined> { return this.#base.find(id); }
@@ -246,14 +259,7 @@ export class PersistentReadOnlyRuntime {
       destroy(id: string): Promise<void> { return this.#base.destroy(id); }
       revokeByGrantId(id: string): Promise<void> { return this.#base.revokeByGrantId(id); }
       async consume(id: string): Promise<void> {
-        if (this.#model === 'AuthorizationCode') {
-          const source = await this.#base.find(id);
-          if (source !== undefined && runtime.#requiresLink(source)) {
-            try { await runtime.#options.store.consumeCode(id, runtime.#options.lookups.candidates(id)); }
-            catch { return denied(); }
-            return;
-          }
-        }
+        // The SQL consumption function classifies before choosing the existing guard.
         await this.#base.consume(id);
       }
     })(this);

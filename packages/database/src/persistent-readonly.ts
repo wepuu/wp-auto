@@ -45,6 +45,17 @@ export class PostgresPersistentReceiptStore {
     const encode = (item: { version: number; digest: Uint8Array }): string => `${String(item.version)}:${Buffer.from(item.digest).toString('hex')}`;
     return { current: value => encode(this.#codec.current(value)), candidates: value => this.#codec.candidates(value).map(encode) };
   }
+  async classification(model: Model, keys: readonly string[]): Promise<Readonly<{
+    version: 1; mode: 'SESSION_BOUND' | 'NATIVE_OFFLINE' | 'PERSISTENT_READONLY';
+  }>> {
+    try {
+      return await this.#db.withAuthorizationService(async client => {
+        const row = await client.query<{ value: unknown }>('SELECT oauth.artifact_classify($1,$2::text[]) AS value', [model, keys]);
+        return z.object({ version: z.literal(1), mode: z.enum(['SESSION_BOUND', 'NATIVE_OFFLINE', 'PERSISTENT_READONLY']) })
+          .parse(row.rows[0]?.value);
+      });
+    } catch (error) { return this.#failure(error, 'read_classification'); }
+  }
   /** Structural/permission gate, not an attestation of release or migration hashes. */
   async assertCompatible(): Promise<void> {
     try {
@@ -56,11 +67,17 @@ export class PostgresPersistentReceiptStore {
           (SELECT count(*)::int FROM pg_catalog.pg_proc p WHERE p.oid IN (
            to_regprocedure('oauth.create_persistent_consent(text,text,uuid,text,text,text,text,text,boolean)'),
            to_regprocedure('oauth.withdraw_persistent_consent(text,text)'),
-           to_regprocedure('oauth.save_persistent_artifact(text,smallint,bytea,jsonb,timestamptz,text,text,text,text,text)'),
-           to_regprocedure('oauth.consume_persistent_code(smallint,bytea)'))
-           AND p.prosecdef AND p.proconfig=ARRAY['search_path=pg_catalog']::text[]
+           to_regprocedure('oauth.issue_persistent_artifact(text,smallint,bytea,text[],jsonb,timestamptz,text,text,text,text,text)'),
+           to_regprocedure('oauth.consume_classified_artifact(text,text[],bytea)'),
+           to_regprocedure('oauth.artifact_classify(text,text[])'))
+           AND p.prosecdef AND p.proconfig IN (ARRAY['search_path=pg_catalog']::text[],ARRAY['search_path=pg_catalog, pg_temp']::text[])
            AND has_function_privilege(current_user,p.oid,'EXECUTE')) AS functions`);
-        if (result.rows[0]?.tables !== 2 || result.rows[0].functions !== 4) return denied();
+        if (result.rows[0]?.tables !== 2 || result.rows[0].functions !== 5) return denied();
+        const permissions = await client.query<{ unsafe: boolean }>(`SELECT
+          has_table_privilege(current_user,'oauth.secret_artifacts','INSERT,UPDATE,DELETE')
+          OR has_table_privilege(current_user,'oauth.artifact_classifications','INSERT,UPDATE,DELETE')
+          OR pg_has_role(current_user,'wepuu_artifact_owner','MEMBER') AS unsafe`);
+        if (permissions.rows[0]?.unsafe !== false) return denied();
         await client.query(`SELECT id,interaction_uid,policy_version,subject_id,tenant_id,site_id,grant_id,
           client_id,resource_uri,scopes,explicit_approval,approved_at,issue_expires_at,authorization_expires_at,revoked
           FROM oauth.persistent_consents LIMIT 0`);
@@ -174,8 +191,8 @@ export class PostgresPersistentReceiptStore {
         });
       }
       await this.#db.withAuthorizationService(async client => {
-        await client.query('SELECT oauth.save_persistent_artifact($1,$2::smallint,$3,$4::jsonb,$5,$6,$7,$8,$9,$10)',
-          [model, key.version, key.digest, JSON.stringify(stored), new Date(Date.now() + ttl * 1000),
+        await client.query('SELECT oauth.issue_persistent_artifact($1,$2::smallint,$3,$4::text[],$5::jsonb,$6,$7,$8,$9,$10,$11)',
+          [model, key.version, key.digest, lookups.candidates(id), JSON.stringify(stored), new Date(Date.now() + ttl * 1000),
             receipt.id, link.interactionUid, link.sessionUid, parent?.model ?? null, parentKey]);
       });
     } catch (error) { return this.#failure(error, 'save_link'); }
@@ -189,8 +206,9 @@ export class PostgresPersistentReceiptStore {
           `SELECT artifact_lookup FROM oauth.persistent_links
            WHERE model='AuthorizationCode' AND artifact_lookup=ANY($1::text[])`, [keys]);
         if (result.rows.length !== 1) return denied();
-        const key = decodeLookup(result.rows[0]?.artifact_lookup ?? '');
-        await client.query('SELECT oauth.consume_persistent_code($1::smallint,$2)', [key.version, key.digest]);
+        const consumed = await client.query<{ value: string }>('SELECT oauth.consume_classified_artifact($1,$2::text[],NULL) AS value',
+          ['AuthorizationCode', keys]);
+        if (consumed.rows[0]?.value !== 'consumed') return denied();
       });
     } catch (error) { return this.#failure(error, 'consume_code'); }
   }

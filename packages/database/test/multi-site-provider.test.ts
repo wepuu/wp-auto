@@ -77,8 +77,8 @@ test('real Authorization HTTP binds same-client sequential and interleaved resou
   const migrations = join(directory, 'migrations');
   const source = join(dirname(fileURLToPath(import.meta.url)), '..', 'migrations');
   await cp(source, migrations, { recursive: true, filter: (path) =>
-    path === source || /^(?:00[1-9]|01[0-3]|015|016)_/u.test(path.slice(path.lastIndexOf('/') + 1).split('\\').at(-1) ?? '') });
-  assert.equal((await readdir(migrations)).length, 15);
+    path === source || /^(?:00[1-9]|01[0-3]|015|016|017)_/u.test(path.slice(path.lastIndexOf('/') + 1).split('\\').at(-1) ?? '') });
+  assert.equal((await readdir(migrations)).length, 16);
   const admin = new Client({ connectionString: databaseUrl });
   await admin.connect();
   const name = `wepuu_multisite_${randomBytes(6).toString('hex')}`;
