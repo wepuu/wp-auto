@@ -1,4 +1,6 @@
 const steps = new Set(['offline', 'unit', 'database', 'legacy', 'startup', 'control', 'matrix', 'transition']);
+import { projectProcessResult } from '../test/persistent-authorization/r10/evidence.mjs';
+import { processCategories } from '../test/persistent-authorization/r10/reported-process.mjs';
 const categories = new Set(['TIMEOUT', 'ASSERTION_FAILED', 'LOCAL_FAILURE', 'SQL_FAILURE',
   'DATABASE_REGRESSION_FAILED', 'UNIT_FAILED', 'OFFLINE_CHECK_FAILED']);
 const stages = new Set(['setup', 'identity', 'syntax', 'wiring-tests.mjs', 'fixture-tests.mjs',
@@ -18,6 +20,9 @@ export async function collectScenarioResult(step, operation) {
   const diagnostic = {};
   if (!passed && valid) {
     diagnostic.category = categories.has(item.category) ? item.category : 'NOT_CONFIRMED';
+    if (processCategories.has(item.category)) diagnostic.category = item.category;
+    if (item.reportedProcess) diagnostic.reportedProcess = projectProcessResult(item.reportedProcess);
+    else Object.assign(diagnostic, projectProcessResult(item));
     diagnostic.stage = stages.has(item.stage) ? item.stage : 'NOT_CONFIRMED';
     if (typeof item.sqlstate === 'string' && /^[0-9A-Z]{5}$/u.test(item.sqlstate)) diagnostic.sqlstate = item.sqlstate;
   }

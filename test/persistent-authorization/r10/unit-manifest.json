@@ -44,6 +44,7 @@
   "scripts/multisite-safe-reporter.test.mjs",
   "scripts/persistent-image-contract.test.mjs",
   "scripts/persistent-r10.test.mjs",
+  "scripts/persistent-report-channel.test.mjs",
   "scripts/persistent-test-result.test.mjs",
   "scripts/prepare-codex-desktop-preflight.test.mjs",
   "scripts/test-codex-issuer-compat.test.mjs",

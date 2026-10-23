@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { readdir, readFile, writeFile } from 'node:fs/promises';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { runReportedProcess } from './reported-process.mjs';
 const files = [];
 for (const kind of ['packages', 'apps']) {
   for (const name of await readdir('/workspace/' + kind)) {
@@ -16,15 +15,11 @@ const frozen = JSON.parse(await readFile('/harness/r10/unit-manifest.json', 'utf
 assert.deepEqual(files, frozen, 'UNIT_MANIFEST_DRIFT');
 let result;
 try {
-  const output = await promisify(execFile)('pnpm', ['exec', 'tsx', '--test', '--test-concurrency=1',
-    '--test-reporter=/harness/r10/reporter.mjs', ...files], { cwd: '/workspace', timeout: 240000,
-    maxBuffer: 1000000, env: { PATH: process.env.PATH, TMPDIR: '/tmp',
-      WEPUU_R10_REPORT_CONFIG: JSON.stringify({ files, phase: 'unit' }) } });
-  result = JSON.parse(output.stdout.trim()); assert.equal(result.passed, true);
-} catch (error) {
-  let report; try { report = JSON.parse(error.stdout.trim()); } catch { /* no raw output */ }
-  result = { passed: false, category: error.killed ? 'TIMEOUT' : 'UNIT_FAILED',
-    ...(report?.rawOutputSuppressed === true ? { report } : {}), rawOutputSuppressed: true };
+  result = await runReportedProcess({ executable: 'pnpm', args: ['exec', 'tsx', '--test', '--test-concurrency=1'],
+    config: { files, phase: 'unit' }, reporter: '/harness/r10/reporter.mjs', cwd: '/workspace', timeoutMs: 240000,
+    env: { PATH: process.env.PATH, TMPDIR: '/tmp' } });
+} catch {
+  result = { passed: false, category: 'REPORT_SETUP_FAILED', reportStatus: 'NOT_CONFIRMED', rawOutputSuppressed: true };
 }
 await writeFile('/evidence/unit-tests.json', JSON.stringify(result) + '\n', { flag: 'wx', mode: 0o600 });
 console.log(JSON.stringify(result)); if (!result.passed) process.exitCode = 1;
