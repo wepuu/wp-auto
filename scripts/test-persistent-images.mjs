@@ -5,6 +5,7 @@ import { readFile, writeFile, mkdtemp, chmod, readdir, mkdir } from 'node:fs/pro
 import { randomBytes } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
+import { collectScenarioResult } from './persistent-test-result.mjs';
 
 const exec = promisify(execFile);
 const docker = process.env.DOCKER_BIN ?? 'docker';
@@ -44,16 +45,16 @@ async function scenario(step) {
   containers.push(name);
   await save(step + '-attempt.json', { startedUtc: new Date().toISOString(), attempts: 1 });
   if (step === 'database') assert(testImage, 'TEST_IMAGE_REQUIRED');
-  const out = await call(['run', '--pull=never', '--name', name, ...labels,
+  const item = await collectScenarioResult(step, () => call(['run', '--pull=never', '--name', name, ...labels,
     '--network', step === 'offline' ? 'none' : `container:${names.postgres}`,
     '--log-driver', 'none', ...hardening, ...mounted,
     ...(step === 'database' ? ['--user', '1000:1000', '--env', 'WEPUU_TEST_LEGACY_CONSOLE'] : []),
     step === 'database' ? testImage : step === 'control' ? controlImage : authorizationImage,
     'node', step === 'offline' ? '/harness/offline.mjs' : step === 'database' ? '/harness/database-tests.mjs' : '/harness/driver.mjs',
     ...(step === 'offline' || step === 'database' ? [] : [step])],
-  { timeout: step === 'offline' ? 60000 : step === 'startup' ? 120000 : 300000 });
-  const item = JSON.parse(out.trim().split(/\r?\n/u).at(-1));
-  results.push({ step, ...item });
+  { timeout: step === 'offline' ? 60000 : step === 'startup' ? 120000 : 300000 }));
+  results.push(item);
+  await save(step + '-result.json', item);
   assert.equal(item.passed, true, 'IMAGE_SCENARIO_FAILED');
   const metadata = JSON.parse(await call(['inspect', name]))[0];
   assert.equal(metadata.State.Running, false);
