@@ -8,11 +8,14 @@ import { ContentFreeMetrics } from '../../../apps/control-api/src/operations.js'
 import { buildControlApi, PostgresControlStore } from '../../../apps/control-api/src/server.js';
 import { PostgresAccountLoginTransactionStore, PostgresSecurityAuditSink } from '../src/index.js';
 import { p3dDatabaseUrl, p3dFixture } from './p3d-fixture.js';
+import { recordOtpLedger } from './otp-migration-evidence.mjs';
 
 test('P3-D PostgreSQL rolling reservations are atomic, durable, isolated from Better Auth pruning and fail closed', {
   skip: p3dDatabaseUrl === undefined, timeout: 90_000
 }, async (t) => {
   const { database, pool, databaseUrl, cleanup } = await p3dFixture(t);
+  await recordOtpLedger(pool, 'before');
+  cleanup(() => recordOtpLedger(pool, 'after'));
   const target = new URL(databaseUrl);
   target.searchParams.set('options', '-c role=wepuu_account_auth_writer');
   const writer = new Pool({ connectionString: target.href, max: 8, statement_timeout: 5000 });
@@ -100,7 +103,9 @@ test('P3-D PostgreSQL rolling reservations are atomic, durable, isolated from Be
 test('P3-D real Better Auth handler preserves OTP on blocked resend, observes outcomes and protects metrics', {
   skip: p3dDatabaseUrl === undefined, timeout: 90_000
 }, async (t) => {
-  const { database, pool, databaseUrl, cleanup } = await p3dFixture(t, true);
+  const { database, pool, databaseUrl, cleanup } = await p3dFixture(t, false);
+  await recordOtpLedger(pool, 'before');
+  cleanup(() => recordOtpLedger(pool, 'after'));
   const issuer = 'https://p3d.example.test';
   const secrets = [{ version: 1, value: randomBytes(48).toString('base64url') }];
   const key = randomBytes(32);
