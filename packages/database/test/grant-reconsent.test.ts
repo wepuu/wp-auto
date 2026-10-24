@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { GrantService } from '@wepuu/pairing';
+import { reconsentDiagnostic } from './reconsent-diagnostic.mjs';
 import {
   Database,
   P3A_LIFECYCLE_TEST_CLIENT_ID,
@@ -20,15 +21,20 @@ const siteId = 'site_RECONSENT01';
 const resource = 'https://reconsent.example.test/wp-json/wp-auto/v1/mcp';
 
 test('revoked Grant permits same-tuple re-consent without reviving old tokens', { skip: connectionString === undefined }, async (t) => {
+  const diagnostic = reconsentDiagnostic();
+  return diagnostic.main(async () => {
   assert.ok(connectionString);
   const database = new Database({ connectionString, applicationName: 'wepuu-grant-reconsent-test', migrationProfile: 'authorization' });
-  t.after(() => database.close());
+  t.after(() => diagnostic.cleanup(() => database.close()));
+  diagnostic.checkpoint('MIGRATION');
   await database.migrate();
+  diagnostic.checkpoint('FIXTURE_RESET');
   const admin = database.poolForMigrationsAndTests;
   await admin.query('TRUNCATE platform.accounts, platform.tenants CASCADE');
   await admin.query('DELETE FROM oauth.clients WHERE client_id = $1', [P3A_LIFECYCLE_TEST_CLIENT_ID]);
 
   const clients = new PostgresOAuthClientRepository(database);
+  diagnostic.checkpoint('CLIENT_PROVISION');
   const firstProvision = await clients.provisionP3aLifecycleTestClient();
   assert.deepEqual(firstProvision, {
     created: true,
@@ -41,6 +47,7 @@ test('revoked Grant permits same-tuple re-consent without reviving old tokens', 
     { clientId: P3A_LIFECYCLE_TEST_CLIENT_ID, redirectUris: [P3A_LIFECYCLE_TEST_REDIRECT_URI] }
   );
 
+  diagnostic.checkpoint('IDENTITY_BINDING');
   await admin.query(
     `INSERT INTO platform.accounts (id, status, identity_issuer, identity_subject_hash)
      VALUES ($1, 'active', 'https://identity.example.test', $2)`,
@@ -70,6 +77,7 @@ test('revoked Grant permits same-tuple re-consent without reviving old tokens', 
     platformIssuer: 'https://auth.example.test',
     challengeFactory: () => 'A'.repeat(43)
   });
+  diagnostic.checkpoint('FIRST_GRANT_BEGIN');
   const first = await service.begin({
     tenantId,
     grantId: 'grant_RECONSENT01',
@@ -81,9 +89,11 @@ test('revoked Grant permits same-tuple re-consent without reviving old tokens', 
     consentVersion: '1',
     idempotencyKey: 'idempotency_RECONSENT_CREATE_01'
   });
+  diagnostic.checkpoint('FIRST_GRANT_ACTIVATE');
   await grants.activate(tenantId, first.grantId, 'idempotency_RECONSENT_APPROVE_01', 'proof_RECONSENT01');
 
   const artifactCodec = new SecretArtifactCodec([Buffer.alloc(32, 12)]);
+  diagnostic.checkpoint('REFRESH_SETUP');
   const refresh = new PostgresOidcAdapter(
     'RefreshToken', database, artifactCodec, new RateLimitSubjectCodec(Buffer.alloc(32, 13))
   );
@@ -95,9 +105,13 @@ test('revoked Grant permits same-tuple re-consent without reviving old tokens', 
     accountId,
     clientId: P3A_LIFECYCLE_TEST_CLIENT_ID
   };
+  diagnostic.checkpoint('R0_ISSUE');
   await refresh.upsert(r0, { ...tokenPayload, rotations: 0 }, 3_600);
+  diagnostic.checkpoint('R0_CONSUME');
   await refresh.consume(r0);
+  diagnostic.checkpoint('R1_ISSUE');
   await refresh.upsert(r1, { ...tokenPayload, rotations: 1 }, 3_600);
+  diagnostic.checkpoint('REPLAY_AND_REVOCATION');
   const replayAdapter = new PostgresOidcAdapter(
     'RefreshToken', database, artifactCodec, new RateLimitSubjectCodec(Buffer.alloc(32, 13)),
     () => 'refresh_replay'
@@ -106,6 +120,7 @@ test('revoked Grant permits same-tuple re-consent without reviving old tokens', 
   await replayAdapter.destroy(r0);
   await replayAdapter.revokeByGrantId(first.grantId);
 
+  diagnostic.checkpoint('FIRST_GRANT_ASSERTIONS');
   const firstState = await admin.query<{ status: string; revocation_reason: string | null }>(
     'SELECT status, revocation_reason FROM platform.grants WHERE tenant_id = $1 AND id = $2',
     [tenantId, first.grantId]
@@ -125,6 +140,7 @@ test('revoked Grant permits same-tuple re-consent without reviving old tokens', 
     resource
   }), undefined);
 
+  diagnostic.checkpoint('SECOND_GRANT_BEGIN');
   const second = await service.begin({
     tenantId,
     grantId: 'grant_RECONSENT02',
@@ -136,7 +152,9 @@ test('revoked Grant permits same-tuple re-consent without reviving old tokens', 
     consentVersion: '1',
     idempotencyKey: 'idempotency_RECONSENT_CREATE_02'
   });
+  diagnostic.checkpoint('SECOND_GRANT_ACTIVATE');
   await grants.activate(tenantId, second.grantId, 'idempotency_RECONSENT_APPROVE_02', 'proof_RECONSENT02');
+  diagnostic.checkpoint('SECOND_GRANT_ASSERTIONS');
   assert.deepEqual(await claims.resolve(accountId, {
     grantId: second.grantId,
     clientId: P3A_LIFECYCLE_TEST_CLIENT_ID,
@@ -162,11 +180,15 @@ test('revoked Grant permits same-tuple re-consent without reviving old tokens', 
   ]);
 
   const explicitRevocationToken = 'refresh-reconsent-explicit-revocation';
+  diagnostic.checkpoint('SECOND_REFRESH_ISSUE');
   await refresh.upsert(explicitRevocationToken, {
     ...tokenPayload, grantId: second.grantId, rotations: 0
   }, 3_600);
+  diagnostic.checkpoint('SECOND_REFRESH_CONSUME');
   await refresh.consume(explicitRevocationToken);
+  diagnostic.checkpoint('EXPLICIT_REVOCATION');
   await refresh.revokeByGrantId(second.grantId);
+  diagnostic.checkpoint('SECOND_REVOCATION_ASSERTIONS');
   const secondState = await admin.query<{ status: string; revocation_reason: string | null }>(
     'SELECT status, revocation_reason FROM platform.grants WHERE tenant_id = $1 AND id = $2',
     [tenantId, second.grantId]
@@ -183,6 +205,7 @@ test('revoked Grant permits same-tuple re-consent without reviving old tokens', 
     resource
   }), undefined);
 
+  diagnostic.checkpoint('CLIENT_SUSPEND');
   assert.deepEqual(await clients.suspendP3aLifecycleTestClient(), {
     changed: true,
     clientId: P3A_LIFECYCLE_TEST_CLIENT_ID
@@ -196,6 +219,7 @@ test('revoked Grant permits same-tuple re-consent without reviving old tokens', 
     false
   );
 
+  diagnostic.checkpoint('CLIENT_CONFLICT');
   await admin.query(
     "UPDATE oauth.clients SET redirect_uris = '[\"http://127.0.0.1/wrong\"]'::jsonb WHERE client_id = $1",
     [P3A_LIFECYCLE_TEST_CLIENT_ID]
@@ -204,6 +228,8 @@ test('revoked Grant permits same-tuple re-consent without reviving old tokens', 
     clients.provisionP3aLifecycleTestClient(),
     /p3a_lifecycle_client_conflict/u
   );
+  diagnostic.checkpoint('CLIENT_REPROVISION');
   await admin.query('DELETE FROM oauth.clients WHERE client_id = $1', [P3A_LIFECYCLE_TEST_CLIENT_ID]);
   assert.equal((await clients.provisionP3aLifecycleTestClient()).created, true);
+  });
 });
