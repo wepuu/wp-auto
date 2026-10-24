@@ -2,12 +2,14 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile, mkdtemp, writeFile, unlink, rmdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { projectEvidence } from '../test/persistent-authorization/r10/evidence.mjs';
 import { verifyAuthorizationArtifact } from './authorization-build-contract.mjs';
 import { collect } from '../test/persistent-authorization/r10/reporter.mjs';
+import { runReportedProcess } from '../test/persistent-authorization/r10/reported-process.mjs';
 import { verifyDatabaseManifest, candidateDatabase, retainedDatabase, legacyDatabase } from '../test/persistent-authorization/r10/profiles.mjs';
 const file = 'packages/database/test/persistent-readonly.test.ts';
 const pass = { type: 'test:pass', data: { file: '/workspace/' + file, nesting: 0 } };
@@ -40,14 +42,26 @@ test('R10 keeps immutable history and current017 replacement instead of weakenin
 });
 test('R10 actual reporter transport preserves required completion and rejects a killed child', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'wepuu-r10-synthetic-')), file = join(directory, 'fixture.mjs');
+  let result;
   try {
     await writeFile(file, "import test from 'node:test';test('SECRET_SENTINEL',()=>{console.log('SECRET_SENTINEL')});");
-    const env = { ...process.env, WEPUU_R10_REPORT_CONFIG: JSON.stringify({ files: [file.replaceAll('\\', '/')], phase: 'database' }) };
-    delete env.NODE_TEST_CONTEXT;
-    const output = await promisify(execFile)(process.execPath, ['--test', '--test-reporter', new URL('../test/persistent-authorization/r10/reporter.mjs', import.meta.url).href, file], { env, timeout: 10000 });
-    assert(JSON.parse(output.stdout).passed); assert(!output.stdout.includes('SECRET_SENTINEL'));
-    await assert.rejects(() => promisify(execFile)(process.execPath, ['-e', 'setTimeout(()=>{},10000)'], { timeout: 100 }), e => e.killed === true);
-  } finally { await unlink(file); await rmdir(directory); }
+    const env = { PATH: process.env.PATH, TMPDIR: tmpdir() };
+    result = await runReportedProcess({ executable: process.execPath, args: ['--test'],
+      reporter: fileURLToPath(new URL('../test/persistent-authorization/r10/reporter.mjs', import.meta.url)),
+      config: { files: [file.replaceAll('\\', '/')], phase: 'database' }, root: directory,
+      cwd: directory, env, timeoutMs: 10000 });
+    assert.equal(result.passed, true); assert.equal(result.category, 'PASS');
+    assert.equal(result.reportStatus, 'VALID'); assert.equal(result.report.passed, true);
+    assert.equal(result.process.exitCode, 0); assert(!JSON.stringify(result).includes('SECRET_SENTINEL'));
+    await assert.rejects(() => promisify(execFile)(process.execPath, ['-e', 'setTimeout(()=>{},10000)'],
+      { env, timeout: 100 }), e => e.killed === true);
+  } finally {
+    if (result?.reportDirectory) {
+      assert.equal(dirname(result.reportDirectory), directory);
+      await unlink(join(result.reportDirectory, 'result.json')); await rmdir(result.reportDirectory);
+    }
+    await unlink(file); await rmdir(directory);
+  }
 });
 test('R10 fixed evidence schema cannot export secrets even from an allowed filename', () => {
   const result = projectEvidence('unit-tests.json', { passed: false, secret: 'SECRET_SENTINEL', report: {
