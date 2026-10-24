@@ -3,6 +3,7 @@ import test from 'node:test';
 import { GrantService } from '@wepuu/pairing';
 import { reconsentDiagnostic } from './reconsent-diagnostic.mjs';
 import { recordTargetLedger, closeAfterLedger } from './r19-target-ledger.mjs';
+import { nativeFixturePayload, fixtureParent } from './reconsent-native-fixture.mjs';
 import {
   Database,
   P3A_LIFECYCLE_TEST_CLIENT_ID,
@@ -101,18 +102,46 @@ test('revoked Grant permits same-tuple re-consent without reviving old tokens', 
   );
   const r0 = 'refresh-reconsent-r0-value';
   const r1 = 'refresh-reconsent-r1-value';
-  const tokenPayload = {
-    kind: 'RefreshToken',
+  // BEGIN R20 fixture preparation
+  const codeAdapter = new PostgresOidcAdapter('AuthorizationCode', database, artifactCodec);
+  const firstCode = 'code_RECONSENT01';
+  const secondCode = 'code_RECONSENT02';
+  async function expectRejectedIssue(id: string, payload: Record<string, unknown>, parent: {
+    model: 'AuthorizationCode' | 'RefreshToken'; keys: readonly string[];
+  }, code: 'P0001' | '23505') {
+    const counts = () => admin.query<{ artifacts: string; classifications: string }>(
+      `SELECT (SELECT count(*)::text FROM oauth.secret_artifacts WHERE model='RefreshToken' AND tenant_id=$1) AS artifacts,
+              (SELECT count(*)::text FROM oauth.artifact_classifications WHERE model='RefreshToken' AND tenant_id=$1) AS classifications`, [tenantId]);
+    const before = await counts();
+    await assert.rejects(refresh.upsertNativeRefresh(id, payload, 3_600, parent), { code });
+    assert.deepEqual((await counts()).rows, before.rows);
+    assert.equal(await refresh.find(id), undefined);
+  }
+  // END R20 fixture preparation
+  const tokenPayload = nativeFixturePayload({
     grantId: first.grantId,
     accountId,
-    clientId: P3A_LIFECYCLE_TEST_CLIENT_ID
-  };
+    clientId: P3A_LIFECYCLE_TEST_CLIENT_ID,
+    resource,
+    sessionUid: 'session_RECONSENT01'
+  });
   diagnostic.checkpoint('R0_ISSUE');
-  await refresh.upsert(r0, { ...tokenPayload, rotations: 0 }, 3_600);
+  // BEGIN R20 first issuance
+  await codeAdapter.upsert(firstCode, { ...tokenPayload, kind: 'AuthorizationCode' }, 90);
+  const codeParent = fixtureParent(artifactCodec, 'AuthorizationCode', firstCode);
+  await expectRejectedIssue('refresh_unconsumed_parent', { ...tokenPayload, rotations: 0 }, codeParent, 'P0001');
+  await codeAdapter.consume(firstCode);
+  await expectRejectedIssue('refresh_missing_parent', { ...tokenPayload, rotations: 0 },
+    fixtureParent(artifactCodec, 'AuthorizationCode', 'code_RECONSENT_MISSING'), 'P0001');
+  await expectRejectedIssue('refresh_wrong_binding', { ...tokenPayload, rotations: 0, resource: 'https://wrong.example.test/wp-json/wp-auto/mcp' }, codeParent, 'P0001');
+  await refresh.upsertNativeRefresh(r0, { ...tokenPayload, rotations: 0 }, 3_600, codeParent);
+  await expectRejectedIssue('refresh_duplicate_successor', { ...tokenPayload, rotations: 0 }, codeParent, '23505');
+  // END R20 first issuance
   diagnostic.checkpoint('R0_CONSUME');
   await refresh.consume(r0);
   diagnostic.checkpoint('R1_ISSUE');
-  await refresh.upsert(r1, { ...tokenPayload, rotations: 1 }, 3_600);
+  await refresh.upsertNativeRefresh(r1, { ...tokenPayload, rotations: 1 }, 3_600,
+    fixtureParent(artifactCodec, 'RefreshToken', r0));
   diagnostic.checkpoint('REPLAY_AND_REVOCATION');
   const replayAdapter = new PostgresOidcAdapter(
     'RefreshToken', database, artifactCodec, new RateLimitSubjectCodec(Buffer.alloc(32, 13)),
@@ -183,9 +212,14 @@ test('revoked Grant permits same-tuple re-consent without reviving old tokens', 
 
   const explicitRevocationToken = 'refresh-reconsent-explicit-revocation';
   diagnostic.checkpoint('SECOND_REFRESH_ISSUE');
-  await refresh.upsert(explicitRevocationToken, {
-    ...tokenPayload, grantId: second.grantId, rotations: 0
-  }, 3_600);
+  // BEGIN R20 independent second issuance
+  const secondPayload = nativeFixturePayload({ grantId: second.grantId, accountId,
+    clientId: P3A_LIFECYCLE_TEST_CLIENT_ID, resource, sessionUid: 'session_RECONSENT02' });
+  await codeAdapter.upsert(secondCode, { ...secondPayload, kind: 'AuthorizationCode' }, 90);
+  await codeAdapter.consume(secondCode);
+  await refresh.upsertNativeRefresh(explicitRevocationToken, { ...secondPayload, rotations: 0 }, 3_600,
+    fixtureParent(artifactCodec, 'AuthorizationCode', secondCode));
+  // END R20 independent second issuance
   diagnostic.checkpoint('SECOND_REFRESH_CONSUME');
   await refresh.consume(explicitRevocationToken);
   diagnostic.checkpoint('EXPLICIT_REVOCATION');
