@@ -7,6 +7,7 @@ import type { TestContext } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { Client } from 'pg';
 import { Database } from '../src/index.js';
+import { recordFixtureLedger } from './r17-migration-evidence.mjs';
 
 export const p3dDatabaseUrl = process.env['WEPUU_TEST_DATABASE_URL'];
 if (process.env['CI'] === 'true' && p3dDatabaseUrl === undefined) throw new Error('p3d_test_database_required');
@@ -15,6 +16,7 @@ if (p3dDatabaseUrl !== undefined && !['127.0.0.1', 'localhost', '[::1]'].include
 }
 
 export async function p3dFixture(t: TestContext, full: boolean | 'authorization' = false) {
+  if (process.env['WEPUU_R17_RUN_ID'] && full === true) throw new Error('R17_FIXTURE_FULL_PROFILE_FORBIDDEN');
   assert.ok(p3dDatabaseUrl, 'isolated_database_required');
   const directory = await mkdtemp(join(tmpdir(), 'wepuu-p3d-'));
   const migrations = join(directory, 'migrations');
@@ -32,6 +34,7 @@ export async function p3dFixture(t: TestContext, full: boolean | 'authorization'
   const closers: Array<() => Promise<unknown>> = [];
   t.after(async () => {
     for (const close of closers.reverse()) await close();
+    await recordFixtureLedger(database.poolForMigrationsAndTests, 'after', full === true ? 'legacy' : full === 'authorization' ? 'candidate' : 'historical14');
     await database.close();
     let closed = false;
     for (let i = 0; i < 30; i += 1) {
@@ -45,6 +48,7 @@ export async function p3dFixture(t: TestContext, full: boolean | 'authorization'
     await rm(directory, { recursive: true, force: true });
   });
   await database.migrate();
+  await recordFixtureLedger(database.poolForMigrationsAndTests, 'before', full === true ? 'legacy' : full === 'authorization' ? 'candidate' : 'historical14');
   return { database, directory, databaseUrl: target.href, pool: database.poolForMigrationsAndTests,
     cleanup: (close: () => Promise<unknown>) => { closers.push(close); } };
 }

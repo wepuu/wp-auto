@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { generateKeyPairSync, randomBytes } from 'node:crypto';
 import test, { type TestContext } from 'node:test';
 import { Client } from 'pg';
+import { recordFixtureLedger } from './r17-migration-evidence.mjs';
 import { Database, PostgresPersistentReceiptStore, SecretArtifactCodec, RateLimitSubjectCodec,
   createOidcAdapterFactory } from '../src/index.js';
 
@@ -17,8 +18,9 @@ async function fixture(t: TestContext) {
   await setup.query(`CREATE DATABASE ${name}`); url.pathname = `/${name}`;
   const database = new Database({ connectionString: url.href, applicationName: 'persistent-regression', migrationProfile: 'authorization' });
   const admin = new Client({ connectionString: url.href }); await admin.connect();
-  t.after(async () => { await database.close(); await admin.end(); await setup.query(`DROP DATABASE ${name}`); await setup.end(); });
+  t.after(async () => { await recordFixtureLedger(admin, 'after', 'candidate'); await database.close(); await admin.end(); await setup.query(`DROP DATABASE ${name}`); await setup.end(); });
   await database.migrate(); await database.assertCandidateMigrationIntegrity();
+  await recordFixtureLedger(admin, 'before', 'candidate');
   const binding = { subjectId: id('account'), tenantId: '11111111-1111-4111-8111-111111111111',
     siteId: id('site'), grantId: id('grant'), clientId: id('client'),
     resource: 'https://site.example.test/wp-json/wp-auto/mcp', scopes: ['mcp:read'] as const };

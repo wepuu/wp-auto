@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { Client } from 'pg';
+import { recordFixtureLedger } from './r17-migration-evidence.mjs';
 import { CompactSign, exportJWK, generateKeyPair, importJWK, jwtVerify } from 'jose';
 import { createAccountAuth, ACCOUNT_AUTH_DELIVERY_ID_HEADER, type AccountAuth } from '../../account-auth/src/index.js';
 import { GrantService } from '@wepuu/pairing';
@@ -91,6 +92,7 @@ test('real Authorization HTTP binds same-client sequential and interleaved resou
   t.after(async () => {
     await running?.close();
     await accountAuth?.close();
+    await recordFixtureLedger(database.poolForMigrationsAndTests, 'after', 'candidate');
     await database.close();
     // pg Pool.end can finish before PostgreSQL observes every socket close.
     // Never terminate live clients to conceal a test/teardown failure.
@@ -107,6 +109,7 @@ test('real Authorization HTTP binds same-client sequential and interleaved resou
     await rm(directory, { recursive: true, force: true });
   });
   await database.migrate();
+  await recordFixtureLedger(database.poolForMigrationsAndTests, 'before', 'candidate');
   const pool = database.poolForMigrationsAndTests;
   const rsa = generateKeyPairSync('rsa', { modulusLength: 3072 });
   const passphrase = randomBytes(32).toString('base64url');
