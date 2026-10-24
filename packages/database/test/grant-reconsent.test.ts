@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { GrantService } from '@wepuu/pairing';
 import { reconsentDiagnostic } from './reconsent-diagnostic.mjs';
+import { recordTargetLedger, closeAfterLedger } from './r19-target-ledger.mjs';
 import {
   Database,
   P3A_LIFECYCLE_TEST_CLIENT_ID,
@@ -25,9 +26,10 @@ test('revoked Grant permits same-tuple re-consent without reviving old tokens', 
   return diagnostic.main(async () => {
   assert.ok(connectionString);
   const database = new Database({ connectionString, applicationName: 'wepuu-grant-reconsent-test', migrationProfile: 'authorization' });
-  t.after(() => diagnostic.cleanup(() => database.close()));
+  t.after(() => diagnostic.cleanup(() => closeAfterLedger(database.poolForMigrationsAndTests, () => database.close())));
   diagnostic.checkpoint('MIGRATION');
   await database.migrate();
+  await recordTargetLedger(database.poolForMigrationsAndTests, 'before');
   diagnostic.checkpoint('FIXTURE_RESET');
   const admin = database.poolForMigrationsAndTests;
   await admin.query('TRUNCATE platform.accounts, platform.tenants CASCADE');
