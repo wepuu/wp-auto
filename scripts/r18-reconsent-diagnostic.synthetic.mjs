@@ -44,6 +44,17 @@ await assert.rejects(both.cleanup(async () => { throw cleanupError; }), e => e =
 check(() => assert.equal(both.snapshot().main.stage, 'SETUP'));
 check(() => assert.equal(both.snapshot().cleanup.error.sqlstate, '42501'));
 check(() => assert(!JSON.stringify(both.snapshot()).includes(sentinel)));
+const cleanupOnly = make(); await cleanupOnly.main(async () => { advance(cleanupOnly); });
+await assert.rejects(cleanupOnly.cleanup(async () => { throw cleanupError; }), e => e === cleanupError); checks++;
+check(() => assert.equal(cleanupOnly.snapshot().main.status, 'PASS'));
+check(() => assert.equal(cleanupOnly.snapshot().cleanup.status, 'FAIL'));
+check(() => assert.equal(reconcileDiagnostics(Object.values(cleanupOnly.snapshot()), cfg.run).primaryFailure, null));
+check(() => assert.equal(reconcileDiagnostics(Object.values(cleanupOnly.snapshot()), cfg.run).cleanupFailure.error.sqlstate, '42501'));
+const cleanupSave = make(async value => { if (value.channel === 'cleanup') throw Error(sentinel); });
+await cleanupSave.main(async () => { advance(cleanupSave); });
+await assert.rejects(cleanupSave.cleanup(async () => { throw cleanupError; }), e => e === cleanupError); checks++;
+check(() => assert.equal(cleanupSave.snapshot().cleanup.evidenceSaveFailed, true));
+check(() => assert.equal(reconcileDiagnostics(Object.values(cleanupSave.snapshot()), cfg.run).diagnosticCoverage, 'NOT_CONFIRMED'));
 const success = make();
 check(() => assert.throws(() => success.checkpoint('MIGRATION')));
 check(() => assert.equal(typeof success.main, 'function'));
