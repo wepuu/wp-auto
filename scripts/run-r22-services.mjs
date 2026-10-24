@@ -23,11 +23,11 @@ export const budgets = Object.freeze({ startup: 120000, control: 300000, matrix:
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 const deny = code => { throw Object.assign(Error('R22_GATE_DENIED'), { code }); };
 export function nextAllowed(step, results) { return steps.includes(step) && results.length === steps.indexOf(step) && results.every((v, i) => v.step === steps[i] && v.passed === true); }
-export function ownedState(c, run, name) {
- if (c?.Name !== '/' + name || c.Config?.Labels?.['wepuu.run'] !== run || c.Config?.Labels?.['wepuu.phase'] !== 'r22-services') deny('OWNERSHIP_NOT_CONFIRMED');
+export function ownedState(c, run, name, phase = 'r22-services') {
+ if (!['r22-services','r23-control'].includes(phase) || c?.Name !== '/' + name || c.Config?.Labels?.['wepuu.run'] !== run || c.Config?.Labels?.['wepuu.phase'] !== phase) deny('OWNERSHIP_NOT_CONFIRMED');
  return { name, stopped: c.State?.Running === false, exitCode: c.State?.ExitCode, oomKilled: c.State?.OOMKilled === true };
 }
-export async function scenarioOnce(step, operate, ledger) {
+export async function scenarioOnce(step, operate, ledger, options) {
  if (!steps.includes(step)) deny('SCENARIO_NOT_CONFIRMED');
  const began = performance.now(), result = { step, attempts: 1, passed: false, startedAt: new Date().toISOString(), rawOutputSuppressed: true };
  let text, failure;
@@ -36,14 +36,15 @@ export async function scenarioOnce(step, operate, ledger) {
  result.transport = { completed: !failure || Number.isSafeInteger(failure?.code), timedOut: failure?.killed === true,
   exitCode: failure ? Number.isSafeInteger(failure.code) ? failure.code : null : 0 };
  if (value) result.evidence = project(value);
- try { result.evidence = verifyScenario(value, step, ledger); result.passed = !failure; } catch { /* keep the first safe report, never promote partial success */ }
+ try { result.evidence = verifyScenario(value, step, ledger, options); result.passed = !failure; } catch { /* keep the first safe report, never promote partial success */ }
  result.category = result.passed ? 'PASS' : failure?.killed ? 'TRANSPORT_TIMEOUT' : failure ? 'COMMAND_FAILED' : value ? 'SCENARIO_NOT_CONFIRMED' : 'REPORT_MISSING_OR_INVALID';
  result.finishedAt = new Date().toISOString(); result.elapsedMs = Math.round(performance.now() - began);
  return result;
 }
 async function tree(directory) { const out = []; for (const e of await readdir(directory, { withFileTypes: true })) { const p = directory + '/' + e.name; if (e.isSymbolicLink()) deny('FROZEN_INPUT_CHANGED'); if (e.isDirectory()) out.push(...await tree(p)); else if (e.isFile()) out.push(p); } return out.sort(); }
-export async function main() {
- const root = process.cwd(), run = 'r22-' + new Date().toISOString().replace(/[^0-9]/g, ''), exec = promisify(execFile);
+export async function main({ controlOnly = false } = {}) {
+ const selectedSteps = controlOnly ? ['control'] : steps, phase = controlOnly ? 'r23-control' : 'r22-services';
+ const root = process.cwd(), run = (controlOnly ? 'r23-' : 'r22-') + new Date().toISOString().replace(/[^0-9]/g, ''), exec = promisify(execFile);
  const env = { ...process.env }; for (const k of ['DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_TLS_VERIFY', 'BUILDX_BUILDER', 'BUILDKIT_HOST', 'GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'NODE_OPTIONS']) delete env[k];
  const invoke = (exe, args, timeout = 15000) => exec(exe, args, { cwd: root, env, windowsHide: true, shell: false, timeout, maxBuffer: 2 * 1024 ** 2 });
  const docker = 'C:\\Users\\liulo\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe';
@@ -55,13 +56,13 @@ export async function main() {
  let directory, files; const created = [];
  const disk = async initial => { const s = await statfs(root), v = verifyDiskBudget(s.bavail * s.bsize, initial); (result.diskSamples ??= []).push({ stage: result.stage, sampledAt: new Date().toISOString(), ...v }); };
  const hashes = async () => { const out = {}; for (const f of files) { const s = await lstat(f); if (!s.isFile() || s.isSymbolicLink()) deny('FROZEN_INPUT_CHANGED'); out[f] = sha(await readFile(f)); } return out; };
- const labels = ['--label', 'wepuu.phase=r22-services', '--label', 'wepuu.run=' + run];
+ const labels = ['--label', 'wepuu.phase='+phase, '--label', 'wepuu.run=' + run];
  const base = ['--pull=never', '--read-only', '--no-healthcheck', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--log-driver', 'none', '--tmpfs', '/tmp:rw,noexec,nosuid,size=64m'];
  const create = async (name, args) => { await d(['create', '--name', name, ...labels, ...args]); created.push(name); };
  const stop = async name => {
-  let c = (await json(['inspect', name]))[0]; ownedState(c, run, name);
+  let c = (await json(['inspect', name]))[0]; ownedState(c, run, name, phase);
   if (c.State.Running) { await d(['stop', '--time', '10', name], 20000); c = (await json(['inspect', name]))[0]; }
-  const row = ownedState(c, run, name), old = result.cleanup.findIndex(v => v.name === name); if (old < 0) result.cleanup.push(row); else result.cleanup[old] = row;
+  const row = ownedState(c, run, name, phase), old = result.cleanup.findIndex(v => v.name === name); if (old < 0) result.cleanup.push(row); else result.cleanup[old] = row;
   if (!row.stopped || row.oomKilled || row.exitCode !== 0) deny('OWNED_PROCESS_FAILED');
  };
  try {
@@ -71,15 +72,16 @@ export async function main() {
   const changed = (await invoke('git', ['diff', '--name-only', REV, '--', 'apps', 'packages', 'deploy', 'package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', '.npmrc', 'tsconfig.base.json', 'tsconfig.json'])).stdout.trim().split(/\r?\n/u).filter(Boolean);
   if (changed.some(f => !fixtures.includes(f))) deny('APP_SOURCE_CHANGED');
   // All R8 protocol assertions remain byte-for-byte at the R21 baseline.
-  if ((await invoke('git', ['diff', '--name-only', 'e165096', '--', 'test/persistent-authorization/r8'])).stdout.trim()) deny('PROTOCOL_ASSERTION_CHANGED');
+  const r8Changed=(await invoke('git', ['diff', '--name-only', 'e165096', '--', 'test/persistent-authorization/r8'])).stdout.trim().split(/\r?\n/u).filter(Boolean);
+  if (r8Changed.some(f => !controlOnly || f !== 'test/persistent-authorization/r8/control-service.mjs')) deny('PROTOCOL_ASSERTION_CHANGED');
   files = [...await tree('test/persistent-authorization'), ...fixtures, ...await tree('packages/database/migrations'),
-   'scripts/run-r22-services.mjs', 'scripts/r22-services.synthetic.mjs', 'scripts/local-evidence-acl.mjs', 'scripts/run-r13-unit.mjs', 'scripts/run-r21-database.mjs', 'scripts/persistent-image-contract.mjs'];
+   'scripts/run-r22-services.mjs', 'scripts/r22-services.synthetic.mjs', ...(controlOnly ? ['scripts/run-r23-control.mjs','scripts/r23-control.synthetic.mjs'] : []), 'scripts/local-evidence-acl.mjs', 'scripts/run-r13-unit.mjs', 'scripts/run-r21-database.mjs', 'scripts/persistent-image-contract.mjs'];
   result.inputHashes = await hashes(); await disk(true);
   result.stage = 'images'; verifyIntegrationContext(await json(['context', 'inspect', 'desktop-linux']), 'desktop-linux');
   result.images = []; for (const role of Object.keys(images)) result.images.push(verifyIntegrationImage(await json(['image', 'inspect', images[role]]), images[role], role, REV));
   const pg = (await json(['image', 'inspect', PG]))[0]; if (pg.Id !== PG.slice(9) || pg.Os !== 'linux' || pg.Architecture !== 'amd64' || !pg.Config.Env.includes('PG_MAJOR=16')) deny('POSTGRES_IDENTITY_MISMATCH');
   result.postgresImage = { id: pg.Id, major: 16, platform: 'linux/amd64' };
-  result.stage = 'private_evidence'; directory = await mkdtemp(path.join(tmpdir(), 'wepuu-r22-services-'));
+  result.stage = 'private_evidence'; directory = await mkdtemp(path.join(tmpdir(), controlOnly ? 'wepuu-r23-control-' : 'wepuu-r22-services-'));
   const who = (await invoke('whoami', [])).stdout.trim(); await invoke('icacls.exe', [directory, '/inheritance:r', '/grant:r', who + ':(OI)(CI)F', '*S-1-5-18:(OI)(CI)F', '*S-1-5-32-544:(OI)(CI)F']);
   if (!(await checkWindowsEvidenceAcl(directory, [])).verified) deny('EVIDENCE_NOT_PRIVATE'); result.evidenceAclVerified = true;
   const probes = [];
@@ -90,6 +92,13 @@ export async function main() {
   }
   result.compiled = verifyCompiledIdentity(probes);
   if (result.compiled.sha256 !== 'e26eb91d35d7735b97d6ad00a4f0aa87c340e0da221cfef31ee4d2db227d2373' || result.compiled.fileCount !== 163) deny('COMPILED_INPUT_MISMATCH');
+  if(controlOnly){
+   result.stage='compiled_contract_probe';const name=prefix+'-contract-probe';
+   await create(name,[...base,'--network','none','--user','1000:1000','--tmpfs','/private:rw,noexec,nosuid,size=8m,uid=1000,gid=1000,mode=0700','--mount',`type=bind,source=${path.resolve('test/persistent-authorization')},target=/harness,readonly`,images.control,'node','/harness/r23/contract-probe.mjs']);
+   const p=JSON.parse((await d(['start','-a',name],30000)).stdout);await stop(name);
+   result.contractProbe={passed:p.passed===true,actualProductionMockRejected:p.actualProductionMockRejected===true,actualMissingQuotaRejected:p.actualMissingQuotaRejected===true,actualInvalidQuotaRejected:p.actualInvalidQuotaRejected===true,constructorFetchCalls:p.constructorFetchCalls===0?0:null,protectedFilesVerified:p.protectedFilesVerified===true};
+   if(!Object.entries(result.contractProbe).every(([k,v])=>k==='constructorFetchCalls'?v===0:v===true))deny('CONTRACT_PROBE_FAILED');
+  }
   result.stage = 'isolation_setup'; await disk(false);
   const cfg = { host: '127.0.0.1', port: 5432, database: 'postgres', user: 'postgres', password: randomBytes(32).toString('hex') };
   const seed = path.join(directory, 'postgres.private.json'), pgEnv = path.join(directory, 'postgres.private.env');
@@ -109,13 +118,13 @@ export async function main() {
   if (network.Internal !== true || network.Labels?.['wepuu.run'] !== run || Object.keys(pgMeta.HostConfig.PortBindings ?? {}).length || pgMeta.HostConfig.NetworkMode !== names.network) deny('NETWORK_BOUNDARY_MISMATCH');
   result.internalNetwork = true; result.hostPortsPublished = false;
   const ledger = await expectedLedger('candidate');
-  for (const step of steps) {
-   if (!nextAllowed(step, result.scenarios)) deny('SCENARIO_ORDER_DENIED'); result.stage = step; await disk(false);
+  for (const step of selectedSteps) {
+   if (controlOnly ? result.scenarios.length!==0 || step!=='control' : !nextAllowed(step, result.scenarios)) deny('SCENARIO_ORDER_DENIED'); result.stage = step; await disk(false);
    if (JSON.stringify(await hashes()) !== JSON.stringify(result.inputHashes)) deny('FROZEN_INPUT_CHANGED');
    const name = prefix + '-' + step;
    await create(name, [...base, '--user', '1000:1000', '--network', 'container:' + names.pg, '--tmpfs', '/private:rw,noexec,nosuid,size=64m,uid=1000,gid=1000,mode=0700', ...mount,
     step === 'control' ? images.control : images.authorization, 'node', '/harness/driver.mjs', step]);
-   const item = await scenarioOnce(step, async () => (await d(['start', '-a', name], budgets[step])).stdout, ledger); result.scenarios.push(item);
+   const item = await scenarioOnce(step, async () => (await d(['start', '-a', name], budgets[step])).stdout, ledger, {controlEvidence:controlOnly}); result.scenarios.push(item);
    await writeFile(path.join(directory, step + '-result.json'), JSON.stringify(item, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
    try { await stop(name); } catch { item.passed = false; }
    if (!item.passed) deny('SCENARIO_FAILED');

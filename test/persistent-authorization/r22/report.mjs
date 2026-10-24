@@ -1,4 +1,5 @@
 // Test-only fixed projection. Never export exception text, stdout, credentials or payloads.
+import { controlRunPass, startupErrors } from '../r23/control-lifecycle.mjs';
 export const steps = Object.freeze(['startup', 'control', 'matrix', 'transition']);
 export const proofChecks = ['invalid_signature', 'wrong_tenant', 'wrong_site', 'wrong_client', 'wrong_subject', 'wrong_resource', 'wrong_scope'].map(x => 'proof_' + x).concat('single_pending_negative_proofs_then_valid_activation');
 const common = ['real_BetterAuth_mock_OTP_Session_and_account_workspace_provision', 'test_process_network_APIs_deny_external_TCP_TLS_DNS'];
@@ -41,7 +42,7 @@ export function project(v) {
  if (steps.includes(v?.step)) out.step = v.step;
  if (v?.stage !== undefined) out.stage = stages.has(v.stage) ? v.stage : 'NOT_CONFIRMED';
  if (v?.category !== undefined) out.category = categories.has(v.category) ? v.category : 'NOT_CONFIRMED';
- if (['SERVICE_MATRIX_FAILED', 'SERVICE_SCHEMA_UNCHANGED', 'MIGRATION_LEDGER_UNCHANGED', 'STARTUP_DENIAL_TIMEOUT', 'STARTUP_DENIAL_EXIT', 'EXACT_STARTUP_DENIAL', 'DEFAULT_MAIN_READY', 'DEFAULT_MAIN_STOP', 'DEFAULT_MAIN_EXIT', 'CONTROL_MAIN_READY', 'CONTROL_MAIN_STOP', 'CONTROL_MAIN_EXIT', 'MAIN_START_OR_READY_FAILED', 'RUNTIME_NOT_ADMIN', 'RUNTIME_DDL_OR_ESCALATION_DENIED', 'MIGRATION_COUNT', 'NO_014'].includes(v?.assertion)) out.assertion = v.assertion;
+ if (['CONTROL_MAIN_LIFECYCLE', 'SERVICE_MATRIX_FAILED', 'SERVICE_SCHEMA_UNCHANGED', 'MIGRATION_LEDGER_UNCHANGED', 'STARTUP_DENIAL_TIMEOUT', 'STARTUP_DENIAL_EXIT', 'EXACT_STARTUP_DENIAL', 'DEFAULT_MAIN_READY', 'DEFAULT_MAIN_STOP', 'DEFAULT_MAIN_EXIT', 'CONTROL_MAIN_READY', 'CONTROL_MAIN_STOP', 'CONTROL_MAIN_EXIT', 'MAIN_START_OR_READY_FAILED', 'RUNTIME_NOT_ADMIN', 'RUNTIME_DDL_OR_ESCALATION_DENIED', 'MIGRATION_COUNT', 'NO_014'].includes(v?.assertion)) out.assertion = v.assertion;
  if (/^[0-9A-Z]{5}$/u.test(v?.sqlstate ?? '')) out.sqlstate = v.sqlstate;
  for (const k of ['explicitMigration', 'runtimePrivilegeSeparationPass', 'protocolAssertionsPass', 'childEvidencePass', 'deadlineExceeded', 'syntheticFileSecretsEphemeral', 'boundaryEvidenceSaved', 'schemaAndLedgerUnchanged', 'runtimeDsnRestricted']) if (typeof v?.[k] === 'boolean') out[k] = v[k];
  for (const k of ['authRequests', 'tokenRequests', 'mockDeliveriesObserved', 'elapsedMonotonicMs']) if (Number.isFinite(v?.[k]) && v[k] >= 0) out[k] = v[k];
@@ -49,7 +50,13 @@ export function project(v) {
  for (const k of ['ledgerBefore', 'ledgerAfter']) if (Array.isArray(v?.[k])) out[k] = v[k].map(r => ({ name: /^\d{3}_[a-z0-9_]+\.sql$/u.test(r?.name ?? '') ? r.name : 'NOT_CONFIRMED', sha256: hash(r?.sha256) ? r.sha256 : 'NOT_CONFIRMED' }));
  if (Array.isArray(v?.checks)) out.checks = v.checks.map(c => ({ name: names.has(c?.name) ? c.name : 'NOT_CONFIRMED', passed: c?.passed === true,
   ...(['42P01', '42501'].includes(c?.sqlstate) ? { sqlstate: c.sqlstate } : {}) }));
- if (Array.isArray(v?.runs)) out.runs = v.runs.map(r => ({ attempt: r.attempt === 1 || r.attempt === 2 ? r.attempt : null, ready: r.ready === true, exitCode: Number.isSafeInteger(r.exitCode) ? r.exitCode : null }));
+ if (Array.isArray(v?.runs)) out.runs = v.runs.map(r => ({ attempt: r.attempt === 1 || r.attempt === 2 ? r.attempt : null, ready: r.ready === true, exitCode: Number.isSafeInteger(r.exitCode) ? r.exitCode : null,
+  ...(typeof r?.passed === 'boolean' ? { passed: r.passed } : {}),
+  ...Object.fromEntries(['stopRequested', 'stopSignalDelivered', 'exitObserved', 'closeObserved', 'outputLimitExceeded'].filter(k => typeof r[k] === 'boolean').map(k => [k, r[k]])),
+  ...(Number.isSafeInteger(r?.readinessStatus) ? { readinessStatus: r.readinessStatus } : {}),
+  ...(r?.signal === null || ['SIGTERM', 'SIGKILL', 'SIGINT', 'SIGABRT', 'SIGSEGV', 'OTHER'].includes(r?.signal) ? { signal: r.signal } : {}),
+  ...Object.fromEntries(['spawnErrorCategory', 'startupFailureCategory', 'cleanupFailureCategory', 'observedStartupError'].filter(k => ['NONE', 'NOT_OBSERVED', 'ENOENT', 'EACCES', 'EPERM', 'SPAWN_ERROR', 'SPAWN_FAILED', 'OUTPUT_LIMIT', 'EXIT_BEFORE_READY', 'READINESS_TIMEOUT', 'LOCAL_OBSERVATION_FAILED', 'SIGNAL_SEND_FAILED', 'STOP_TIMEOUT', 'UNCLEAN_EXIT', ...startupErrors].includes(r[k])).map(k => [k, r[k]])),
+  ...Object.fromEntries(['outputBytes', 'elapsedMonotonicMs'].filter(k => Number.isFinite(r[k]) && r[k] >= 0).map(k => [k, r[k]])) }));
  if (v?.cleanup) out.cleanup = { childrenStopped: v.cleanup.childrenStopped === true, forcedOwnedChildTermination: v.cleanup.forcedOwnedChildTermination === true };
  if (Array.isArray(v?.startupEvidence)) out.startupEvidence = v.startupEvidence.map(c => ({ mode: ['A', 'B'].includes(c.mode) ? c.mode : 'NOT_CONFIRMED',
   readyStatus: c.readyStatus === 200 ? 200 : null, readinessRequestCount: Number.isSafeInteger(c.readinessRequestCount) ? c.readinessRequestCount : null,
@@ -60,7 +67,7 @@ export function project(v) {
  return out;
 }
 const equalSet = (rows, expected) => Array.isArray(rows) && rows.length === expected.length && rows.every(r => r.passed && expected.includes(r.name)) && new Set(rows.map(r => r.name)).size === expected.length;
-export function verifyScenario(v, step, ledger) {
+export function verifyScenario(v, step, ledger, { controlEvidence = false } = {}) {
  const out = project(v), fail = () => { throw Object.assign(Error('SCENARIO_NOT_CONFIRMED'), { code: 'SCENARIO_NOT_CONFIRMED' }); };
  if (!steps.includes(step) || out.step !== step || !out.passed || !out.explicitMigration || !out.runtimePrivilegeSeparationPass
   || !equalSet(out.checks, ['startup', 'control'].includes(step) ? driverNames : driverNames.slice(1, 3))
@@ -70,6 +77,7 @@ export function verifyScenario(v, step, ledger) {
   if (!out.matrix.runtimeDsnRestricted || !out.matrix.schemaAndLedgerUnchanged || out.matrix.runs?.length !== 2
    || out.matrix.runs.some((r, i) => r.attempt !== i + 1 || !r.ready || r.exitCode !== 0)
    || out.checks[0].sqlstate !== '42P01' || out.checks[3].sqlstate !== '42501') fail();
+  if (step === 'control' && controlEvidence && out.matrix.runs.some(r => !controlRunPass(r))) fail();
  } else {
   const m = out.matrix;
   if (!m.protocolAssertionsPass || !m.childEvidencePass || m.deadlineExceeded !== false || !m.cleanup?.childrenStopped || m.cleanup.forcedOwnedChildTermination !== false
