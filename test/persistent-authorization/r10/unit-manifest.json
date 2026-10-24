@@ -35,6 +35,7 @@
   "scripts/authorization-revalidation.test.mjs",
   "scripts/check-production-public.test.mjs",
   "scripts/check-temporary-site-b-resources.test.mjs",
+  "scripts/fixed-node-test.test.mjs",
   "scripts/local-evidence-acl.test.mjs",
   "scripts/multisite-r7.test.mjs",
   "scripts/multisite-r9-build.test.mjs",

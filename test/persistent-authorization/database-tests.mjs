@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile, writeFile, readdir } from 'node:fs/promises';
 import { runReportedProcess } from './r10/reported-process.mjs';
+import { fixedNodeTestCommand } from './r10/fixed-node-test.mjs';
 import { createRequire } from 'node:module';
 import { randomBytes } from 'node:crypto';
 import { candidateDatabase, retainedDatabase, legacyDatabase, verifyDatabaseManifest } from './r10/profiles.mjs';
@@ -15,6 +16,7 @@ const cluster = new Client(cfg); await cluster.connect();
 const profiles = legacy ? [legacyDatabase] : [candidateDatabase, retainedDatabase], reports = [];
 let result, current, currentReport;
 try {
+  const command = await fixedNodeTestCommand();
   for (const profile of profiles) for (const [file, count] of Object.entries(profile)) {
     current = file;
     currentReport = undefined;
@@ -22,7 +24,7 @@ try {
     await cluster.query(`CREATE DATABASE ${name}`);
     const url = new URL('postgresql://127.0.0.1:5432/' + name); url.username = cfg.user; url.password = cfg.password;
     const path = 'packages/database/test/' + file;
-    currentReport = await runReportedProcess({ executable: 'pnpm', args: ['exec', 'tsx', '--test', '--test-concurrency=1'],
+    currentReport = await runReportedProcess({ executable: command.executable, args: command.args,
       config: { files: [path], phase: legacy ? 'legacy' : 'database', expectedTopLevel: { [file]: count } },
       reporter: '/harness/r10/reporter.mjs', cwd: '/workspace', timeoutMs: 150000,
       env: { PATH: process.env.PATH, TMPDIR: '/tmp', CI: 'true', WEPUU_TEST_DATABASE_URL: url.href } });
