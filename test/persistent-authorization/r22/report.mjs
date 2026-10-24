@@ -1,5 +1,6 @@
 // Test-only fixed projection. Never export exception text, stdout, credentials or payloads.
 import { controlRunPass, startupErrors } from '../r23/control-lifecycle.mjs';
+import { expiryStages, expiryAssertions, projectExpiry } from '../r8/expiry-evidence.mjs';
 export const steps = Object.freeze(['startup', 'control', 'matrix', 'transition']);
 export const proofChecks = ['invalid_signature', 'wrong_tenant', 'wrong_site', 'wrong_client', 'wrong_subject', 'wrong_resource', 'wrong_scope'].map(x => 'proof_' + x).concat('single_pending_negative_proofs_then_valid_activation');
 const common = ['real_BetterAuth_mock_OTP_Session_and_account_workspace_provision', 'test_process_network_APIs_deny_external_TCP_TLS_DNS'];
@@ -28,7 +29,7 @@ const stages = new Set(['setup', 'identity', 'explicit_migration', 'runtime_priv
  'grant_pending_create', 'protected_grant_create', 'A_default_and_ordinary', 'B_form_render', 'save_failure_injection', 'B_to_A_code_and_RT', 'expired_code',
  'native_guards', 'membership_guard', 'link_and_version_guards', 'wrong_account', 'receipt_withdrawal', 'refresh_replay', 'BetterAuth_session_expiry',
  'B_issue_before_stop', 'B_stop_before_A', 'A_accepts_guarded_preissued_code', 'A_denies_new_persistent_consent', 'A_preserves_replay_guard', 'proof_valid_activation',
- ...proofChecks, ...['B_INVALID_CSRF', 'B_SPOOFED_BINDING', 'B_INVALID_PERSISTENT_CHOICE', 'B_WRONG_ORIGIN'].flatMap(x => [x, x + '_NO_ARTIFACT'])]);
+ ...proofChecks, ...expiryStages, ...['B_INVALID_CSRF', 'B_SPOOFED_BINDING', 'B_INVALID_PERSISTENT_CHOICE', 'B_WRONG_ORIGIN'].flatMap(x => [x, x + '_NO_ARTIFACT'])]);
 const hash = v => typeof v === 'string' && /^[a-f0-9]{64}$/u.test(v);
 export function lastResult(output) {
  try { const v = JSON.parse(String(output ?? '').trim().split(/\r?\n/u).at(-1)); return v && typeof v === 'object' && !Array.isArray(v) && typeof v.passed === 'boolean' ? v : null; } catch { return null; }
@@ -39,6 +40,8 @@ export function boundaryFailure(step, error) {
 }
 export function project(v) {
  const out = { passed: v?.passed === true, rawErrorSuppressed: true };
+ if (expiryStages.includes(v?.stage) && expiryAssertions.includes(v?.assertion)) out.assertion = v.assertion;
+ if (v?.expiryEvidence && typeof v.expiryEvidence === 'object') out.expiryEvidence = projectExpiry(v.expiryEvidence);
  if (steps.includes(v?.step)) out.step = v.step;
  if (v?.stage !== undefined) out.stage = stages.has(v.stage) ? v.stage : 'NOT_CONFIRMED';
  if (v?.category !== undefined) out.category = categories.has(v.category) ? v.category : 'NOT_CONFIRMED';
