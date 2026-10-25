@@ -7,7 +7,7 @@ import {baseline,verifyBaseline,sha} from '../test/persistent-authorization/r30/
 import {checkWindowsEvidenceAcl} from './local-evidence-acl.mjs';
 import {verifyDiskBudget,verifyIntegrationContext,verifyIntegrationImage} from './persistent-image-contract.mjs';
 const image='sha256:ecb2b146182ef5ca756c1b5893ecfbf773bd6bd1b43be275670e54eddfda239c',revision='c404ed52228ce5492a85674547998d2f5d31772e';
-const run='r32-'+new Date().toISOString().replace(/[^0-9]/gu,''),name='wepuu-'+run,root=process.cwd(),env={...process.env};
+const run='r33-'+new Date().toISOString().replace(/[^0-9]/gu,''),name='wepuu-'+run,root=process.cwd(),env={...process.env};
 for(const k of ['DOCKER_HOST','DOCKER_CONTEXT','DOCKER_TLS_VERIFY','BUILDX_BUILDER','BUILDKIT_HOST','NODE_OPTIONS','GIT_DIR','GIT_WORK_TREE','GIT_INDEX_FILE'])delete env[k];
 const exec=promisify(execFile),invoke=(exe,args,timeout=15000)=>exec(exe,args,{cwd:root,env,timeout,windowsHide:true,shell:false,maxBuffer:2097152});
 const d=(args,timeout)=>invoke('C:\\Users\\liulo\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe',['--context','desktop-linux',...args],timeout),json=async args=>JSON.parse((await d(args)).stdout);
@@ -24,12 +24,12 @@ try{
  expected=await baseline(root,tracked);result.baseline=await verifyBaseline(root,expected);
  const before=await statfs(root);result.diskBefore=verifyDiskBudget(before.bavail*before.bsize,true);
  verifyIntegrationContext(await json(['context','inspect','desktop-linux']),'desktop-linux');result.image=verifyIntegrationImage(await json(['image','inspect',image]),image,'test',revision);
- directory=await mkdtemp(path.join(tmpdir(),'wepuu-r32-focused-'));const who=(await invoke('whoami',[])).stdout.trim();
+ directory=await mkdtemp(path.join(tmpdir(),'wepuu-r33-focused-'));const who=(await invoke('whoami',[])).stdout.trim();
  await invoke('icacls.exe',[directory,'/inheritance:r','/grant:r',who+':(OI)(CI)F','*S-1-5-18:(OI)(CI)F','*S-1-5-32-544:(OI)(CI)F']);
  if(!(await checkWindowsEvidenceAcl(directory,[])).verified)throw Error('EVIDENCE_NOT_PRIVATE');
  const inputFile=path.join(directory,'inputs.json');await writeFile(inputFile,JSON.stringify(expected),{flag:'wx',mode:0o600});
  if(!(await checkWindowsEvidenceAcl(directory,['inputs.json'])).verified)throw Error('EVIDENCE_NOT_PRIVATE');
- await d(['create','--name',name,'--label','wepuu.run='+run,'--label','wepuu.phase=r32-focused','--pull=never','--network','none','--user','0:0',
+ await d(['create','--name',name,'--label','wepuu.run='+run,'--label','wepuu.phase=r33-focused','--pull=never','--network','none','--user','0:0',
   '--no-healthcheck','--cap-drop','ALL','--security-opt','no-new-privileges','--log-driver','none',
   ...expected.directories.flatMap(dir=>['--mount',`type=bind,source=${path.resolve(dir)},target=/workspace/${dir},readonly`]),
   '--mount',`type=bind,source=${path.resolve('eslint.config.mjs')},target=/workspace/eslint.config.mjs,readonly`,
@@ -39,7 +39,7 @@ try{
  result.evidence=JSON.parse(output.trim());result.passed=result.evidence.passed===true;
 }catch(e){result.passed=false;result.category=['SOURCE_NOT_CLEAN','SOURCE_CHANGED','EVIDENCE_NOT_PRIVATE'].includes(e.message)?e.message:e.killed?'TRANSPORT_TIMEOUT':'FOCUSED_GATE_NOT_CONFIRMED';}
 finally{
- if(created){try{let c=(await json(['inspect',name]))[0];if(c.Name!=='/'+name||c.Config.Labels?.['wepuu.run']!==run||c.Config.Labels?.['wepuu.phase']!=='r32-focused')throw Error();
+ if(created){try{let c=(await json(['inspect',name]))[0];if(c.Name!=='/'+name||c.Config.Labels?.['wepuu.run']!==run||c.Config.Labels?.['wepuu.phase']!=='r33-focused')throw Error();
   if(c.State.Running){await d(['stop','--time','10',name],20000);c=(await json(['inspect',name]))[0];}
   result.cleanup={stopped:c.State.Running===false,exitCode:c.State.ExitCode,oomKilled:c.State.OOMKilled===true};if(!result.cleanup.stopped||result.cleanup.oomKilled)result.passed=false;
  }catch{result.passed=false;result.cleanup={confirmed:false};}}

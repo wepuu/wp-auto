@@ -68,6 +68,7 @@ for(const [error,category]of [
  [{code:'ERR_CHILD_PROCESS_STDIO_MAXBUFFER',killed:true,stdout:secret},'CHILD_OUTPUT_LIMIT'],
  [{message:secret,stack:secret},'CHILD_NOT_CONFIRMED']]){
  const safe=safeFailure(error);check(()=>assert.equal(safe.category,category));check(()=>assert(!JSON.stringify(safe).includes(secret)));
+ if(category==='CHILD_OUTPUT_LIMIT'){check(()=>assert.equal(safe.outputLimit,true));check(()=>assert.equal(safe.timedOut,false));check(()=>assert.equal(safe.passed,false));}
 }
 console.log(JSON.stringify({passed:true,checks,dockerInvoked:false,applicationTestsRun:false,syntheticChildOnly:true,fixturesRetained:true}));
 }catch{

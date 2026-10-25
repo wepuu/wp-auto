@@ -5,7 +5,7 @@ import {pathToFileURL} from 'node:url';
 import path from 'node:path';
 export const reporterSpecifier = file => pathToFileURL(path.resolve(file)).href;
 export function safeFailure(e) {
- return {passed:false, category:e.killed?'CHILD_TIMEOUT':e.code==='ERR_CHILD_PROCESS_STDIO_MAXBUFFER'?'CHILD_OUTPUT_LIMIT':
+ return {passed:false, category:e.code==='ERR_CHILD_PROCESS_STDIO_MAXBUFFER'?'CHILD_OUTPUT_LIMIT':e.killed?'CHILD_TIMEOUT':
   Number.isSafeInteger(e.code)?'CHILD_NONZERO_EXIT':['ENOENT','EACCES','EPERM'].includes(e.code)?'CHILD_SPAWN_FAILED':'CHILD_NOT_CONFIRMED',
   exitCode:Number.isSafeInteger(e.code)?e.code:null,signal:['SIGTERM','SIGKILL','SIGABRT','SIGSEGV'].includes(e.signal)?e.signal:null,
   timedOut:e.killed===true&&e.code!=='ERR_CHILD_PROCESS_STDIO_MAXBUFFER',outputLimit:e.code==='ERR_CHILD_PROCESS_STDIO_MAXBUFFER'};
