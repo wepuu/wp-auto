@@ -247,8 +247,10 @@ test('real Authorization HTTP binds same-client sequential and interleaved resou
     const category = ['invalid_grant', 'invalid_target', 'access_denied', 'invalid_request'].includes(body.error ?? '')
       ? body.error : 'unknown';
     assert.equal(response.status, 200, `exchange_${category}`);
+    const audience = resources[index];
+    assert.ok(audience);
     const verified = await jwtVerify(body.access_token, await importJWK(key.publicJwk, 'RS256'), {
-      issuer, audience: resources[index], algorithms: ['RS256'] });
+      issuer, audience, algorithms: ['RS256'] });
     assert.equal(verified.protectedHeader.typ, 'at+jwt');
     assert.equal(verified.protectedHeader.kid === key.kid, true, 'signing_key');
     assert.equal(verified.payload['grant_id'] === grants[index], true, 'grant_binding');

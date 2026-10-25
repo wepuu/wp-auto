@@ -1,5 +1,19 @@
 {
   "extends": "../../../tsconfig.base.json",
-  "compilerOptions": { "noEmit": true, "composite": false },
-  "include": ["*.ts", "../src/**/*.ts"]
+  "compilerOptions": {
+    "noEmit": true,
+    "composite": false,
+    "paths": {
+      "@wepuu/database": ["../src/index.ts"]
+    },
+    "lib": [
+      "ES2024",
+      "DOM",
+      "DOM.Iterable"
+    ]
+  },
+  "include": [
+    "*.ts",
+    "../src/**/*.ts"
+  ]
 }
