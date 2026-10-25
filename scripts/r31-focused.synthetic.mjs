@@ -3,11 +3,13 @@ import assert from 'node:assert/strict';
 import {readFile,mkdtemp,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
-import {execFile} from 'node:child_process';
-import {promisify} from 'node:util';
+import {pathToFileURL,fileURLToPath} from 'node:url';
+import {reporterSpecifier,safeFailure,syntheticReporterChild} from '../test/persistent-authorization/r31/synthetic-child.mjs';
 import {lintProjection,testProjection,testsPass,allPass} from '../test/persistent-authorization/r31/results.mjs';
 import {observe} from '../test/persistent-authorization/r29/diagnostics.mjs';
 let checks=0;const check=f=>{f();checks++;};const secret='SENSITIVE_SYNTHETIC_SENTINEL';
+let stage='projection_assertions';
+try {
 const targets=['packages/database/src/index.ts','packages/database/test/authorization-consume-mapping.test.ts'];
 const lint=targets.map(f=>({filePath:'/workspace/'+f,messages:[],errorCount:0,warningCount:0,fatalErrorCount:0}));
 check(()=>assert(lintProjection(lint,targets).passed));
@@ -43,6 +45,32 @@ for(const [args,timeout,maxBytes,category] of [
 // Actual Node reporter wiring with harmless synthetic test, not target tests.
 const dir=await mkdtemp(path.join(tmpdir(),'wepuu-r31-reporter-')),file=path.join(dir,'dummy.test.mjs');
 await writeFile(file,"import test from 'node:test'; test('dummy',()=>{});\n");
-const child=await promisify(execFile)(process.execPath,['--test','--test-reporter='+path.resolve('test/persistent-authorization/r31/reporter.mjs'),file],{timeout:10000,maxBuffer:65536});
-const r=JSON.parse(child.stdout);check(()=>assert.equal(r.passed,1));check(()=>assert.equal(r.summaryCounts.tests,1));check(()=>assert(!testsPass(r)));
+stage='reporter_paths';
+for(const filePath of ['D:\\Codex项目\\space dir\\reporter#%.mjs','C:\\tmp\\reporter.mjs']) {
+ const url=pathToFileURL(filePath,{windows:true});
+ check(()=>assert.equal(url.protocol,'file:'));check(()=>assert.equal(fileURLToPath(url,{windows:true}),filePath));
+ check(()=>assert(!url.search&&!url.hash));
+}
+const posix='/tmp/中文 space/reporter#%.mjs',posixUrl=pathToFileURL(posix,{windows:false});
+check(()=>assert.equal(fileURLToPath(posixUrl,{windows:false}),posix));check(()=>assert(!posixUrl.hash&&!posixUrl.search));
+check(()=>assert.equal(new URL(reporterSpecifier('test/persistent-authorization/r31/reporter.mjs')).protocol,'file:'));
+stage='real_reporter_load';
+const child=await syntheticReporterChild({reporter:reporterSpecifier('test/persistent-authorization/r31/reporter.mjs'),file});
+check(()=>assert(child.passed));const r=child.result;check(()=>assert.equal(r.passed,1));check(()=>assert.equal(r.summaryCounts.tests,1));check(()=>assert(!testsPass(r)));
+stage='intentional_loader_failure';
+const denied=await syntheticReporterChild({reporter:'d:/unsupported/'+secret+'.mjs',file});
+check(()=>assert(!denied.passed));check(()=>assert.equal(denied.category,'CHILD_NONZERO_EXIT'));check(()=>assert.notEqual(denied.exitCode,0));check(()=>assert(!JSON.stringify(denied).includes(secret)));
+stage='failure_projection';
+for(const [error,category]of [
+ [{code:1,stderr:secret,stdout:secret,message:secret,stack:secret},'CHILD_NONZERO_EXIT'],
+ [{code:'ENOENT',message:secret},'CHILD_SPAWN_FAILED'],
+ [{killed:true,signal:'SIGTERM',message:secret},'CHILD_TIMEOUT'],
+ [{code:'ERR_CHILD_PROCESS_STDIO_MAXBUFFER',killed:true,stdout:secret},'CHILD_OUTPUT_LIMIT'],
+ [{message:secret,stack:secret},'CHILD_NOT_CONFIRMED']]){
+ const safe=safeFailure(error);check(()=>assert.equal(safe.category,category));check(()=>assert(!JSON.stringify(safe).includes(secret)));
+}
 console.log(JSON.stringify({passed:true,checks,dockerInvoked:false,applicationTestsRun:false,syntheticChildOnly:true,fixturesRetained:true}));
+}catch{
+ console.log(JSON.stringify({passed:false,stage,checksCompleted:checks,category:'SYNTHETIC_ASSERTION_OR_EXECUTION_FAILED',rawOutputSuppressed:true,dockerInvoked:false,applicationTestsRun:false}));
+ process.exitCode=1;
+}
