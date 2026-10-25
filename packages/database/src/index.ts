@@ -1378,7 +1378,17 @@ export class PostgresOidcAdapter {
         const row = result.rows[0];
         if (row !== undefined) {
           if (this.#model === 'AuthorizationCode' || this.#model === 'RefreshToken') {
-            await client.query('SELECT oauth.artifact_classify($1,$2::text[])', [this.#model, this.#lookupKeys(id)]);
+            try {
+              await client.query('SELECT oauth.artifact_classify($1,$2::text[])', [this.#model, this.#lookupKeys(id)]);
+            } catch (error) {
+              // Only this RT classification rejection is an invalid grant.
+              // The enclosing transaction rolls back first; rollback errors win.
+              if (this.#model === 'RefreshToken' && error instanceof Error
+                && 'code' in error && error.code === 'P0001' && error.message === 'artifact_link_missing') {
+                throw new OAuthInvalidGrantError();
+              }
+              throw error;
+            }
           }
           return { ...row.payload, jti: id,
             ...(row.consumed_at === null ? {} : { consumed: Math.floor(row.consumed_at.getTime() / 1_000) }) };

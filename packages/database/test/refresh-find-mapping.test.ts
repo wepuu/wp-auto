@@ -40,9 +40,17 @@ function rolledBack(f: ReturnType<typeof fixture>) {
   assert(f.statements.every(sql => !/^(INSERT|UPDATE|DELETE)/u.test(sql)));
 }
 
-test('baseline RT link denial propagates unchanged after actual transaction rollback', async t => {
-  const original = denied(), f = fixture(t, { error: original });
-  await assert.rejects(f.run(), (e: unknown) => e === original);
+test('exact RT link denial becomes generic invalid_grant after actual transaction rollback', async t => {
+  const original = Object.assign(denied(), { detail: sentinel }), f = fixture(t, { error: original });
+  await assert.rejects(f.run(), (e: unknown) => {
+    assert(e instanceof Error); assert.notEqual(e, original);
+    const value = e as Error & { error: string; error_description: string; status: number; statusCode: number; expose: boolean };
+    assert.equal(value.name, 'InvalidGrant'); assert.equal(value.message, 'invalid_grant');
+    assert.equal(value.error, 'invalid_grant'); assert.equal(value.error_description, 'grant request is invalid');
+    assert.equal(value.status, 400); assert.equal(value.statusCode, 400); assert.equal(value.expose, true);
+    assert(!JSON.stringify(value).includes('artifact_link_missing')); assert(!JSON.stringify(value).includes(sentinel));
+    return true;
+  });
   rolledBack(f);
 });
 
