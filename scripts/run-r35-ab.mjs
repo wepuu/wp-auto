@@ -1,4 +1,4 @@
-// R35 only: fixed R34 images; matrix then transition; no build or production.
+// R36: reviewed R25 diagnostic baseline; fixed R34 images, matrix then transition.
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { readFile, readdir, lstat, mkdtemp, writeFile, mkdir, statfs } from 'node:fs/promises';
@@ -29,8 +29,8 @@ export function abNextAllowed(step, results, cleanup, prefix) {
  const rows = cleanup.filter(v => v.name === prefix + '-matrix');
  return rows.length === 1 && rows[0].stopped === true && rows[0].exitCode === 0 && rows[0].oomKilled === false;
 }
-export function ownedState(c, run, name, phase = 'r35-ab') {
- if (phase !== 'r35-ab' || c?.Name !== '/' + name || c.Config?.Labels?.['wepuu.run'] !== run || c.Config?.Labels?.['wepuu.phase'] !== phase) deny('OWNERSHIP_NOT_CONFIRMED');
+export function ownedState(c, run, name, phase = 'r36-ab') {
+ if (phase !== 'r36-ab' || c?.Name !== '/' + name || c.Config?.Labels?.['wepuu.run'] !== run || c.Config?.Labels?.['wepuu.phase'] !== phase) deny('OWNERSHIP_NOT_CONFIRMED');
  return { name, stopped: c.State?.Running === false, exitCode: c.State?.ExitCode, oomKilled: c.State?.OOMKilled === true };
 }
 export async function scenarioOnce(step, operate, ledger, options) {
@@ -52,8 +52,8 @@ async function tree(directory) { const out = []; for (const e of await readdir(d
 export async function main() {
  const abOnly=true, controlOnly=false;
  if (typeof controlOnly !== 'boolean' || typeof abOnly !== 'boolean' || (controlOnly && abOnly)) deny('SCENARIO_ORDER_DENIED');
- const selectedSteps = abOnly ? ['matrix', 'transition'] : controlOnly ? ['control'] : steps, phase = 'r35-ab';
- const root = process.cwd(), run = 'r35-' + new Date().toISOString().replace(/[^0-9]/g, ''), exec = promisify(execFile);
+ const selectedSteps = abOnly ? ['matrix', 'transition'] : controlOnly ? ['control'] : steps, phase = 'r36-ab';
+ const root = process.cwd(), run = 'r36-' + new Date().toISOString().replace(/[^0-9]/g, ''), exec = promisify(execFile);
  const env = { ...process.env }; for (const k of ['DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_TLS_VERIFY', 'BUILDX_BUILDER', 'BUILDKIT_HOST', 'GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'NODE_OPTIONS']) delete env[k];
  const invoke = (exe, args, timeout = 15000) => exec(exe, args, { cwd: root, env, windowsHide: true, shell: false, timeout, maxBuffer: 2 * 1024 ** 2 });
  const docker = 'C:\\Users\\liulo\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe';
@@ -81,13 +81,13 @@ export async function main() {
   await invoke('git', ['merge-base', '--is-ancestor', 'e165096', 'HEAD']);
   const changed = (await invoke('git', ['diff', '--name-only', REV, '--', 'apps', 'packages', 'deploy', 'package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', '.npmrc', 'tsconfig.base.json', 'tsconfig.json'])).stdout.trim().split(/\r?\n/u).filter(Boolean);
   if (changed.length) deny('APP_SOURCE_CHANGED');
-  // R24 freezes the accepted R23 fixture; matrix/transition protocol scripts are unchanged.
-  const r8Changed=(await invoke('git', ['diff', '--name-only', abOnly ? '1105aa0' : 'e165096', '--', 'test/persistent-authorization/r8'])).stdout.trim().split(/\r?\n/u).filter(Boolean);
+  // Freeze the reviewed R25 diagnostic additions, not the pre-R25 R24 inputs.
+  const r8Changed=(await invoke('git', ['diff', '--name-only', abOnly ? 'ab29f07' : 'e165096', '--', 'test/persistent-authorization/r8'])).stdout.trim().split(/\r?\n/u).filter(Boolean);
   if (r8Changed.some(f => !controlOnly || f !== 'test/persistent-authorization/r8/control-service.mjs')) deny('PROTOCOL_ASSERTION_CHANGED');
   if(abOnly) {
-   await invoke('git',['merge-base','--is-ancestor','1105aa0','HEAD']);
+   await invoke('git',['merge-base','--is-ancestor','ab29f07','HEAD']);
    for(const f of ['test/persistent-authorization/driver.mjs','test/persistent-authorization/r22/report.mjs','test/persistent-authorization/r22/export.mjs','test/persistent-authorization/r23/control-lifecycle.mjs'])
-    if((await invoke('git',['diff','--name-only','1105aa0','--',f])).stdout.trim())deny('PROTOCOL_ASSERTION_CHANGED');
+    if((await invoke('git',['diff','--name-only','ab29f07','--',f])).stdout.trim())deny('PROTOCOL_ASSERTION_CHANGED');
   }
   files = [...await tree('test/persistent-authorization'), ...fixtures, ...await tree('packages/database/migrations'),
    'scripts/run-r22-services.mjs', 'scripts/r22-services.synthetic.mjs', ...(abOnly ? ['scripts/run-r35-ab.mjs','scripts/r35-ab.synthetic.mjs'] : []), ...(controlOnly ? ['scripts/run-r23-control.mjs','scripts/r23-control.synthetic.mjs'] : []), 'scripts/local-evidence-acl.mjs', 'scripts/run-r13-unit.mjs', 'scripts/run-r21-database.mjs', 'scripts/persistent-image-contract.mjs'];
@@ -96,7 +96,7 @@ export async function main() {
   result.images = []; for (const role of Object.keys(images)) result.images.push(verifyIntegrationImage(await json(['image', 'inspect', images[role]]), images[role], role, REV));
   const pg = (await json(['image', 'inspect', PG]))[0]; if (pg.Id !== PG.slice(9) || pg.Os !== 'linux' || pg.Architecture !== 'amd64' || !pg.Config.Env.includes('PG_MAJOR=16')) deny('POSTGRES_IDENTITY_MISMATCH');
   result.postgresImage = { id: pg.Id, major: 16, platform: 'linux/amd64' };
-  result.stage = 'private_evidence'; directory = await mkdtemp(path.join(tmpdir(), 'wepuu-r35-ab-'));
+  result.stage = 'private_evidence'; directory = await mkdtemp(path.join(tmpdir(), 'wepuu-r36-ab-'));
   const who = (await invoke('whoami', [])).stdout.trim(); await invoke('icacls.exe', [directory, '/inheritance:r', '/grant:r', who + ':(OI)(CI)F', '*S-1-5-18:(OI)(CI)F', '*S-1-5-32-544:(OI)(CI)F']);
   if (!(await checkWindowsEvidenceAcl(directory, [])).verified) deny('EVIDENCE_NOT_PRIVATE'); result.evidenceAclVerified = true;
   const probes = [];

@@ -1,4 +1,4 @@
-// Pure R35 tests: unchanged matrix/transition assertions, no Docker.
+// Pure R36 tests: reviewed diagnostic baseline; unchanged matrix/transition checks.
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
@@ -57,12 +57,12 @@ for(const [step,count]of [['matrix',37],['transition',17]]){
  check(()=>assert(!JSON.stringify(project({...good,payload:'SENSITIVE_SENTINEL',stderr:'SENSITIVE_SENTINEL',environment:'SENSITIVE_SENTINEL'})).includes('SENSITIVE_SENTINEL')));
  check(()=>assert.equal(budgets[step],300000));
 }
-const metadata={Name:'/owned',Config:{Labels:{'wepuu.phase':'r35-ab','wepuu.run':'run'}},State:{Running:false,ExitCode:0,OOMKilled:false}};
-check(()=>assert(ownedState(metadata,'run','owned','r35-ab').stopped));
-check(()=>assert.throws(()=>ownedState(metadata,'other','owned','r35-ab')));
+const metadata={Name:'/owned',Config:{Labels:{'wepuu.phase':'r36-ab','wepuu.run':'run'}},State:{Running:false,ExitCode:0,OOMKilled:false}};
+check(()=>assert(ownedState(metadata,'run','owned','r36-ab').stopped));
+check(()=>assert.throws(()=>ownedState(metadata,'other','owned','r36-ab')));
 stage='fixed_candidate';
 const source=await readFile('scripts/run-r35-ab.mjs','utf8');
-for(const marker of ["const abOnly=true, controlOnly=false","phase = 'r35-ab'","run = 'r35-'",'abNextAllowed(step,result.scenarios,result.cleanup,prefix)',"abOnly ? '1105aa0'",'item.ownedContainerStoppedAt=',"'scripts/run-r35-ab.mjs','scripts/r35-ab.synthetic.mjs'",'--pull=never','--internal','--read-only','no-new-privileges','imageRebuilt: false',"if (changed.length)"])check(()=>assert(source.includes(marker)));
+for(const marker of ["const abOnly=true, controlOnly=false","phase = 'r36-ab'","run = 'r36-'",'abNextAllowed(step,result.scenarios,result.cleanup,prefix)',"abOnly ? 'ab29f07'",'item.ownedContainerStoppedAt=',"'scripts/run-r35-ab.mjs','scripts/r35-ab.synthetic.mjs'",'--pull=never','--internal','--read-only','no-new-privileges','imageRebuilt: false',"if (changed.length)"])check(()=>assert(source.includes(marker)));
 check(()=>assert(!source.includes('buildx')));check(()=>assert(!source.includes('buildCandidate')));
 check(()=>assert.equal(images.authorization,'sha256:e4212dd53144d8006a431b027da85266e9f7d0bd7a7431a68701b73367fd14bb'));
 check(()=>assert.equal(images.control,'sha256:8c5c30e26f4b005d29a2e23819613ea9ccfeca96c09ad48840d312e61aacb22d'));
@@ -82,7 +82,16 @@ const syntax=spawnSync(process.execPath,['--check','scripts/run-r35-ab.mjs'],{en
 stage='frozen_protocol';
 const git=promisify(execFile);
 for(const f of ['test/persistent-authorization/r8','test/persistent-authorization/driver.mjs','test/persistent-authorization/r22/report.mjs','test/persistent-authorization/r22/export.mjs']){
- const diff=await git('git',['diff','--name-only','1105aa0','--',f],{windowsHide:true});check(()=>assert.equal(diff.stdout.trim(),''));
+ const diff=await git('git',['diff','--name-only','ab29f07','--',f],{windowsHide:true});check(()=>assert.equal(diff.stdout.trim(),''));
 }
+const oldDiff=(await git('git',['diff','--name-only','1105aa0','ab29f07','--','test/persistent-authorization/r8','test/persistent-authorization/r22/report.mjs'],{windowsHide:true})).stdout.trim().split(/\r?\n/u).sort();
+check(()=>assert.deepEqual(oldDiff,['test/persistent-authorization/r22/report.mjs','test/persistent-authorization/r8/expiry-evidence.mjs','test/persistent-authorization/r8/integration.mjs']));
+// Pin the full expected-name definitions, not just counts, across the review.
+const reportSlice=text=>{const normalized=text.replaceAll('\r\n','\n');return normalized.slice(normalized.indexOf('export const steps'),normalized.indexOf('const driverNames'));};
+const before=(await git('git',['show','1105aa0:test/persistent-authorization/r22/report.mjs'],{windowsHide:true})).stdout;
+const reviewed=(await git('git',['show','ab29f07:test/persistent-authorization/r22/report.mjs'],{windowsHide:true})).stdout;
+check(()=>assert(reportSlice(before).length>500));check(()=>assert.equal(reportSlice(before),reportSlice(reviewed)));
+const currentReport=await readFile('test/persistent-authorization/r22/report.mjs','utf8');
+check(()=>assert.equal(reportSlice(reviewed),reportSlice(currentReport)));
 console.log(JSON.stringify({passed:true,checks,expectedMatrixChecks:37,expectedTransitionChecks:17,formalAttempts:0,productionAccessed:false,dockerInvoked:false}));
-}catch{console.log(JSON.stringify({passed:false,stage,checksCompleted:checks,category:'R35_SYNTHETIC_FAILURE',rawOutputSuppressed:true,dockerInvoked:false}));process.exitCode=1;}
+}catch{console.log(JSON.stringify({passed:false,stage,checksCompleted:checks,category:'R36_SYNTHETIC_FAILURE',rawOutputSuppressed:true,dockerInvoked:false}));process.exitCode=1;}
