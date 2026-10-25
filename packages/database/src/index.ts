@@ -1428,9 +1428,19 @@ export class PostgresOidcAdapter {
         if (typeof grant !== 'string' || this.#rateLimitCodec === undefined) return 'rate_limited';
         rateSubject = Buffer.from(this.#rateLimitCodec.digest('oauth.refresh_family', grant));
       }
-      const value = await client.query<{ value: string }>('SELECT oauth.consume_classified_artifact($1,$2::text[],$3) AS value',
-        [this.#model, keys, rateSubject]);
-      return value.rows[0]?.value ?? 'missing';
+      try {
+        const value = await client.query<{ value: string }>('SELECT oauth.consume_classified_artifact($1,$2::text[],$3) AS value',
+          [this.#model, keys, rateSubject]);
+        return value.rows[0]?.value ?? 'missing';
+      } catch (error) {
+        // Classify only this reviewed Code-consumption denial. The surrounding
+        // transaction still rolls back before rejection; rollback failures win.
+        if (this.#model === 'AuthorizationCode' && error instanceof Error
+          && 'code' in error && error.code === 'P0001' && error.message === 'persistent_grant_denied') {
+          throw new OAuthInvalidGrantError();
+        }
+        throw error;
+      }
     });
     if (consumed === 'rate_limited') throw new Error('refresh_family_rate_limited');
     if (consumed === 'replay') throw new OAuthInvalidGrantError();
