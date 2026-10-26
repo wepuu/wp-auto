@@ -6,6 +6,11 @@
     "paths": {
       "@wepuu/database": ["../src/index.ts"]
     },
+    "types": ["node", "bun", "react"],
+    "typeRoots": [
+      "../../../test/persistent-authorization/type-support/node_modules/@types",
+      "../../../node_modules/@types"
+    ],
     "lib": [
       "ES2024",
       "DOM",

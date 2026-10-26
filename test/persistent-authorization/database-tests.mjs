@@ -4,7 +4,8 @@ import { runReportedProcess } from './r10/reported-process.mjs';
 import { fixedNodeTestCommand } from './r10/fixed-node-test.mjs';
 import { createRequire } from 'node:module';
 import { randomBytes } from 'node:crypto';
-import { candidateDatabase, retainedDatabase, legacyDatabase, verifyDatabaseManifest } from './r10/profiles.mjs';
+import { basename } from 'node:path';
+import { candidateDatabase, retainedDatabase, legacyDatabase, nativeDatabase, legacyCompatibility, verifyDatabaseManifest } from './r68/profiles.mjs';
 
 const cfg = JSON.parse(await readFile('/evidence/postgres.private.json', 'utf8'));
 assert.equal(cfg.host, '127.0.0.1');
@@ -13,7 +14,7 @@ if (legacy) assert.equal(process.env.WEPUU_TEST_LEGACY_CONSOLE, 'allow-isolated'
 verifyDatabaseManifest((await readdir('/workspace/packages/database/test')).filter(f => f.endsWith('.test.ts')));
 const require = createRequire('/workspace/packages/database/dist/index.js'), { Client } = require('pg');
 const cluster = new Client(cfg); await cluster.connect();
-const profiles = legacy ? [legacyDatabase] : [candidateDatabase, retainedDatabase], reports = [];
+const profiles = legacy ? [legacyDatabase,legacyCompatibility] : [candidateDatabase,retainedDatabase,nativeDatabase], reports = [];
 let result, current, currentReport;
 try {
   const command = await fixedNodeTestCommand();
@@ -23,9 +24,9 @@ try {
     const name = 'wepuu_r10_' + (legacy ? 'legacy_' : 'candidate_') + randomBytes(6).toString('hex');
     await cluster.query(`CREATE DATABASE ${name}`);
     const url = new URL('postgresql://127.0.0.1:5432/' + name); url.username = cfg.user; url.password = cfg.password;
-    const path = 'packages/database/test/' + file;
+    const path = file.includes('/') ? file : 'packages/database/test/' + file;
     currentReport = await runReportedProcess({ executable: command.executable, args: command.args,
-      config: { files: [path], phase: legacy ? 'legacy' : 'database', expectedTopLevel: { [file]: count } },
+      config: { files: [path], phase: legacy ? 'legacy' : 'database', expectedTopLevel: { [basename(file)]: count } },
       reporter: '/harness/r10/reporter.mjs', cwd: '/workspace', timeoutMs: 150000,
       env: { PATH: process.env.PATH, TMPDIR: '/tmp', CI: 'true', WEPUU_TEST_DATABASE_URL: url.href } });
     if (!currentReport.passed) throw Error('REPORTED_DATABASE_TEST_FAILED');

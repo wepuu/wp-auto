@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  better-auth@1.7.7: 33dc3ecb325a9092ae4bab170890a3bab05e7fc9127783dbc334c766dcbe1d3c
+
 importers:
 
   .:
@@ -94,7 +97,7 @@ importers:
     dependencies:
       better-auth:
         specifier: 1.7.7
-        version: 1.7.7(pg@8.23.0)
+        version: 1.7.7(patch_hash=33dc3ecb325a9092ae4bab170890a3bab05e7fc9127783dbc334c766dcbe1d3c)(pg@8.23.0)
       kysely:
         specifier: 0.29.6
         version: 0.29.6
@@ -1915,7 +1918,7 @@ snapshots:
 
   balanced-match@4.0.4: {}
 
-  better-auth@1.7.7(pg@8.23.0):
+  better-auth@1.7.7(patch_hash=33dc3ecb325a9092ae4bab170890a3bab05e7fc9127783dbc334c766dcbe1d3c)(pg@8.23.0):
     dependencies:
       '@better-auth/core': 1.7.7(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(better-call@1.4.0(zod@4.6.5))(jose@6.2.12)(kysely@0.29.6)(nanostores@1.5.5)
       '@better-auth/drizzle-adapter': 1.7.7(@better-auth/core@1.7.7(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(better-call@1.4.0(zod@4.6.5))(jose@6.2.12)(kysely@0.29.6)(nanostores@1.5.5))(@better-auth/utils@0.4.2)

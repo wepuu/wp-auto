@@ -6,6 +6,7 @@ RUN npm install --global pnpm@11.19.0
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc tsconfig.base.json tsconfig.json ./
 COPY apps ./apps
 COPY packages ./packages
+COPY patches ./patches
 RUN pnpm install --frozen-lockfile && pnpm build
 
 FROM build AS test
@@ -14,6 +15,8 @@ COPY eslint.config.mjs ./
 COPY scripts ./scripts
 COPY test ./test
 COPY deploy ./deploy
+RUN pnpm --dir test/persistent-authorization/type-support install --frozen-lockfile --ignore-scripts --ignore-pnpmfile \
+    && node scripts/typecheck-database-tests.mjs
 CMD ["pnpm", "check"]
 
 FROM build AS production-deps

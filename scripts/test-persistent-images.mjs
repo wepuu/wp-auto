@@ -77,7 +77,7 @@ async function scenario(step) {
     '--log-driver', 'none', ...hardening, ...mounted,
     ...(['database', 'legacy', 'unit'].includes(step) ? ['--user', '1000:1000', '--env', 'WEPUU_TEST_LEGACY_CONSOLE'] : []),
     ['database', 'legacy', 'unit'].includes(step) ? testImage : step === 'control' ? controlImage : authorizationImage,
-    'node', step === 'offline' ? '/harness/offline.mjs' : step === 'unit' ? '/harness/r10/unit.mjs'
+    'node', step === 'offline' ? '/harness/offline.mjs' : step === 'unit' ? '/harness/r68/unit.mjs'
       : ['database', 'legacy'].includes(step) ? '/harness/database-tests.mjs' : '/harness/driver.mjs',
     ...(['offline', 'database', 'unit'].includes(step) ? [] : [step])],
   { timeout: step === 'offline' ? 60000 : step === 'startup' ? 120000 : 300000 }));

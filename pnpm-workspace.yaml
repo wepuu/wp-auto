@@ -8,3 +8,6 @@ allowBuilds:
 minimumReleaseAgeExclude:
   - '@types/node@24.13.5'
   - fastify@5.12.5
+
+patchedDependencies:
+  better-auth@1.7.7: patches/better-auth@1.7.7-role-types.patch

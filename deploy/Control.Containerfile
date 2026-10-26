@@ -6,6 +6,7 @@ RUN npm install --global pnpm@11.19.0
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc tsconfig.base.json tsconfig.json ./
 COPY apps ./apps
 COPY packages ./packages
+COPY patches ./patches
 RUN pnpm install --frozen-lockfile && pnpm build && pnpm install --prod --frozen-lockfile
 
 FROM node:24.22.1-alpine@sha256:1200d815de24f8dcca745fbf7651d166034a35adbcad8860a8538ffff44f1420
