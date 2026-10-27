@@ -6,10 +6,21 @@ export default tseslint.config(
   eslint.configs.recommended,
   ...tseslint.configs.strictTypeChecked,
   {
-    files: ['apps/**/*.ts', 'packages/**/*.ts', 'tests/**/*.ts'],
+    files: ['apps/**/*.{ts,tsx,mts,cts,mjs,cjs}', 'packages/**/*.{ts,tsx,mts,cts,mjs,cjs}', 'tests/**/*.{ts,tsx,mts,cts,mjs,cjs}'],
     languageOptions: {
       parserOptions: {
-        projectService: true,
+        projectService: {
+          // These five JavaScript evidence helpers are outside the TS project;
+          // their five .d.mts contracts are already imported by r43-helper-types.ts.
+          allowDefaultProject: [
+            'packages/database/test/otp-migration-evidence.mjs',
+            'packages/database/test/r17-migration-evidence.mjs',
+            'packages/database/test/r19-target-ledger.mjs',
+            'packages/database/test/reconsent-diagnostic.mjs',
+            'packages/database/test/reconsent-native-fixture.mjs'
+          ],
+          defaultProject: 'packages/database/test/tsconfig.json'
+        },
         tsconfigRootDir: import.meta.dirname
       }
     },
@@ -19,6 +30,26 @@ export default tseslint.config(
       '@typescript-eslint/no-floating-promises': 'error',
       '@typescript-eslint/no-misused-promises': 'error'
     }
+  },
+  {
+    files: ['packages/database/test/reconsent-native-fixture.mjs'],
+    languageOptions: { globals: { Buffer: 'readonly' } }
+  },
+  {
+    files: ['packages/database/test/otp-migration-evidence.mjs'],
+    languageOptions: { globals: { process: 'readonly' } }
+  },
+  {
+    files: ['packages/database/test/r17-migration-evidence.mjs'],
+    languageOptions: { globals: { process: 'readonly' } }
+  },
+  {
+    files: ['packages/database/test/r19-target-ledger.mjs'],
+    languageOptions: { globals: { process: 'readonly', Buffer: 'readonly' } }
+  },
+  {
+    files: ['packages/database/test/reconsent-diagnostic.mjs'],
+    languageOptions: { globals: { process: 'readonly', Buffer: 'readonly', structuredClone: 'readonly' } }
   },
   {
     files: ['**/*.test.ts'],
