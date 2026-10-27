@@ -11,8 +11,7 @@ void recordOtpLedger(pool, 'after');
 void recordTargetLedger(pool, 'before');
 const binding = {grantId:'g',accountId:'a',clientId:'c',resource:'https://site.example.test/mcp',sessionUid:'s'};
 const payload = nativeFixturePayload(binding);
-const kind: 'RefreshToken' = payload.kind;
-void kind;
+export const kind: 'RefreshToken' = payload.kind;
 // @ts-expect-error Unsupported profile must not become an unrestricted string.
 void expectedLedger('production');
 // @ts-expect-error Ledger stage is closed.
@@ -25,7 +24,6 @@ const diagnostic = createDiagnostic({run:'r18-43',save:() => Promise.resolve()})
 diagnostic.checkpoint('SETUP');
 // @ts-expect-error Diagnostic stages are closed.
 diagnostic.checkpoint('SECRET_STAGE');
-const category = safeError(new Error()).category;
+export const category = safeError(new Error()).category;
 // @ts-expect-error Safe diagnostics do not expose arbitrary error messages.
-const raw = safeError(new Error()).message;
-void category; void raw;
+export type RejectedDiagnosticMessage = ReturnType<typeof safeError>['message'];
