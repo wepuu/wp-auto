@@ -29,7 +29,7 @@ const accountC = 'account_CCCC';
 
 test('PostgreSQL RLS denies cross-tenant and missing-membership access', { skip: connectionString === undefined }, async (t) => {
   assert.ok(connectionString);
-  const database = new Database({ connectionString, applicationName: 'wepuu-tenant-test' });
+  const database = new Database({ connectionString, applicationName: 'wepuu-tenant-test', migrationProfile: 'authorization' });
   t.after(() => database.close());
   await database.migrate();
   await database.migrate();
@@ -191,7 +191,7 @@ test('PostgreSQL RLS denies cross-tenant and missing-membership access', { skip:
   const artifactCodec = new SecretArtifactCodec([Buffer.alloc(32, 31)]);
   const adapter = new PostgresOidcAdapter('Grant', database, artifactCodec);
   await adapter.upsert('persistent_grant_0001', { tenantId: tenantA, grantId: 'grant_00000001' }, 300);
-  const secondConnection = new Database({ connectionString, applicationName: 'wepuu-restart-test' });
+  const secondConnection = new Database({ connectionString, applicationName: 'wepuu-restart-test', migrationProfile: 'authorization' });
   try {
     const restored = await new PostgresOidcAdapter('Grant', secondConnection, artifactCodec).find('persistent_grant_0001');
     assert.equal(restored?.['grantId'], 'grant_00000001');
@@ -294,7 +294,7 @@ test('refresh CAS has one winner and replay revokes the exact grant with one out
   skip: connectionString === undefined
 }, async (t) => {
   assert.ok(connectionString);
-  const database = new Database({ connectionString, applicationName: 'wepuu-refresh-replay-test' });
+  const database = new Database({ connectionString, applicationName: 'wepuu-refresh-replay-test', migrationProfile: 'authorization' });
   t.after(() => database.close());
   await database.migrate();
   const admin = database.poolForMigrationsAndTests;
@@ -359,10 +359,18 @@ test('refresh CAS has one winner and replay revokes the exact grant with one out
     new RateLimitSubjectCodec(Buffer.alloc(32, 5))
   );
   const token = 'refresh-token-value-00000000000000000000000000000001';
-  await adapter.upsert(token, {
-    kind: 'RefreshToken', grantId: 'grant_REFRESH01', accountId: 'account_REFRESH',
-    clientId: 'client_REFRESH01', rotations: 0
-  }, 3600);
+  // 017 forbids parentless Refresh creation. Build a consumed native-offline
+  // Code parent; keep the original concurrent-consume/replay assertions below.
+  await admin.query("INSERT INTO platform.tenant_memberships(tenant_id,account_id,role,status) VALUES($1,'account_REFRESH','owner','active') ON CONFLICT DO NOTHING", [tenant]);
+  await admin.query("INSERT INTO oauth.clients(client_id,registration_mode,redirect_uris,metadata_digest,status) VALUES('client_REFRESH01','pre-registered','[\"http://127.0.0.1/callback\"]','synthetic','active') ON CONFLICT DO NOTHING");
+  const codec = new SecretArtifactCodec([Buffer.alloc(32, 4)]);
+  const parent = new PostgresOidcAdapter('AuthorizationCode', database, codec);
+  const payload = { kind: 'AuthorizationCode', grantId: 'grant_REFRESH01', accountId: 'account_REFRESH',
+    clientId: 'client_REFRESH01', resource, scope: 'mcp:read offline_access', sessionUid: 'session_REFRESH01' };
+  await parent.upsert('code_REFRESH01', payload, 90);
+  await parent.consume('code_REFRESH01');
+  await adapter.upsertNativeRefresh(token, { ...payload, kind: 'RefreshToken', rotations: 0 }, 3600,
+    { model: 'AuthorizationCode', keys: codec.candidates('code_REFRESH01').map(key => `${key.version}:${Buffer.from(key.digest).toString('hex')}`) });
   const attempts = await Promise.allSettled([adapter.consume(token), adapter.consume(token)]);
   assert.equal(attempts.filter((attempt) => attempt.status === 'fulfilled').length, 1);
   assert.equal(attempts.filter((attempt) => attempt.status === 'rejected').length, 1);

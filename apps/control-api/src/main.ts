@@ -31,6 +31,7 @@ const databaseUrl = process.env['WEPUU_DATABASE_URL'];
 if (databaseUrl === undefined || databaseUrl.length === 0) throw new Error('WEPUU_DATABASE_URL is required');
 
 const database = new Database({ connectionString: databaseUrl, applicationName: 'wepuu-control-api' });
+await database.assertCandidateMigrationIntegrity();
 const legacyOrigin = process.env['WEPUU_CONTROL_PUBLIC_ORIGIN'];
 const authOrigin = process.env['WEPUU_AUTH_PUBLIC_ORIGIN'] ?? legacyOrigin;
 const appOrigin = process.env['WEPUU_APP_PUBLIC_ORIGIN'] ?? legacyOrigin;

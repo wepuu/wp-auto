@@ -1,1 +1,9 @@
 deploy/wpauto-vps/*.sh text eol=lf
+# Byte-pinned patch inputs need LF; blank context lines require a leading space.
+patches/better-auth@1.7.7-role-types.patch text eol=lf
+test/persistent-authorization/type-support/patches/bun-types@1.3.14-node24-types.patch text eol=lf whitespace=-blank-at-eol
+# Preserve Markdown hard breaks in the byte-retained historical records.
+docs/P3E2S_R4B_R6[567]_*.md whitespace=-blank-at-eol
+# R101 provenance inputs are hashed as original bytes across checkouts.
+docs/P3E2S_R4B_R101_POSTGRES_PIN_ACCEPTANCE_2026-10-29.md -text
+test/persistent-authorization/r101/result.json -text

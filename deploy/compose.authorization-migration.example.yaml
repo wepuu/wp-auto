@@ -1,0 +1,12 @@
+# Explicit operator invocation only; neither service depends on or starts this job.
+services:
+  migrate-authorization:
+    profiles: [migration]
+    image: ${WEPUU_AUTHORIZATION_IMAGE:?Set the exact candidate image digest}
+    command: [node, packages/database/dist/cli.js, migrate-authorization]
+    restart: "no"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      WEPUU_DATABASE_URL: ${WEPUU_MIGRATION_DATABASE_URL:?Separate migration identity required}

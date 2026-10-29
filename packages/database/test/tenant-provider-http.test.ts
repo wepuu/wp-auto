@@ -73,7 +73,7 @@ async function freePort(): Promise<number> {
 test('P3-D real Control/Authorization HTTP and Provider reject cross-account Tenant Consent, Code and Session substitution', {
   skip: p3dDatabaseUrl === undefined, timeout: 120_000
 }, async (t) => {
-  const { database, databaseUrl, pool, directory, cleanup } = await p3dFixture(t);
+  const { database, databaseUrl, pool, directory, cleanup } = await p3dFixture(t, 'authorization');
   const rsa = generateKeyPairSync('rsa', { modulusLength: 3072 });
   const passphrase = randomBytes(32).toString('base64url');
   const privateKeyFile = join(directory, 'key.pem');
@@ -134,7 +134,8 @@ test('P3-D real Control/Authorization HTTP and Provider reject cross-account Ten
   }
   const port = await freePort();
   const running = await startAuthorizationService({ issuer, databaseUrl, host: '127.0.0.1', port,
-    cookieKeys: [randomBytes(32).toString('base64url'), randomBytes(32).toString('base64url')] }, environment);
+    cookieKeys: [randomBytes(32).toString('base64url'), randomBytes(32).toString('base64url')],
+    persistent: { mode: 'guard-only', clientId, resource: resources[0] ?? '' } }, environment);
   cleanup(() => running.close());
   const browsers = logins.map((login) => { const jar = new Browser(`http://127.0.0.1:${port}`); jar.accept(login); return jar; });
   const begun = new Map<string, { challenge: string }>();
@@ -182,11 +183,13 @@ test('P3-D real Control/Authorization HTTP and Provider reject cross-account Ten
     assert.ok(challenge);
     const pair = siteKeys[i];
     assert.ok(pair);
+    const signingKid = jwks[i]?.kid;
+    assert.ok(signingKid);
     const proof = await new CompactSign(Buffer.from(JSON.stringify({ kind: 'consent', protocol_version: '1',
       iss: new URL(resources[i] ?? '').hostname, platform_issuer: issuer, tenant_id: accounts[i]?.homeTenantId,
       site_id: sites[i], grant_id: grants[i], subject_id: accounts[i]?.accountId, client_id: clientId,
       aud: resources[i], resource: resources[i], scope: ['mcp:read'], decision: 'approved', challenge, iat: now, exp: now + 60 })))
-      .setProtectedHeader({ alg: 'EdDSA', typ: 'wepuu-site-proof+jwt', kid: jwks[i]?.kid }).sign(pair.privateKey);
+      .setProtectedHeader({ alg: 'EdDSA', typ: 'wepuu-site-proof+jwt', kid: signingKid }).sign(pair.privateKey);
     return { proof, challenge, decision: 'approved' };
   };
   const proofs = await Promise.all([completeProof(0), completeProof(1)]);
@@ -211,7 +214,7 @@ test('P3-D real Control/Authorization HTTP and Provider reject cross-account Ten
       code_challenge_method: 'S256', code_challenge: createHash('sha256').update(verifier).digest('base64url') });
     let path = `/auth?${params}`;
     for (let i = 0; i < 12; i++) {
-      const response = await jar.request(path);
+      const response: Response = await jar.request(path);
       assert.equal(response.status < 500, true, 'unexpected_server_failure');
       if (response.status === 200) return { path, verifier, state, bootstrap: undefined };
       const location = response.headers.get('location'); assert.ok(location, 'authorization_redirect');
@@ -258,7 +261,9 @@ test('P3-D real Control/Authorization HTTP and Provider reject cross-account Ten
       ? body.error : 'unknown';
     assert.equal(response.status, 200, `own_code_exchange_${category}`);
     assert.equal(body.refresh_token, undefined);
-    const verified = await jwtVerify(body.access_token, await importJWK(key.publicJwk, 'RS256'), { issuer, audience: resources[i], algorithms: ['RS256'] });
+    const audience = resources[i];
+    assert.ok(audience);
+    const verified = await jwtVerify(body.access_token, await importJWK(key.publicJwk, 'RS256'), { issuer, audience, algorithms: ['RS256'] });
     const p = verified.payload;
     assert.equal(verified.protectedHeader.typ, 'at+jwt');
     assert.equal(verified.protectedHeader.kid === key.kid, true);

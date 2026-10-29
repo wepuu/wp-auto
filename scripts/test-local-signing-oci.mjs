@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { generateKeyPairSync, randomBytes, randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import process from 'node:process';
 import pg from 'pg';
@@ -123,9 +123,16 @@ try {
   }
 
   const databaseEnvironment = { WEPUU_DATABASE_URL: containerDatabaseUrl.toString() };
-  dockerRun(authorizationImage, ['packages/database/dist/cli.js', 'migrate'], {
+  dockerRun(authorizationImage, ['packages/database/dist/cli.js', 'migrate-authorization'], {
     hostGateway: true, entrypoint: 'node', environment: databaseEnvironment
   });
+  const targetClient = `client_oci_${suffix}`;
+  const targetResource = 'https://site.oci.example.test/wp-json/wp-auto/mcp';
+  const tenantId = randomUUID();
+  await queryCandidate("INSERT INTO platform.tenants(id,status) VALUES($1,'active')", [tenantId]);
+  await queryCandidate("INSERT INTO oauth.clients(client_id,registration_mode,redirect_uris,metadata_digest,status) VALUES($1,'pre-registered','[\"http://127.0.0.1:49152/callback\"]','synthetic','active')", [targetClient]);
+  const siteJwk = generateKeyPairSync('ed25519').publicKey.export({ format: 'jwk' });
+  await queryCandidate("INSERT INTO platform.sites(tenant_id,id,resource_uri,display_hostname,status,protocol_version,site_public_jwk,site_key_thumbprint) VALUES($1,$2,$3,'site.oci.example.test','active','1',$4::jsonb,$5)", [tenantId, `site_oci_${suffix}`, targetResource, JSON.stringify(siteJwk), 'f'.repeat(64)]);
   dockerRun(authorizationImage, ['packages/database/dist/signing-keys-cli.js', 'publish', '--slot', slot], {
     hostGateway: true, volume: true, entrypoint: 'node',
     environment: { ...databaseEnvironment, WEPUU_SIGNING_KEYRING_FILE: keyringPath }
@@ -148,6 +155,7 @@ try {
     WEPUU_TRUSTED_PROXY_CIDRS_JSON: JSON.stringify(['172.16.0.0/12'])
   };
   const publicEnvironment = {
+    WEPUU_PERSISTENT_CLIENT_ID: targetClient, WEPUU_PERSISTENT_RESOURCE: targetResource,
     WEPUU_ISSUER: 'https://auth.wepuu.com', WEPUU_AUTH_HOST: '0.0.0.0', WEPUU_AUTH_PORT: '3001',
     WEPUU_DEPLOYMENT_MODE: 'production', WEPUU_SIGNING_KEYRING_FILE: keyringPath, WEPUU_SIGNING_KEY_SLOT: slot,
     WEPUU_CONTROL_PUBLIC_ORIGIN: 'https://auth.wepuu.com', WEPUU_PRODUCT_NAME: 'WePuu',

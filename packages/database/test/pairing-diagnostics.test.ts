@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { Client } from 'pg';
+import { recordFixtureLedger } from './r17-migration-evidence.mjs';
 import {
   PairingDiagnosticError,
   PairingService,
@@ -34,11 +35,13 @@ test('pairing persistence diagnostics fail before HTTPS and migrations 001-013 p
   targetUrl.pathname = `/${databaseName}`;
   const database = new Database({ connectionString: targetUrl.href, applicationName: 'wepuu-pairing-diagnostics', migrationsDirectory: migrations });
   t.after(async () => {
+    await recordFixtureLedger(database.poolForMigrationsAndTests, 'after', 'historical13');
     await database.close();
     await admin.query(`DROP DATABASE ${databaseName} WITH (FORCE)`);
     await admin.end();
   });
   await database.migrate();
+  await recordFixtureLedger(database.poolForMigrationsAndTests, 'before', 'historical13');
   const migrated = await database.poolForMigrationsAndTests.query<{ name: string }>(
     'SELECT name FROM public.wepuu_schema_migrations ORDER BY name'
   );

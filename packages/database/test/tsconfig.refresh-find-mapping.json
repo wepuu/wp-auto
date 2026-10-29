@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.json",
+  "files": ["authorization-consume-mapping.test.ts", "refresh-find-mapping.test.ts"],
+  "include": []
+}

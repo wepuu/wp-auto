@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 2,
+  "repository": "docker.io/library/postgres",
+  "repositoryDigest": "sha256:ab8380566c3ea09690a9ecaa85a59d82bfc6eb86744151a2a54335866c83a3e9",
+  "expectedConfigDigest": "sha256:aab18c983342019900e3a4a617c63432fd5e34449323ab04187a8e8c1ee3dbad",
+  "manifestMediaType": "application/vnd.oci.image.manifest.v1+json",
+  "bindingEvidence": [
+    {"path":"docs/P3E2S_R4B_R101_POSTGRES_PIN_ACCEPTANCE_2026-10-29.md","sha256":"98d622eddacd1ab52d6e1a1e5cac2613b2a53009dd9e2b51826fa97d1c22f89c"},
+    {"path":"test/persistent-authorization/r101/result.json","sha256":"38a4123477cd850cee5e81029af3a8e9d6165977edcdb20c0bc6374b41d0773c"}
+  ],
+  "platform": "linux/amd64",
+  "major": "16",
+  "version": "16.10",
+  "dataDirectory": "/var/lib/postgresql/data",
+  "provenanceConfirmed": true,
+  "provenanceStatus": "VERIFIED_REPOSITORY_AND_IMAGE_ID",
+  "sources": [
+    "docs/P3E2S_R4B_R101_POSTGRES_PIN_ACCEPTANCE_2026-10-29.md",
+    "test/persistent-authorization/r101/result.json"
+  ],
+  "observedNotAccepted": {
+    "runId": 40532423245,
+    "serviceTag": "postgres:16.10-alpine",
+    "pullDigest": "sha256:029660641a0cfc575b14f336ba448fb8a75fd595d42e1fa316b9fb4378742297"
+  }
+}

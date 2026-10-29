@@ -10,7 +10,7 @@ test('login transactions reject tamper, expiry and replay while supporting indep
   skip: connectionString === undefined
 }, async (t) => {
   assert.ok(connectionString);
-  const database = new Database({ connectionString, applicationName: 'wepuu-account-login-transaction-test' });
+  const database = new Database({ connectionString, applicationName: 'wepuu-account-login-transaction-test', migrationProfile: 'authorization' });
   t.after(() => database.close());
   await database.migrate();
   const admin = database.poolForMigrationsAndTests;
@@ -76,7 +76,7 @@ test('failed account bootstrap leaves the login transaction retryable', {
   skip: connectionString === undefined
 }, async (t) => {
   assert.ok(connectionString);
-  const database = new Database({ connectionString, applicationName: 'wepuu-account-login-recovery-test' });
+  const database = new Database({ connectionString, applicationName: 'wepuu-account-login-recovery-test', migrationProfile: 'authorization' });
   t.after(() => database.close());
   await database.migrate();
   const admin = database.poolForMigrationsAndTests;

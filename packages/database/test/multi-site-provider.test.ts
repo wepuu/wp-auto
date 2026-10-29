@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { Client } from 'pg';
+import { recordFixtureLedger } from './r17-migration-evidence.mjs';
 import { CompactSign, exportJWK, generateKeyPair, importJWK, jwtVerify } from 'jose';
 import { createAccountAuth, ACCOUNT_AUTH_DELIVERY_ID_HEADER, type AccountAuth } from '../../account-auth/src/index.js';
 import { GrantService } from '@wepuu/pairing';
@@ -77,8 +78,8 @@ test('real Authorization HTTP binds same-client sequential and interleaved resou
   const migrations = join(directory, 'migrations');
   const source = join(dirname(fileURLToPath(import.meta.url)), '..', 'migrations');
   await cp(source, migrations, { recursive: true, filter: (path) =>
-    path === source || /^0(?:0[1-9]|1[0-3])_/u.test(path.slice(path.lastIndexOf('/') + 1).split('\\').at(-1) ?? '') });
-  assert.equal((await readdir(migrations)).length, 13);
+    path === source || /^(?:00[1-9]|01[0-3]|015|016|017)_/u.test(path.slice(path.lastIndexOf('/') + 1).split('\\').at(-1) ?? '') });
+  assert.equal((await readdir(migrations)).length, 16);
   const admin = new Client({ connectionString: databaseUrl });
   await admin.connect();
   const name = `wepuu_multisite_${randomBytes(6).toString('hex')}`;
@@ -91,6 +92,7 @@ test('real Authorization HTTP binds same-client sequential and interleaved resou
   t.after(async () => {
     await running?.close();
     await accountAuth?.close();
+    await recordFixtureLedger(database.poolForMigrationsAndTests, 'after', 'candidate');
     await database.close();
     // pg Pool.end can finish before PostgreSQL observes every socket close.
     // Never terminate live clients to conceal a test/teardown failure.
@@ -107,6 +109,7 @@ test('real Authorization HTTP binds same-client sequential and interleaved resou
     await rm(directory, { recursive: true, force: true });
   });
   await database.migrate();
+  await recordFixtureLedger(database.poolForMigrationsAndTests, 'before', 'candidate');
   const pool = database.poolForMigrationsAndTests;
   const rsa = generateKeyPairSync('rsa', { modulusLength: 3072 });
   const passphrase = randomBytes(32).toString('base64url');
@@ -163,7 +166,8 @@ test('real Authorization HTTP binds same-client sequential and interleaved resou
   }
   const port = await freePort();
   const service = await startAuthorizationService({ issuer, databaseUrl: target.href, host: '127.0.0.1', port,
-    cookieKeys: [randomBytes(32).toString('base64url'), randomBytes(32).toString('base64url')] }, environment);
+    cookieKeys: [randomBytes(32).toString('base64url'), randomBytes(32).toString('base64url')],
+    persistent: { mode: 'guard-only', clientId, resource: resources[0] } }, environment);
   running = service;
   const browser = new Browser(`http://127.0.0.1:${port}`);
   browser.accept(login);
@@ -243,8 +247,10 @@ test('real Authorization HTTP binds same-client sequential and interleaved resou
     const category = ['invalid_grant', 'invalid_target', 'access_denied', 'invalid_request'].includes(body.error ?? '')
       ? body.error : 'unknown';
     assert.equal(response.status, 200, `exchange_${category}`);
+    const audience = resources[index];
+    assert.ok(audience);
     const verified = await jwtVerify(body.access_token, await importJWK(key.publicJwk, 'RS256'), {
-      issuer, audience: resources[index], algorithms: ['RS256'] });
+      issuer, audience, algorithms: ['RS256'] });
     assert.equal(verified.protectedHeader.typ, 'at+jwt');
     assert.equal(verified.protectedHeader.kid === key.kid, true, 'signing_key');
     assert.equal(verified.payload['grant_id'] === grants[index], true, 'grant_binding');

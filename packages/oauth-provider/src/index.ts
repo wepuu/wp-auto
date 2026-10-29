@@ -1,6 +1,9 @@
 import { ExternalSigningKey, Provider, errors, type ClientMetadata, type Configuration, type Grant } from 'oidc-provider';
 import { z } from 'zod';
 import type { KeyCustody, SigningKeyDescriptor } from '@wepuu/key-custody';
+import type { PersistentReadOnlyRuntime } from './persistent-readonly.js';
+export { PersistentAuthorizationPolicy } from './persistent-policy.js';
+export { PersistentReadOnlyRuntime } from './persistent-readonly.js';
 
 export const OAuthScopeSchema = z.enum([
   'openid',
@@ -148,6 +151,8 @@ export function createResourceGrantLoader(resolver: ResourceGrantResolver, accou
 
 export interface OidcAdapterShape {
   upsert(id: string, payload: Record<string, unknown>, expiresIn?: number): Promise<void>;
+  upsertNativeRefresh?(id: string, payload: Record<string, unknown>, expiresIn: number | undefined,
+    parent: Readonly<{ model: 'AuthorizationCode' | 'RefreshToken'; keys: readonly string[] }>): Promise<void>;
   find(id: string): Promise<Record<string, unknown> | undefined>;
   destroy(id: string): Promise<void>;
   consume(id: string): Promise<void>;
@@ -226,6 +231,8 @@ export interface AuthorizationProviderOptions {
   readonly grantClaimsResolver: GrantClaimsResolver;
   readonly accountRegistry: AccountRegistry;
   readonly resourceGrantResolver?: ResourceGrantResolver;
+  /** Isolated opt-in only; no service caller supplies this local mechanism. */
+  readonly persistentReadOnly?: PersistentReadOnlyRuntime;
   readonly clients?: readonly PublicClientDefinition[];
 }
 
@@ -300,6 +307,7 @@ class PublicExternalSigningKey extends ExternalSigningKey {
 }
 
 export async function createAuthorizationProvider(options: AuthorizationProviderOptions): Promise<Provider> {
+  await options.persistentReadOnly?.assertCompatible();
   const issuer = assertHttpsUrl(options.issuer, 'issuer');
   if (options.cookieKeys.length < 2 || options.cookieKeys.some((key) => key.length < 32)) {
     throw new Error('cookie_key_rotation_set_required');
@@ -319,7 +327,7 @@ export async function createAuthorizationProvider(options: AuthorizationProvider
   }));
 
   return new Provider(issuer, {
-    adapter: options.adapter,
+    adapter: options.persistentReadOnly?.adapter(options.adapter) ?? options.adapter,
     // oidc-provider selects the first compatible key for signing. The sole
     // active custody is first; published/retiring keys are verification-only.
     jwks: { keys: [externalKey, ...verificationKeys] },
@@ -330,6 +338,10 @@ export async function createAuthorizationProvider(options: AuthorizationProvider
     scopes: oidcScopes,
     pkce: { required: () => true },
     rotateRefreshToken: true,
+    ...(options.persistentReadOnly === undefined ? {} : {
+      expiresWithSession: options.persistentReadOnly.expiresWithSession,
+      issueRefreshToken: options.persistentReadOnly.issueRefreshToken
+    }),
     clockTolerance: 60,
     features: {
       externalSigningSupport: { enabled: true, ack: 'experimental-01' },
@@ -380,8 +392,9 @@ export async function createAuthorizationProvider(options: AuthorizationProvider
         grant_id: claims.grantId
       };
     },
-    async findAccount(_context, accountId) {
+    async findAccount(context, accountId, source) {
       if (!await options.accountRegistry.isActive(accountId)) return undefined;
+      await options.persistentReadOnly?.verifySource(context, accountId, source);
       return { accountId, claims: () => Promise.resolve({ sub: accountId }) };
     },
     interactions: {

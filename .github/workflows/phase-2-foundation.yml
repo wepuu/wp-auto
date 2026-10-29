@@ -29,17 +29,32 @@ jobs:
           --health-retries 20
     env:
       CI: "true"
+      WEPUU_CANDIDATE_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
       WEPUU_TEST_DATABASE_URL: postgresql://postgres:conformance@127.0.0.1:5432/wepuu_test
       CONFORMANCE_DATABASE_URL: postgresql://postgres:conformance@127.0.0.1:5432/wepuu_test
+      # Operator-approved 014 only in disposable legacy regression databases; candidate profile excludes it.
+      WEPUU_TEST_LEGACY_CONSOLE: 'allow-isolated'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ env.WEPUU_CANDIDATE_REVISION }}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 26.7.0
+          node-version: 24.22.1
+      - name: Current candidate wiring contracts
+        run: node test/persistent-authorization/r68/contracts.synthetic.mjs
+      - name: PostgreSQL identity compatibility contracts
+        run: node test/persistent-authorization/r107/synthetic.mjs
+      # Fixed manifest/config provenance is verified before explicit preparation.
+      - name: Prepare verified PostgreSQL image for isolated matrix
+        run: node scripts/prepare-persistent-postgres.mjs
       - name: Enable pinned pnpm
         run: npm install --global pnpm@11.19.0
       - name: Install foundation dependencies
         run: pnpm install --frozen-lockfile
+      - name: Install isolated database type support
+        working-directory: test/persistent-authorization/type-support
+        run: pnpm install --frozen-lockfile --ignore-scripts --ignore-pnpmfile
       - name: Validate wpauto VPS deployment manifest
         run: >-
           docker compose
@@ -47,21 +62,37 @@ jobs:
           --file deploy/wpauto-vps/compose.yaml
           config --quiet
       - name: Strict checks
-        run: pnpm check
-      - name: PostgreSQL migration and isolation tests
-        run: pnpm test:database
+        run: env -u WEPUU_TEST_DATABASE_URL CI=false pnpm check
+      - name: Complete strict database test typecheck
+        run: node scripts/typecheck-database-tests.mjs
+      - name: Frozen inputs remain unchanged
+        run: git diff --exit-code -- pnpm-lock.yaml pnpm-workspace.yaml test/persistent-authorization/type-support
       - name: Build portable non-root OCI images
         run: |
-          docker build --file deploy/Control.Containerfile --tag wepuu-control:candidate .
-          docker build --file deploy/Authorization.Containerfile --tag wepuu-authorization:candidate .
+          docker build --file deploy/Control.Containerfile --label org.opencontainers.image.revision="$WEPUU_CANDIDATE_REVISION" --tag wepuu-control:candidate .
+          docker build --file deploy/Authorization.Containerfile --label org.opencontainers.image.revision="$WEPUU_CANDIDATE_REVISION" --tag wepuu-authorization:candidate .
+          docker build --file deploy/Authorization.Containerfile --target test --label org.opencontainers.image.revision="$WEPUU_CANDIDATE_REVISION" --tag wepuu-test:candidate .
           test "$(docker image inspect wepuu-control:candidate --format '{{.Config.User}}')" = "node"
           test "$(docker image inspect wepuu-authorization:candidate --format '{{.Config.User}}')" = "node"
+      - name: Persistent Authorization isolated image matrix
+        env:
+          WEPUU_TEST_DOCKER_CONTEXT: default
+          WEPUU_AUTHORIZATION_REVISION: ${{ env.WEPUU_CANDIDATE_REVISION }}
+          WEPUU_CONTROL_REVISION: ${{ env.WEPUU_CANDIDATE_REVISION }}
+          WEPUU_TEST_REVISION: ${{ env.WEPUU_CANDIDATE_REVISION }}
+          WEPUU_TEST_SOURCE_REVISION: ${{ env.WEPUU_CANDIDATE_REVISION }}
+        run: |
+          export WEPUU_AUTHORIZATION_IMAGE="$(docker image inspect wepuu-authorization:candidate --format '{{.Id}}')"
+          export WEPUU_TEST_IMAGE="$(docker image inspect wepuu-test:candidate --format '{{.Id}}')"
+          export WEPUU_CONTROL_IMAGE="$(docker image inspect wepuu-control:candidate --format '{{.Id}}')"
+          pnpm test:persistent:images
       - name: Local signing production-mode OCI gate
         env:
           WEPUU_OCI_POSTGRES_ADMIN_URL: postgresql://postgres:conformance@127.0.0.1:5432/wepuu_test
           WEPUU_OCI_CONTAINER_DATABASE_URL: postgresql://postgres:conformance@host.docker.internal:5432/wepuu_test
         run: pnpm test:local-signing:oci
       - name: PostgreSQL backup, restore, and tombstone replay
+        if: env.WEPUU_TEST_LEGACY_CONSOLE == 'allow-isolated'
         run: >-
           WEPUU_POSTGRES_CONTAINER=$(docker ps --filter "ancestor=postgres:16.10-alpine" --format "{{.ID}}" | head -n 1)
           pnpm test:backup

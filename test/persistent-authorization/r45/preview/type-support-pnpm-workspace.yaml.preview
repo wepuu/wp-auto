@@ -1,0 +1,6 @@
+packages: []
+overrides:
+  '@types/node': '24.13.5'
+strictPeerDependencies: true
+minimumReleaseAgeExclude:
+  - '@types/node@24.13.5'
