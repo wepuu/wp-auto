@@ -1,0 +1,85 @@
+{
+  "phase": "R101",
+  "startedUtc": "2026-10-29T12:38:26.647Z",
+  "requestCount": 6,
+  "http": [
+    {
+      "role": "challenge",
+      "status": 401,
+      "bytes": 87
+    },
+    {
+      "role": "token",
+      "status": 200,
+      "bytes": 5495
+    },
+    {
+      "role": "historical_manifest",
+      "status": 200,
+      "bytes": 10301
+    },
+    {
+      "role": "platform_manifest",
+      "status": 200,
+      "bytes": 3054
+    },
+    {
+      "role": "config",
+      "status": 307,
+      "bytes": 0
+    },
+    {
+      "role": "cdn_config",
+      "status": 200,
+      "bytes": 8823
+    }
+  ],
+  "passed": true,
+  "manifestConfigChainPass": true,
+  "postgresMetadataPass": true,
+  "referenceDigest": "sha256:029660641a0cfc575b14f336ba448fb8a75fd595d42e1fa316b9fb4378742297",
+  "referenceKind": "index",
+  "platformManifestDigest": "sha256:ab8380566c3ea09690a9ecaa85a59d82bfc6eb86744151a2a54335866c83a3e9",
+  "configDigest": "sha256:aab18c983342019900e3a4a617c63432fd5e34449323ab04187a8e8c1ee3dbad",
+  "redirectPolicyPass": true,
+  "cdnHost": "production.cloudfront.docker.com",
+  "metadataDerivedImageId": "sha256:aab18c983342019900e3a4a617c63432fd5e34449323ab04187a8e8c1ee3dbad",
+  "versionDiagnostics": {
+    "PG_MAJOR": {
+      "count": 1,
+      "matches": true
+    },
+    "PG_VERSION": {
+      "count": 1,
+      "matches": true,
+      "value": "16.10"
+    },
+    "PGDATA": {
+      "count": 1,
+      "matches": true
+    }
+  },
+  "configurationChecks": {
+    "platform": true,
+    "major": true,
+    "version": true,
+    "dataDirectory": true
+  },
+  "conclusion": "PASS",
+  "suggestedPin": {
+    "repository": "docker.io/library/postgres",
+    "repositoryDigest": "sha256:ab8380566c3ea09690a9ecaa85a59d82bfc6eb86744151a2a54335866c83a3e9",
+    "expectedImageId": "sha256:aab18c983342019900e3a4a617c63432fd5e34449323ab04187a8e8c1ee3dbad",
+    "platform": "linux/amd64",
+    "major": "16",
+    "version": "16.10",
+    "dataDirectory": "/var/lib/postgresql/data"
+  },
+  "finishedUtc": "2026-10-29T12:38:30.822Z",
+  "elapsedMs": 4174,
+  "hostNode": "v26.11.1",
+  "existingPinChanged": false,
+  "dockerStarted": false,
+  "imageLayersDownloaded": false,
+  "hostedCiTriggered": false
+}

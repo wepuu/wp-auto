@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { postgresFailureCodes } from './postgres-image-gate.mjs';
 import { integrationOptions, verifyIntegrationContext, verifyIntegrationImage, verifyDiskBudget, verifyCompiledIdentity,
   verifyOwnedStopped, integrationFailure } from './persistent-image-contract.mjs';
 const id = 'sha256:' + 'a'.repeat(64), revision = 'b'.repeat(40);
@@ -42,6 +43,7 @@ test('cleanup cannot accept running containers or another run owner', () => {
   assert.throws(() => verifyOwnedStopped({ ...m, State: { Running: true } }, 'abc'));
 });
 test('only fixed public failure codes are retained', () => {
+  for (const code of postgresFailureCodes) assert.equal(integrationFailure({ code }), code);
   assert.equal(integrationFailure({ code: 'DISK_BUDGET_NOT_MET' }), 'DISK_BUDGET_NOT_MET');
   assert.equal(integrationFailure({ code: 'SECRET_SENTINEL', message: 'SECRET_SENTINEL' }), 'IMAGE_TEST_STOPPED');
   assert.equal(integrationFailure({ killed: true }), 'TIMEOUT');

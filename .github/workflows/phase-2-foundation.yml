@@ -43,6 +43,11 @@ jobs:
           node-version: 24.22.1
       - name: Current candidate wiring contracts
         run: node test/persistent-authorization/r68/contracts.synthetic.mjs
+      - name: PostgreSQL identity compatibility contracts
+        run: node test/persistent-authorization/r107/synthetic.mjs
+      # Fixed manifest/config provenance is verified before explicit preparation.
+      - name: Prepare verified PostgreSQL image for isolated matrix
+        run: node scripts/prepare-persistent-postgres.mjs
       - name: Enable pinned pnpm
         run: npm install --global pnpm@11.19.0
       - name: Install foundation dependencies

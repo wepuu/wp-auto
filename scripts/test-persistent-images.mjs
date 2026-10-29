@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { writeFile, mkdtemp, chmod, mkdir, statfs } from 'node:fs/promises';
+import { readFile, writeFile, mkdtemp, chmod, mkdir, statfs } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { collectScenarioResult } from './persistent-test-result.mjs';
+import { postgresPlan, inspectPostgresImage, safePostgresFailure } from './postgres-image-gate.mjs';
+import { postgresDockerExecutor } from './postgres-docker-executor.mjs';
 import { integrationOptions, verifyIntegrationContext, verifyIntegrationImage, verifyDiskBudget,
   verifyCompiledIdentity, verifyOwnedStopped, integrationFailure, compiledIdentityCode } from './persistent-image-contract.mjs';
 
@@ -16,7 +18,7 @@ const prefix = context ? ['--context', context] : [];
 const authorizationImage = process.env.WEPUU_AUTHORIZATION_IMAGE;
 const testImage = process.env.WEPUU_TEST_IMAGE;
 const controlImage = process.env.WEPUU_CONTROL_IMAGE;
-const postgresImage = 'postgres@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea';
+let postgresImage, postgresIdentity;
 const nonce = randomBytes(6).toString('hex');
 const names = { network: `wepuu-persistent-net-${nonce}`, postgres: `wepuu-persistent-pg-${nonce}`,
   data: `wepuu-persistent-data-${nonce}`, evidence: `wepuu-persistent-evidence-${nonce}` };
@@ -90,6 +92,12 @@ async function scenario(step) {
   return item;
 }
 try {
+  stage = 'postgres_pin';
+  let postgresSpec;
+  try { postgresSpec = JSON.parse(await readFile(new URL('../test/persistent-authorization/postgres-pin.json', import.meta.url), 'utf8')); }
+  catch { deny('POSTGRES_METADATA_INVALID'); }
+  postgresImage = postgresPlan(postgresSpec).reference;
+  stage = 'preflight';
   const options = integrationOptions(process.env);
   await space(true); sourceRevision = await source();
   verifyIntegrationContext(JSON.parse(await call(['context', 'inspect', context])), context);
@@ -97,8 +105,8 @@ try {
     const id = options.images[role];
     artifactResults.push(verifyIntegrationImage(JSON.parse(await call(['image', 'inspect', id])), id, role, options.revisions[role]));
   }
-  try { await call(['image', 'inspect', postgresImage]); }
-  catch { deny('POSTGRES_IMAGE_MISSING'); }
+  stage = 'postgres_inspect';
+  postgresIdentity = await inspectPostgresImage(postgresSpec, postgresDockerExecutor(docker, prefix, childEnv));
   stage = 'compiled_identity';
   const probes = [];
   for (const role of ['authorization', 'control', 'test']) {
@@ -108,7 +116,7 @@ try {
       '--entrypoint', 'node', options.images[role], '-e', compiledIdentityCode])));
   }
   compiledIdentity = verifyCompiledIdentity(probes);
-  await save('preflight.json', { sourceRevision, artifacts: artifactResults, compiledIdentity, diskSamples });
+  await save('preflight.json', { sourceRevision, artifacts: artifactResults, postgresIdentity, compiledIdentity, diskSamples });
   stage = 'evidence_volume';
   await call(['volume', 'create', ...labels, names.evidence]); evidenceCreated = true;
   await call(['run', '--rm', '--pull=never', '--network', 'none', '--user', '0:0',
@@ -154,6 +162,7 @@ try {
     mcpCalled: false, internalNetwork: true, hostPortsPublished: false };
 } catch (error) {
   result = { passed: false, results, failedStage: stage, category: integrationFailure(error),
+    ...(typeof error?.code === 'string' && error.code.startsWith('POSTGRES_') ? { postgres: safePostgresFailure(error) } : {}),
     rawErrorSuppressed: true, productionAccessed: false };
 } finally {
   const cleanup = [];
@@ -189,6 +198,7 @@ try {
   result.resourcesRetained = { ...names, networkCreated };
   result.sourceRevision = sourceRevision;
   result.artifacts = artifactResults;
+  result.postgresIdentity = postgresIdentity;
   result.compiledIdentity = compiledIdentity;
   result.diskSamples = diskSamples;
   result.startedUtc = startedUtc; result.finishedUtc = new Date().toISOString(); result.elapsedMs = Math.round(performance.now() - started);

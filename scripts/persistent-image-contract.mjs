@@ -1,4 +1,5 @@
 import { localDockerEndpoint } from './authorization-build-contract.mjs';
+import { postgresFailureCodes } from './postgres-image-gate.mjs';
 
 const deny = code => { throw Object.assign(Error('persistent_image_gate_denied'), { code }); };
 const digest = value => typeof value === 'string' && /^sha256:[a-f0-9]{64}$/u.test(value);
@@ -46,7 +47,7 @@ export function integrationFailure(error) {
   const codes = new Set(['LOCAL_CONTEXT_REQUIRED', 'IMMUTABLE_IMAGE_IDS_REQUIRED', 'IMAGE_REVISIONS_REQUIRED', 'LEGACY_MODE_INVALID',
     'IMAGE_ID_OR_PLATFORM_MISMATCH', 'IMAGE_REVISION_MISMATCH', 'IMAGE_ENTRYPOINT_MISMATCH', 'IMAGE_CMD_MISMATCH',
     'IMAGE_USER_MISMATCH', 'DISK_BUDGET_NOT_MET', 'COMPILED_INPUT_MISMATCH', 'OWNED_RESOURCE_NOT_STOPPED',
-    'SOURCE_INPUT_CHANGED', 'SOURCE_NOT_CLEAN', 'SOURCE_REVISION_MISMATCH', 'POSTGRES_IMAGE_MISSING']);
+    'SOURCE_INPUT_CHANGED', 'SOURCE_NOT_CLEAN', 'SOURCE_REVISION_MISMATCH', 'POSTGRES_IMAGE_MISSING', ...postgresFailureCodes]);
   return codes.has(error?.code) ? error.code : error?.killed ? 'TIMEOUT' : 'IMAGE_TEST_STOPPED';
 }
 
